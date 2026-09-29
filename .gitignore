@@ -1,0 +1,45 @@
+# Xcode
+build/
+*.xcuserstate
+*.xcworkspace
+xcuserdata/
+DerivedData/
+*.xcodeproj/xcuserdata/
+*.xcodeproj/project.xcworkspace/xcshareddata/IDEWorkspaceChecks.plist
+
+# Swift Package Manager
+.build/
+.swiftpm/
+
+# macOS
+.DS_Store
+*.swp
+*~
+
+# App bundle 内的大型二进制（从 bundle_deps.py 生成，不入库）
+MixCut/Resources/bin/
+
+# 视频素材（测试用，不入库）
+康王视频/
+
+# Secrets
+.env
+*.key
+
+# Python bytecode cache (来自 generate_xcodeproj.py)
+__pycache__/
+*.pyc
+
+# Superpowers 执行期临时产物(进度/brainstorm 草稿)
+.superpowers/
+
+# 散落的临时文件
+图标.png
+CODE_REVIEW_FINDINGS_*.md
+.DS_Store
+
+# 历次调试/验收的临时产物（本机实测 4.0GB：whisper 与 sherpa-onnx 的模型权重、
+# 数据库快照 db-*/、Python venv、packrun 打包中间产物、探针与测试日志）
+# ⚠️ 首次提交前必须挡住这一条，否则 .git 会多出几 GB 且几乎不可能干净抹掉。
+# 其中 .scratch/before-widen-removal/ 是"宽窗删除前"的唯一快照 —— 故意留在盘上、不入库。
+.scratch/

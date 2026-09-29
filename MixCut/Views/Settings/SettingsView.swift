@@ -1,0 +1,890 @@
+import SwiftUI
+
+struct SettingsView: View {
+    @Environment(\.dismiss) private var dismiss
+    @State private var selectedProvider: AIProviderType = KeychainHelper.activeProvider
+    @State private var apiKey: String = ""
+    @State private var isTestingConnection = false
+    /// 测试连接结果：(是否成功, 展示给用户的一句话)
+    @State private var connectionTestResult: (ok: Bool, message: String)?
+    @State private var isAPIKeySaved = false
+    @State private var showAPIKey = false
+    @State private var selectedModel: String = ""
+    @State private var thinkingEnabled = false
+    @State private var customBaseURL: String = ""
+    @State private var customModelName: String = ""
+    @State private var relayBaseURL: String = ""
+    @State private var relayPlatform: RelayPlatform = KeychainHelper.relayPlatform
+    @State private var isDownloadingModel = false
+    @State private var modelDownloadError: String?
+    @State private var downloadProgress: DownloadProgress?
+    @State private var downloadTask: Task<Void, Never>?
+    /// 模型探测结果（档位 / 来自哪个根 / 未使用的其他档 / L2~L4 提示）。界面只显示它，不在这里做判定。
+    @State private var modelReport = ModelReport(selected: nil, selectedTier: nil, usable: false, issues: [])
+    /// 只读布尔：Key 的任何片段都不进界面，读 Keychain 也放后台队列。
+    @State private var hasCloudKey = false
+    @AppStorage(ASRSettings.preferenceKey) private var asrPreferenceRaw = ""
+
+    @AppStorage("hasCompletedOnboarding") private var hasCompletedOnboarding = false
+    @AppStorage(AgentGateway.enabledKey) private var agentEnabled = true
+    @AppStorage(AgentGateway.portKey) private var agentPort = Int(AgentGateway.defaultPort)
+    @State private var selectedAgentClient: AgentClientSnippet = .claudeCode
+
+    var body: some View {
+        VStack(spacing: 0) {
+            // 顶部标题栏 + 关闭按钮
+            HStack {
+                Text("设置")
+                    .font(DesignTokens.Typography.bodyLargeEmphasis)
+                Spacer()
+                Button {
+                    dismiss()
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .foregroundStyle(.tertiary)
+                        .font(DesignTokens.Typography.headline)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("关闭设置")
+            }
+            .padding(.horizontal, 16)
+            .padding(.top, 14)
+            .padding(.bottom, 4)
+
+            TabView {
+                apiKeySettings
+                    .tabItem {
+                        Label("API", systemImage: "key")
+                    }
+
+                generalSettings
+                    .tabItem {
+                        Label("通用", systemImage: "gear")
+                    }
+
+                agentSettings
+                    .tabItem {
+                        Label("Agent", systemImage: "antenna.radiowaves.left.and.right")
+                    }
+            }
+        }
+        .frame(width: 500, height: 400)
+        .onAppear {
+            loadProviderState()
+            refreshASRState()
+        }
+    }
+
+    /// 模型探测放后台队列：stat + 读 4 字节文件头虽然便宜，也不该占设置页 opening 的主线程。
+    private func refreshASRState() {
+        Task.detached(priority: .utility) {
+            let report = ASRService.modelReport()
+            let cloudKey = ASRSettings.hasCloudKey
+            await MainActor.run {
+                modelReport = report
+                hasCloudKey = cloudKey
+            }
+        }
+    }
+
+    /// 当前"逐段重听"实际会走哪条 —— 直接问决策表，不在界面里复制规则。
+    /// 传 `storedPreference`（从没设过时是 nil）而不是 `preference`，让"没设过"与"选了自动"
+    /// 在规则层合流；界面自己再判一次默认值，就会出现第三个默认值。
+    private var segmentRetakeDecision: EngineDecision {
+        ASREngineDecision.decide(purpose: .segmentTextRetake,
+                                 preference: ASRSettings.storedPreference,
+                                 hasCloudKey: hasCloudKey,
+                                 local: LocalASRState(usable: modelReport.usable,
+                                                      tier: modelReport.selectedTier))
+    }
+
+    /// 绑定：存的是 raw（没设过 ⇒ 空串 ⇒ 由规则层回落默认），显示的是生效值。
+    private var asrPreference: Binding<ASRPreference> {
+        Binding(
+            get: { ASRPreference(rawValue: asrPreferenceRaw) ?? ASRPolicy.defaultPreference },
+            set: { asrPreferenceRaw = $0.rawValue }
+        )
+    }
+
+    /// 「large-v3（2.9 GB）· 来自你下载的文件夹 · 另检测到 base（未使用）」
+    private var modelDetailText: String {
+        guard let selected = modelReport.selected else { return "未检测到语音模型" }
+        let tier = modelReport.selectedTier ?? "档位未识别"
+        var text = "\(tier)（\(formatBytes(selected.byteCount))）· 来自\(selected.root.displayName)"
+        let others = modelReport.detected.dropFirst().compactMap {
+            WhisperModelCatalog.tier(ofFileName: $0.fileName) ?? $0.fileName
+        }
+        if !others.isEmpty {
+            text += " · 另检测到 \(others.joined(separator: "、"))（未使用）"
+        }
+        return text
+    }
+
+    /// L2/L3/L4 的提示。**只提示，不否决**（红线 R2）：这里任何一条都不改变"已就绪"。
+    /// 措辞取自 `ModelIssue.userText`（与 `get_asr_status` 同一份，不在界面里复写）。
+    private var modelHintLines: [String] {
+        modelReport.issues.map(\.userText)
+    }
+
+    /// 决策结论的界面呈现。一句话说明白：这个开关**只管逐段重听**，
+    /// 整片听写恒走本机（云端没有字级时间戳），别让用户以为改了它就能把整片送云端。
+    private var routeSummary: String {
+        switch segmentRetakeDecision {
+        case .use(let engine, let reason):
+            return "\(engine.displayName) · \(reason)（整片听写不受此项影响）"
+        case .refused(let reason):
+            return "走不通：\(reason)"
+        }
+    }
+
+    private var downloadButtonTitle: String {
+        let size = WhisperModelCatalog.expectedBytes(forTier: ASRPolicy.engineTier)
+            .map { " (~\(formatBytes($0)))" } ?? ""
+        return "下载 \(ASRPolicy.engineTier)\(size)"
+    }
+
+    // MARK: - API Key 设置
+    private var apiKeySettings: some View {
+        Form {
+            Section("AI 提供商") {
+                Picker("提供商", selection: $selectedProvider) {
+                    ForEach(AIProviderType.allCases) { provider in
+                        Text(provider.displayName).tag(provider)
+                    }
+                }
+                .onChange(of: selectedProvider) { _, newValue in
+                    KeychainHelper.activeProvider = newValue
+                    loadProviderState()
+                }
+            }
+
+            Section("\(selectedProvider.displayName) 配置") {
+                HStack(spacing: DesignTokens.Spacing.compact) {
+                    if showAPIKey {
+                        TextField("API Key", text: $apiKey)
+                            .textFieldStyle(.roundedBorder)
+                            .font(DesignTokens.Typography.labelMono)
+                    } else {
+                        SecureField("API Key", text: $apiKey)
+                            .textFieldStyle(.roundedBorder)
+                    }
+
+                    Button {
+                        showAPIKey.toggle()
+                        if showAPIKey {
+                            if let realKey = KeychainHelper.getAPIKey(for: selectedProvider) {
+                                apiKey = realKey
+                            }
+                        } else {
+                            if isAPIKeySaved {
+                                apiKey = "••••••••••••••••••••"
+                            }
+                        }
+                    } label: {
+                        Image(systemName: showAPIKey ? "eye.slash" : "eye")
+                            .font(DesignTokens.Typography.label)
+                            .foregroundStyle(.secondary)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel(showAPIKey ? "隐藏密钥" : "显示密钥")
+                }
+
+                if selectedProvider == .custom {
+                    TextField("API 地址", text: $customBaseURL, prompt: Text("https://api.openai.com/v1"))
+                        .textFieldStyle(.roundedBorder)
+                        .font(DesignTokens.Typography.labelMono)
+
+                    TextField("模型名称", text: $customModelName, prompt: Text("gpt-4o"))
+                        .textFieldStyle(.roundedBorder)
+                        .font(DesignTokens.Typography.labelMono)
+                } else {
+                    if selectedProvider == .claudeRelay {
+                        TextField("网关地址", text: $relayBaseURL,
+                                  prompt: Text("https://your-relay.example.com/v1"))
+                            .textFieldStyle(.roundedBorder)
+                            .font(DesignTokens.Typography.labelMono)
+
+                        Text("要求兼容 OpenAI 协议的转发网关地址")
+                            .font(DesignTokens.Typography.microRegular)
+                            .foregroundStyle(.tertiary)
+
+                        Picker("平台", selection: $relayPlatform) {
+                            ForEach(RelayPlatform.allCases) { platform in
+                                Text(platform.displayName).tag(platform)
+                            }
+                        }
+                        .onChange(of: relayPlatform) { _, newValue in
+                            KeychainHelper.relayPlatform = newValue
+                            // 切换平台后将模型重置为新平台的默认模型
+                            selectedModel = newValue.defaultModel
+                            KeychainHelper.setSelectedModel(selectedModel, for: .claudeRelay)
+                        }
+                    }
+
+                    Picker("模型", selection: $selectedModel) {
+                        ForEach(selectedProvider.models, id: \.self) { model in
+                            Text(selectedProvider.modelDisplayName(model)).tag(model)
+                        }
+                    }
+                    .onChange(of: selectedModel) { _, newValue in
+                        KeychainHelper.setSelectedModel(newValue, for: selectedProvider)
+                    }
+
+                    if selectedProvider.supportsThinkingToggle(model: selectedModel) {
+                        Toggle("深度思考", isOn: $thinkingEnabled)
+                            .onChange(of: thinkingEnabled) { _, newValue in
+                                KeychainHelper.setThinkingEnabled(newValue, for: selectedProvider)
+                            }
+                        Text("开启后模型先推理再作答，效果更好但更慢、消耗更多 tokens。对分镜分析、方案生成、台词改写等所有 AI 调用生效")
+                            .font(DesignTokens.Typography.microRegular)
+                            .foregroundStyle(.tertiary)
+                    }
+                }
+
+                HStack(spacing: DesignTokens.Spacing.compact) {
+                    if isAPIKeySaved {
+                        HStack(spacing: DesignTokens.Spacing.tight) {
+                            Image(systemName: "checkmark.circle.fill")
+                                .font(DesignTokens.Typography.label)
+                                .foregroundStyle(.green)
+                            Text("已保存")
+                                .font(DesignTokens.Typography.caption)
+                                .foregroundStyle(.green)
+                        }
+                    }
+
+                    Spacer()
+
+                    Button("保存") {
+                        saveAPIKey()
+                    }
+                    .controlSize(.small)
+                    // Key 已保存（显示为掩码）时**仍可保存**——因为接口地址 / 模型名是独立可改的。
+                    // 原先掩码态一律禁用，导致自定义提供商存过 Key 后再也改不了地址和模型名。
+                    .disabled(
+                        (apiKey.isEmpty && !isAPIKeySaved) ||
+                        (selectedProvider == .custom && (customBaseURL.isEmpty || customModelName.isEmpty)) ||
+                        (selectedProvider == .claudeRelay && relayBaseURL.isEmpty) ||
+                        endpointURLProblem != nil
+                    )
+
+                    // 测试连接：Key 填错 / 过期 / 没开通模型权限，以前要等导入流水线跑到
+                    // 第 5 步 AI 分析（十几分钟后）才暴露。这里花 1 秒当场验明。
+                    Button {
+                        Task { await testConnection() }
+                    } label: {
+                        if isTestingConnection {
+                            ProgressView().controlSize(.small)
+                        } else {
+                            Text("测试连接")
+                        }
+                    }
+                    .controlSize(.small)
+                    .disabled(isTestingConnection || !isAPIKeySaved)
+
+                    if isAPIKeySaved {
+                        Button("清除", role: .destructive) {
+                            clearAPIKey()
+                        }
+                        .controlSize(.small)
+                    }
+                }
+
+                // 地址填错时**当场说明为什么不能保存**，而不是把保存按钮灰掉让用户干瞪眼
+                if let problem = endpointURLProblem {
+                    HStack(alignment: .top, spacing: 6) {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .foregroundStyle(DesignTokens.Palette.Status.warning)
+                        Text(problem)
+                            .font(DesignTokens.Typography.caption)
+                            .fixedSize(horizontal: false, vertical: true)
+                        Spacer()
+                    }
+                }
+
+                if let result = connectionTestResult {
+                    HStack(spacing: 6) {
+                        Image(systemName: result.ok ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
+                            .foregroundStyle(result.ok ? DesignTokens.Palette.Status.success : DesignTokens.Palette.Status.warning)
+                        Text(result.message)
+                            .font(DesignTokens.Typography.caption)
+                            .foregroundStyle(result.ok ? .secondary : .primary)
+                            .textSelection(.enabled)
+                        Spacer()
+                    }
+                }
+            }
+        }
+        .formStyle(.grouped)
+        .padding()
+    }
+
+    /// 发一次最小请求验证 Key 是否真的可用，把错误提前到"填 Key 的当下"。
+    private func testConnection() async {
+        isTestingConnection = true
+        connectionTestResult = nil
+        defer { isTestingConnection = false }
+
+        let started = Date()
+        do {
+            let provider = AIProviderManager.createProvider(for: selectedProvider)
+            _ = try await provider.generateText(prompt: "ping")
+            let ms = Int(Date().timeIntervalSince(started) * 1000)
+            connectionTestResult = (true, "连接正常 · \(selectedProvider.displayName) · \(ms)ms")
+        } catch {
+            connectionTestResult = (false, FriendlyError.reason(for: error))
+        }
+    }
+
+    // MARK: - 通用设置
+    private var generalSettings: some View {
+        Form {
+            Section("视频处理") {
+                LabeledContent("FFmpeg") {
+                    let bundled = Bundle.main.path(forResource: "ffmpeg", ofType: nil, inDirectory: "bin") != nil
+                        || Bundle.main.path(forResource: "ffmpeg", ofType: nil) != nil
+                    let system = ["/opt/homebrew/bin/ffmpeg", "/usr/local/bin/ffmpeg"]
+                        .contains { FileManager.default.fileExists(atPath: $0) }
+                    dependencyStatus(installed: bundled || system, installHint: "已内置于应用中")
+                }
+
+                LabeledContent("Whisper") {
+                    dependencyStatus(installed: ASRService.isAvailable, installHint: "已内置于应用中")
+                }
+
+                Picker("台词重听引擎", selection: asrPreference) {
+                    ForEach(ASRPreference.allCases, id: \.self) { pref in
+                        Text(pref.displayName).tag(pref)
+                    }
+                }
+
+                LabeledContent("当前生效") {
+                    Text(routeSummary)
+                        .font(DesignTokens.Typography.label)
+                        .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.trailing)
+                }
+
+                LabeledContent("语音模型") {
+                    if modelReport.usable {
+                        VStack(alignment: .leading, spacing: DesignTokens.Spacing.tight) {
+                            HStack(spacing: DesignTokens.Spacing.tight) {
+                                Image(systemName: "checkmark.circle.fill")
+                                    .font(DesignTokens.Typography.label)
+                                    .foregroundStyle(.green)
+                                Text(modelDetailText)
+                                    .font(DesignTokens.Typography.label)
+                            }
+                            ForEach(modelHintLines, id: \.self) { hint in
+                                Text(hint)
+                                    .font(DesignTokens.Typography.microRegular)
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                    } else if isDownloadingModel {
+                        VStack(alignment: .leading, spacing: DesignTokens.Spacing.tight) {
+                            if let p = downloadProgress, p.totalBytes > 0 {
+                                ProgressView(value: p.fraction)
+                                    .controlSize(.small)
+                                    .frame(width: 200)
+                                HStack(spacing: 6) {
+                                    Text(String(format: "%.1f%%", p.fraction * 100))
+                                        .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                                    Text("\(formatBytes(p.receivedBytes)) / \(formatBytes(p.totalBytes))")
+                                        .font(DesignTokens.Typography.microMono)
+                                        .foregroundStyle(.secondary)
+                                    if p.bytesPerSecond > 0 {
+                                        Text("• \(formatBytes(Int64(p.bytesPerSecond)))/s")
+                                            .font(DesignTokens.Typography.microMono)
+                                            .foregroundStyle(.secondary)
+                                    }
+                                }
+                            } else {
+                                HStack(spacing: DesignTokens.Spacing.tight) {
+                                    ProgressView().controlSize(.small)
+                                    Text("连接中…").font(DesignTokens.Typography.label).foregroundStyle(.secondary)
+                                }
+                            }
+                            Button("取消") {
+                                downloadTask?.cancel()
+                            }
+                            .controlSize(.small)
+                        }
+                    } else {
+                        VStack(alignment: .leading, spacing: DesignTokens.Spacing.tight) {
+                            HStack(spacing: DesignTokens.Spacing.tight) {
+                                Image(systemName: "exclamationmark.triangle")
+                                    .font(DesignTokens.Typography.microRegular)
+                                    .foregroundStyle(.orange)
+                                Text("语音识别需要先下载模型")
+                                    .font(DesignTokens.Typography.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                            Button(downloadButtonTitle) {
+                                downloadWhisperModel()
+                            }
+                            .controlSize(.small)
+                            if let error = modelDownloadError {
+                                Text(error)
+                                    .font(DesignTokens.Typography.microRegular)
+                                    .foregroundStyle(.red)
+                                    .lineLimit(3)
+                            }
+                        }
+                    }
+                }
+            }
+
+            Section("存储") {
+                LabeledContent("数据目录") {
+                    Text(FileHelper.appSupportDirectory.path)
+                        .font(.system(size: 11, design: .monospaced))
+                        .foregroundStyle(.secondary)
+                        .textSelection(.enabled)
+                        .lineLimit(1)
+                }
+
+                Button {
+                    NSWorkspace.shared.open(FileHelper.appSupportDirectory)
+                } label: {
+                    HStack(spacing: DesignTokens.Spacing.tight) {
+                        Image(systemName: "folder")
+                            .font(DesignTokens.Typography.caption)
+                        Text("在 Finder 中打开")
+                            .font(DesignTokens.Typography.label)
+                    }
+                }
+                .controlSize(.small)
+            }
+
+            Section("系统信息") {
+                let hw = HardwareProfile.shared
+
+                LabeledContent("芯片型号") {
+                    Text(hw.chipDisplayName)
+                        .font(DesignTokens.Typography.label)
+                }
+                LabeledContent("CPU 核心数") {
+                    if hw.isAppleSilicon && hw.performanceCores > 0 && hw.performanceCores < hw.physicalCores {
+                        Text("\(hw.physicalCores) 核（\(hw.performanceCores) 性能 + \(hw.physicalCores - hw.performanceCores) 效率）")
+                            .font(DesignTokens.Typography.label)
+                    } else {
+                        Text("\(hw.physicalCores) 核")
+                            .font(DesignTokens.Typography.label)
+                    }
+                }
+                LabeledContent("内存") {
+                    Text("\(hw.memoryGB) GB")
+                        .font(DesignTokens.Typography.label)
+                }
+                LabeledContent("Media Engine") {
+                    Text(hw.mediaEngineDescription)
+                        .font(DesignTokens.Typography.label)
+                }
+                LabeledContent("GPU 编码加速") {
+                    HStack(spacing: DesignTokens.Spacing.tight) {
+                        Image(systemName: hw.videoToolboxAvailable ? "checkmark.circle.fill" : "xmark.circle.fill")
+                            .foregroundStyle(hw.videoToolboxAvailable ? .green : .red)
+                        Text(hw.videoToolboxAvailable ? "VideoToolbox" : "无")
+                            .font(DesignTokens.Typography.label)
+                    }
+                }
+                LabeledContent("Whisper 后端") {
+                    Text(hw.whisperBackend)
+                        .font(DesignTokens.Typography.label)
+                }
+            }
+
+            Section("并发策略") {
+                LabeledContent("同时分析视频数") {
+                    Text(ConcurrencyPolicy.explainAnalyze())
+                        .font(DesignTokens.Typography.label)
+                        .foregroundStyle(.secondary)
+                }
+                LabeledContent("同时导出视频数") {
+                    Text(ConcurrencyPolicy.explainExport())
+                        .font(DesignTokens.Typography.label)
+                        .foregroundStyle(.secondary)
+                }
+                LabeledContent("同时 ASR 数") {
+                    Text(ConcurrencyPolicy.explainASR())
+                        .font(DesignTokens.Typography.label)
+                        .foregroundStyle(.secondary)
+                }
+            }
+
+            Section("版本") {
+                LabeledContent("应用版本") {
+                    Text(Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0.1.0")
+                        .font(DesignTokens.Typography.label)
+                        .foregroundStyle(.secondary)
+                }
+            }
+
+            Section("关于") {
+                LabeledContent("使用引导") {
+                    Button {
+                        hasCompletedOnboarding = false
+                        dismiss()
+                    } label: {
+                        HStack(spacing: DesignTokens.Spacing.tight) {
+                            Image(systemName: "questionmark.circle")
+                                .font(DesignTokens.Typography.caption)
+                            Text("重新查看")
+                                .font(DesignTokens.Typography.label)
+                        }
+                    }
+                    .controlSize(.small)
+                }
+
+                LabeledContent("键盘快捷键") {
+                    Button {
+                        dismiss()
+                        // 延迟 让 dismiss 完成再发通知
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                            NotificationCenter.default.post(name: .mixCutShowShortcuts, object: nil)
+                        }
+                    } label: {
+                        HStack(spacing: DesignTokens.Spacing.tight) {
+                            Image(systemName: "keyboard")
+                                .font(DesignTokens.Typography.caption)
+                            Text("查看")
+                                .font(DesignTokens.Typography.label)
+                        }
+                    }
+                    .controlSize(.small)
+                }
+            }
+        }
+        .formStyle(.grouped)
+        .padding()
+    }
+
+    // MARK: - Agent 接入设置
+
+    /// 各 Agent 客户端的注册片段。MCP 没有一条通用注册命令，
+    /// 但核心信息只有服务地址一个；JSON（mcpServers 格式）是事实标准。
+    enum AgentClientSnippet: String, CaseIterable, Identifiable {
+        case url = "服务地址（通用）"
+        case claudeCode = "Claude Code"
+        case cursorJSON = "Cursor / Cline / Claude Desktop（JSON）"
+        case codex = "Codex CLI / 桌面版"
+        case workbuddy = "WorkBuddy（腾讯）"
+        case geminiCLI = "Gemini CLI"
+        case vscode = "VS Code Copilot"
+
+        var id: String { rawValue }
+
+        private static func endpoint(_ port: Int) -> String {
+            "http://127.0.0.1:\(port)/mcp"
+        }
+
+        func snippet(port: Int) -> String {
+            let url = Self.endpoint(port)
+            switch self {
+            case .url:
+                return url
+            case .claudeCode:
+                return "claude mcp add --transport http mixcut \(url)"
+            case .cursorJSON:
+                return """
+                {
+                  "mcpServers": {
+                    "mixcut": { "url": "\(url)" }
+                  }
+                }
+                """
+            case .codex:
+                return """
+                [mcp_servers.mixcut]
+                command = "npx"
+                args = ["-y", "mcp-remote", "\(url)"]
+                """
+            case .workbuddy:
+                return """
+                {
+                  "mcpServers": {
+                    "mixcut": { "url": "\(url)", "transport": "http" }
+                  }
+                }
+                """
+            case .geminiCLI:
+                return """
+                {
+                  "mcpServers": {
+                    "mixcut": { "httpUrl": "\(url)" }
+                  }
+                }
+                """
+            case .vscode:
+                return """
+                {
+                  "servers": {
+                    "mixcut": { "type": "http", "url": "\(url)" }
+                  }
+                }
+                """
+            }
+        }
+
+        var hint: String {
+            switch self {
+            case .url:
+                return "支持 MCP（Streamable HTTP）的客户端只需要这个地址；不懂 MCP 的 Agent 也可以直接对它 POST JSON-RPC。"
+            case .claudeCode:
+                return "在终端里执行这条命令即可。"
+            case .cursorJSON:
+                return "合并进对应配置：Cursor 是项目下 .cursor/mcp.json；Cline 在扩展的 MCP 设置里；Claude Desktop 在 设置→连接器。"
+            case .codex:
+                return "追加到 ~/.codex/config.toml，CLI 和桌面版共用这份配置（桌面版改完重启 app 生效）。Codex 走 stdio，用 mcp-remote 桥接，需要 Node.js。"
+            case .workbuddy:
+                return "在 WorkBuddy 的 MCP 设置（mcp.json 或可视化 MCP 配置界面）里添加。"
+            case .geminiCLI:
+                return "合并进 ~/.gemini/settings.json。"
+            case .vscode:
+                return "写入项目下 .vscode/mcp.json。"
+            }
+        }
+    }
+
+    /// 注册后的验证指令：用户复制给 Agent 执行，能返回项目清单即代表链路通了
+    private static let agentVerifyPrompt = "请调用 mixcut 的 list_projects 工具，列出我的所有项目，每行输出：项目名｜状态｜视频数｜分镜数。"
+
+    private var agentSettings: some View {
+        Form {
+            Section("本机 Agent 接入（MCP）") {
+                Toggle("启用 Agent 服务", isOn: $agentEnabled)
+                    .onChange(of: agentEnabled) { _, _ in
+                        AgentGateway.shared.restartFromSettings()
+                    }
+                TextField("端口", value: $agentPort, format: .number.grouping(.never))
+                    .onSubmit { AgentGateway.shared.restartFromSettings() }
+                    .disabled(!agentEnabled)
+                Text("服务只监听 127.0.0.1，仅本机可访问。改端口后回车生效。")
+                    .font(DesignTokens.Typography.label)
+                    .foregroundStyle(.secondary)
+            }
+            Section("注册到 Agent 客户端") {
+                Picker("客户端", selection: $selectedAgentClient) {
+                    ForEach(AgentClientSnippet.allCases) { client in
+                        Text(client.rawValue).tag(client)
+                    }
+                }
+                .pickerStyle(.menu)
+
+                HStack(alignment: .top) {
+                    Text(selectedAgentClient.snippet(port: agentPort))
+                        .font(.system(.caption, design: .monospaced))
+                        .textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    Button("复制") {
+                        NSPasteboard.general.clearContents()
+                        NSPasteboard.general.setString(selectedAgentClient.snippet(port: agentPort), forType: .string)
+                    }
+                }
+                Text(selectedAgentClient.hint)
+                    .font(DesignTokens.Typography.label)
+                    .foregroundStyle(.secondary)
+            }
+            Section("注册后验证（把这句话复制给 Agent 执行）") {
+                HStack(alignment: .top) {
+                    Text(Self.agentVerifyPrompt)
+                        .font(.system(.caption, design: .monospaced))
+                        .textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    Button("复制") {
+                        NSPasteboard.general.clearContents()
+                        NSPasteboard.general.setString(Self.agentVerifyPrompt, forType: .string)
+                    }
+                }
+                Text("预期返回：你的项目清单，与 MixCut 侧边栏一致（含状态、视频数、分镜数）。能列出来即注册成功；若 Agent 说找不到工具或连接失败，确认 MixCut 正在运行、端口一致后重试。")
+                    .font(DesignTokens.Typography.label)
+                    .foregroundStyle(.secondary)
+            }
+            Section("可以这样指挥 Agent（仅示例，按你的实际项目和分镜说）") {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("「把项目一里 1 号视频的 3 到 5 号分镜标签改成痛点，字幕换成纯色遮挡，结尾都延 10 帧」")
+                    Text("「把这个文件夹里的 20 条视频导入新项目跑分析，失败的汇总告诉我」")
+                    Text("「用 1 号视频的 1、2 号分镜加 2 号视频的 4 号分镜组个方案，导出到桌面」")
+                }
+                .font(DesignTokens.Typography.label)
+                Text("视频编号看素材导入页卡片左上角的「N 号」徽章，分镜编号看分镜卡片的 # 号；一句话可以带多个操作，Agent 会自己拆解执行。")
+                    .font(DesignTokens.Typography.label)
+                    .foregroundStyle(.secondary)
+            }
+            Section("Agent 能调用的功能（\(AgentToolCatalog.all.count) 个）") {
+                ForEach(AgentToolCatalog.all, id: \.name) { tool in
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(tool.name)
+                            .font(.system(.caption, design: .monospaced))
+                        Text(tool.description)
+                            .font(DesignTokens.Typography.label)
+                            .foregroundStyle(.secondary)
+                    }
+                    .padding(.vertical, 2)
+                }
+                Text("以上是 Agent 的全部权限边界：不能拆分分镜、不能做画面替换变体。删除项目需 Agent 二次确认（先返回影响预览）；删除分镜/视频/项目执行后无撤销。")
+                    .font(DesignTokens.Typography.label)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .formStyle(.grouped)
+        .padding()
+    }
+
+    @ViewBuilder
+    private func dependencyStatus(installed: Bool, installHint: String) -> some View {
+        if installed {
+            HStack(spacing: DesignTokens.Spacing.tight) {
+                Image(systemName: "checkmark.circle.fill")
+                    .font(DesignTokens.Typography.label)
+                    .foregroundStyle(.green)
+                Text("已安装")
+                    .font(DesignTokens.Typography.label)
+            }
+        } else {
+            HStack(spacing: DesignTokens.Spacing.tight) {
+                Image(systemName: "xmark.circle.fill")
+                    .font(DesignTokens.Typography.label)
+                    .foregroundStyle(.red)
+                Text(installHint)
+                    .font(.system(size: 11, design: .monospaced))
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    // MARK: - 操作
+
+    private func loadProviderState() {
+        isAPIKeySaved = KeychainHelper.hasAPIKey(for: selectedProvider)
+
+        // 历史保存的 model ID 可能已被新版本移除，回退到 defaultModel
+        let stored = KeychainHelper.selectedModel(for: selectedProvider)
+        if selectedProvider == .custom {
+            selectedModel = stored
+        } else if selectedProvider.models.contains(stored) {
+            selectedModel = stored
+        } else {
+            selectedModel = selectedProvider.defaultModel
+            KeychainHelper.setSelectedModel(selectedModel, for: selectedProvider)
+        }
+
+        thinkingEnabled = KeychainHelper.thinkingEnabled(for: selectedProvider)
+        customBaseURL = KeychainHelper.customBaseURL
+        customModelName = KeychainHelper.customModelName
+        relayBaseURL = KeychainHelper.relayBaseURL
+        relayPlatform = KeychainHelper.relayPlatform
+        showAPIKey = false
+        if isAPIKeySaved {
+            apiKey = "••••••••••••••••••••"
+        } else {
+            apiKey = ""
+        }
+    }
+
+    /// 接口地址填得不对时的具体说明；没问题返回 nil。
+    ///
+    /// 在**保存前**就拦下来。否则地址错了要等到导入流水线跑到 AI 分析那步才炸，
+    /// 报错还只是一句"连接失败，请检查网络"，把排查方向完全带偏。
+    private var endpointURLProblem: String? {
+        let raw: String
+        switch selectedProvider {
+        case .custom:      raw = customBaseURL
+        case .claudeRelay: raw = relayBaseURL
+        default:           return nil
+        }
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }   // 空由 disabled 条件另行处理
+
+        guard trimmed.hasPrefix("http://") || trimmed.hasPrefix("https://") else {
+            return "接口地址需要以 https:// 开头（例如 https://api.example.com/v1）"
+        }
+        guard let url = URL(string: trimmed), url.host?.isEmpty == false else {
+            return "接口地址格式不合法，请检查是否有多余的空格或中文字符"
+        }
+        if trimmed.hasSuffix("/chat/completions") || trimmed.hasSuffix("/messages") {
+            return "这里只填根地址（通常以 /v1 结尾），不要带 /chat/completions 或 /messages"
+        }
+        return nil
+    }
+
+    private func saveAPIKey() {
+        // ⚠️ 必须 trim：从网页复制 Key 极易带上尾部空格或换行，
+        // 存进去之后每一次 AI 调用都会 401，而错误信息只会说"Key 无效"，
+        // 用户肉眼看输入框里的 Key 明明是对的，根本查不出问题。
+        let trimmedKey = apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        // 接口地址与模型名即使不改 Key 也要能单独保存（见下方 saveEndpointConfig 的说明）
+        saveEndpointConfig()
+
+        guard !trimmedKey.isEmpty, !trimmedKey.starts(with: "•") else { return }
+        do {
+            try KeychainHelper.saveAPIKey(trimmedKey, for: selectedProvider)
+            isAPIKeySaved = true
+            MixLog.info("API Key 已保存: provider=\(selectedProvider.displayName)")
+            apiKey = "••••••••••••••••••••"
+            connectionTestResult = nil
+        } catch {
+            // 保存失败以前只写日志，界面上「已保存」的绿标不出现但没有任何原因
+            connectionTestResult = (false, "保存失败：\(FriendlyError.reason(for: error))")
+        }
+    }
+
+    /// 保存接口地址 / 模型名 / 网关平台。
+    ///
+    /// ⚠️ 必须与 Key 的保存**解耦**。原先这些只在 `saveAPIKey` 里落盘，而保存成功后
+    /// `apiKey` 会变成掩码 `••••`，`saveAPIKey` 开头又 `guard !starts(with:"•")` 直接返回 ——
+    /// 于是用「自定义 / 转发网关」的用户存过 Key 之后就**再也改不了接口地址和模型名**，
+    /// 只能先清除 Key 再重新粘贴一遍。
+    private func saveEndpointConfig() {
+        if selectedProvider == .custom {
+            KeychainHelper.customBaseURL = customBaseURL.trimmingCharacters(in: .whitespacesAndNewlines)
+            let model = customModelName.trimmingCharacters(in: .whitespacesAndNewlines)
+            KeychainHelper.customModelName = model
+            KeychainHelper.setSelectedModel(model, for: .custom)
+        }
+        if selectedProvider == .claudeRelay {
+            KeychainHelper.relayBaseURL = relayBaseURL.trimmingCharacters(in: .whitespacesAndNewlines)
+            KeychainHelper.relayPlatform = relayPlatform
+        }
+    }
+
+    private func clearAPIKey() {
+        try? KeychainHelper.removeAPIKey(for: selectedProvider)
+        isAPIKeySaved = false
+        apiKey = ""
+    }
+
+    private func downloadWhisperModel() {
+        isDownloadingModel = true
+        modelDownloadError = nil
+        downloadProgress = nil
+        downloadTask = Task { @MainActor in
+            do {
+                let asr = ASRService()
+                // 不下传 modelName：档位由 ASRPolicy 定（红线 R3），界面这里不留第二个档位选择
+                _ = try await asr.downloadModelIfNeeded(
+                    onProgress: { progress in
+                        Task { @MainActor in
+                            downloadProgress = progress
+                        }
+                    }
+                )
+                refreshASRState()
+            } catch is CancellationError {
+                modelDownloadError = "已取消"
+            } catch {
+                modelDownloadError = error.localizedDescription
+            }
+            isDownloadingModel = false
+            downloadProgress = nil
+            downloadTask = nil
+        }
+    }
+
+    /// 把字节数格式化为 KB / MB / GB
+    private func formatBytes(_ bytes: Int64) -> String {
+        ByteCountFormatter.string(fromByteCount: bytes, countStyle: .binary)
+    }
+}
