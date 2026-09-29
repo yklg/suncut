@@ -18,4 +18,15 @@ public enum OrphanFileFinder {
         let refNorm = Set(referenced.map(normalize))
         return onDisk.filter { !refNorm.contains(normalize($0)) }
     }
+
+    /// 供破坏性回收（GC）使用的保守入口：只有「引用集可信」时才给出可删清单。
+    /// 不可信的两种形态：引用集为空、或引用集与磁盘零交集 —— 都说明判断依据本身出了问题
+    /// （库打不开退到内存模式、目录迁移尚未改写路径、路径前缀变更等），此时按清单全删不可逆。
+    public static func safeOrphanFiles(onDisk: [String], referenced: Set<String>) -> [String] {
+        guard !onDisk.isEmpty else { return [] }
+        let refNorm = Set(referenced.map(normalize))
+        // 零交集即视为判断依据不可信，不交给调用方任何可删清单
+        guard onDisk.contains(where: { refNorm.contains(normalize($0)) }) else { return [] }
+        return orphanFiles(onDisk: onDisk, referenced: referenced)
+    }
 }

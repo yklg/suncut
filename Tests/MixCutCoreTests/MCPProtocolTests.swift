@@ -81,14 +81,14 @@ struct MCPProtocolEncodeTests {
 
     @Test("initialize 响应结构")
     func initializeResponse() throws {
-        let data = MCPProtocol.initializeResponse(id: .number(1), serverName: "mixcut", serverVersion: "0.9.3")
+        let data = MCPProtocol.initializeResponse(id: .number(1), serverName: "srv", serverVersion: "0.9.3")
         let obj = try decode(data)
         #expect(obj["jsonrpc"] as? String == "2.0")
         #expect(obj["id"] as? Int == 1)
         let result = try #require(obj["result"] as? [String: Any])
         #expect(result["protocolVersion"] as? String == "2025-06-18")
         let serverInfo = try #require(result["serverInfo"] as? [String: Any])
-        #expect(serverInfo["name"] as? String == "mixcut")
+        #expect(serverInfo["name"] as? String == "srv")
         #expect((result["capabilities"] as? [String: Any])?["tools"] != nil)
         #expect(result["instructions"] == nil)
     }
@@ -96,7 +96,7 @@ struct MCPProtocolEncodeTests {
     @Test("initialize 响应携带 instructions（服务器自我介绍，客户端注入给模型）")
     func initializeResponseWithInstructions() throws {
         let data = MCPProtocol.initializeResponse(
-            id: .number(1), serverName: "mixcut", serverVersion: "1.0",
+            id: .number(1), serverName: "srv", serverVersion: "1.0",
             instructions: "MixCut（简写 MC）是视频混剪应用")
         let result = try #require(try decode(data)["result"] as? [String: Any])
         #expect(result["instructions"] as? String == "MixCut（简写 MC）是视频混剪应用")

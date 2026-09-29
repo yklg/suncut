@@ -70,6 +70,6 @@ actor VoiceCloneService {
     private static func sanitizedName(_ raw: String) -> String {
         let lowered = raw.lowercased().filter { $0.isLetter || $0.isNumber }
         let trimmed = String(lowered.prefix(20))
-        return trimmed.isEmpty ? "mixcut" : trimmed
+        return trimmed.isEmpty ? Brand.voiceAliasFallback : trimmed
     }
 }

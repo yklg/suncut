@@ -6,9 +6,9 @@ enum MixLog {
     static let logFileURL: URL = {
         let base = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first
             ?? FileManager.default.temporaryDirectory
-        let dir = base.appendingPathComponent("com.mixcut.app/logs")
+        let dir = base.appendingPathComponent(Brand.logDirectoryComponent)
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        return dir.appendingPathComponent("mixcut.log")
+        return dir.appendingPathComponent(Brand.logFileName)
     }()
 
     private static let logPath: String = logFileURL.path
@@ -236,7 +236,7 @@ actor OpenAICompatibleClient: AIProvider {
     /// 目录内只保留最近 `maxFailureArtifacts` 份，避免长期堆积用户台词原文。
     static func dumpFailure(_ body: String, reason: String, evidence: String) {
         guard let cacheDir = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first else { return }
-        let dir = cacheDir.appendingPathComponent("com.mixcut.app/ai-fail")
+        let dir = cacheDir.appendingPathComponent(Brand.aiFailDirectoryComponent)
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         let timestamp = ISO8601DateFormatter().string(from: Date()).replacingOccurrences(of: ":", with: "-")
         let file = dir.appendingPathComponent("ai-fail-\(timestamp).json")

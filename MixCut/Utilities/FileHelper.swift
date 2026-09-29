@@ -15,11 +15,11 @@ enum FileHelper {
     /// 应用沙盒中的项目数据目录
     static var appSupportDirectory: URL {
         guard let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else {
-            let fallback = FileManager.default.temporaryDirectory.appendingPathComponent("MixCut", isDirectory: true)
+            let fallback = FileManager.default.temporaryDirectory.appendingPathComponent(Brand.dataDirectoryName, isDirectory: true)
             ensureDirectory(at: fallback)
             return fallback
         }
-        let url = base.appendingPathComponent("MixCut", isDirectory: true)
+        let url = base.appendingPathComponent(Brand.dataDirectoryName, isDirectory: true)
         ensureDirectory(at: url)
         return url
     }
@@ -32,7 +32,7 @@ enum FileHelper {
     /// `~/Library/Application Support/default.store`，会与本机其它非沙盒 SwiftData App
     /// 共用同一文件，schema 不符时双方互相清库，导致项目数据丢失。
     static var mixCutStoreURL: URL {
-        appSupportDirectory.appendingPathComponent("MixCut.store")
+        appSupportDirectory.appendingPathComponent(Brand.storeFileName)
     }
 
     /// 旧版共享数据库（SwiftData 默认库）路径
@@ -170,7 +170,7 @@ enum FileHelper {
         guard let cacheDir = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first else {
             return nil
         }
-        return cacheDir.appendingPathComponent("com.mixcut.app/whisper-models", isDirectory: true)
+        return cacheDir.appendingPathComponent(Brand.legacyWhisperModelsComponent, isDirectory: true)
     }
 
     /// 一次性迁移：把旧 Caches 目录里的 whisper 模型移动到 Application Support。
@@ -304,7 +304,13 @@ enum FileHelper {
             }
         }
 
-        let orphans = OrphanFileFinder.orphanFiles(onDisk: onDisk, referenced: referencedPaths)
+        let raw = OrphanFileFinder.orphanFiles(onDisk: onDisk, referenced: referencedPaths)
+        let orphans = OrphanFileFinder.safeOrphanFiles(onDisk: onDisk, referenced: referencedPaths)
+        if orphans.isEmpty && !raw.isEmpty {
+            // 本可以删掉整批文件，但引用集与磁盘零交集 —— 说明判断依据不可信（库退到内存模式、
+            // 目录迁移尚未改写路径等）。宁可留着孤儿，也不能把在用素材删掉。
+            MixLog.error("[OrphanGC] 跳过回收：磁盘 \(onDisk.count) 个文件与库内 \(referencedPaths.count) 条引用零交集（疑似迁移未完成或库不可用）")
+        }
         for path in orphans {
             try? fm.removeItem(atPath: path)
         }
@@ -320,7 +326,7 @@ enum FileHelper {
     /// 临时文件目录
     static var tempDirectory: URL {
         let url = FileManager.default.temporaryDirectory
-            .appendingPathComponent("MixCut", isDirectory: true)
+            .appendingPathComponent(Brand.dataDirectoryName, isDirectory: true)
         ensureDirectory(at: url)
         return url
     }

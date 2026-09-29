@@ -135,7 +135,7 @@ final class DubbingViewModel {
             let ref = try await vocalSep.referenceClip(fromVocals: stems.vocalsPath, maxSeconds: 6)
             setProgress(vid, "注册克隆音色…")
             let voiceId = try await cloneService.enroll(referenceAudioPath: ref,
-                                                        preferredName: "mixcut\(hash.prefix(8))")
+                                                        preferredName: "\(Brand.shortName)\(hash.prefix(8))")
             MixLog.info("[Clone] 克隆成功: voiceId=\(voiceId)")
             video.clonedVoiceId = voiceId
             video.selectedVoiceIds = [voiceId]

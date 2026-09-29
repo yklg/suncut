@@ -174,7 +174,7 @@ struct MixCutApp: App {
                 // 内存模式也失败，使用最简配置
                 modelContainer = try! ModelContainer(for: schema)
             }
-            initError = "数据库初始化失败：\(error.localizedDescription)\n\n数据库文件可能损坏，当前使用临时模式运行（数据不会保存）。\n请删除 ~/Library/Application Support/MixCut/MixCut.store 后重启应用。"
+            initError = "数据库初始化失败：\(error.localizedDescription)\n\n数据库文件可能损坏，当前使用临时模式运行（数据不会保存）。\n请删除 ~/Library/Application Support/\(Brand.dataDirectoryName)/\(Brand.storeFileName) 后重启应用。"
         }
     }
 
@@ -883,7 +883,7 @@ struct MixCutApp: App {
                 MixLog.error("迁移数据库 \(suffix) 失败（可容忍）: \(error.localizedDescription)")
             }
         }
-        MixLog.info("已把 default.store 迁移到专属库 MixCut.store")
+        MixLog.info("已把 default.store 迁移到专属库 \(Brand.storeFileName)")
     }
 
     /// 用 SQLite C API 只读检查某 sqlite 文件是否含指定表。

@@ -25,7 +25,7 @@ enum DebugSelfTest {
         if let n = env["MIXCUT_SELFTEST_GEN"], let target = Int(n) { runGenSchemes(container: container, target: target); return }
         guard env["MIXCUT_SELFTEST"] == "1" else { return }
         let outPath = ProcessInfo.processInfo.environment["MIXCUT_SELFTEST_OUT"]
-            ?? NSTemporaryDirectory() + "mixcut_selftest.txt"
+            ?? NSTemporaryDirectory() + "\(Brand.shortName)_selftest.txt"
 
         let ctx = container.mainContext
         var lines: [String] = ["# MixCut 自检报告"]
@@ -63,7 +63,7 @@ enum DebugSelfTest {
         lines.append("文件名样例: " + jobs.prefix(8).map(\.fileName).joined(separator: ", "))
 
         let outDir = URL(fileURLWithPath: NSTemporaryDirectory())
-            .appendingPathComponent("mixcut_selftest_export", isDirectory: true)
+            .appendingPathComponent("\(Brand.shortName)_selftest_export", isDirectory: true)
         try? FileManager.default.removeItem(at: outDir)
         try? FileManager.default.createDirectory(at: outDir, withIntermediateDirectories: true)
 
@@ -102,7 +102,7 @@ enum DebugSelfTest {
     @MainActor
     static func runGenReal(container: ModelContainer, target: Int) {
         let outPath = ProcessInfo.processInfo.environment["MIXCUT_SELFTEST_OUT"]
-            ?? NSTemporaryDirectory() + "mixcut_genreal.txt"
+            ?? NSTemporaryDirectory() + "\(Brand.shortName)_genreal.txt"
         let ctx = container.mainContext
         guard let videos = try? ctx.fetch(FetchDescriptor<Video>()),
               let video = videos.first(where: { ($0.clonedVoiceId ?? "").isEmpty == false }),
@@ -139,7 +139,7 @@ enum DebugSelfTest {
     @MainActor
     static func runCleanFanout(container: ModelContainer) {
         let outPath = ProcessInfo.processInfo.environment["MIXCUT_SELFTEST_OUT"]
-            ?? NSTemporaryDirectory() + "mixcut_clean.txt"
+            ?? NSTemporaryDirectory() + "\(Brand.shortName)_clean.txt"
         let ctx = container.mainContext
         var removedSchemes = 0
         if let schemes = try? ctx.fetch(FetchDescriptor<MixScheme>()) {
@@ -164,7 +164,7 @@ enum DebugSelfTest {
     @MainActor
     static func runShortRef(container: ModelContainer, refSecs: Double) {
         let outPath = ProcessInfo.processInfo.environment["MIXCUT_SELFTEST_OUT"]
-            ?? NSTemporaryDirectory() + "mixcut_shortref.txt"
+            ?? NSTemporaryDirectory() + "\(Brand.shortName)_shortref.txt"
         let ctx = container.mainContext
         guard let videos = try? ctx.fetch(FetchDescriptor<Video>()),
               let video = videos.first(where: { $0.name.contains("XCT") }),
@@ -207,7 +207,7 @@ enum DebugSelfTest {
     @MainActor
     static func runRegenDub(container: ModelContainer) {
         let outPath = ProcessInfo.processInfo.environment["MIXCUT_SELFTEST_OUT"]
-            ?? NSTemporaryDirectory() + "mixcut_regendub.txt"
+            ?? NSTemporaryDirectory() + "\(Brand.shortName)_regendub.txt"
         let ctx = container.mainContext
         guard let videos = try? ctx.fetch(FetchDescriptor<Video>()),
               let video = videos.first(where: { $0.name.contains("XCT") }),
@@ -245,7 +245,7 @@ enum DebugSelfTest {
     @MainActor
     static func runTTSx(container: ModelContainer) {
         let outPath = ProcessInfo.processInfo.environment["MIXCUT_SELFTEST_OUT"]
-            ?? NSTemporaryDirectory() + "mixcut_ttsx.txt"
+            ?? NSTemporaryDirectory() + "\(Brand.shortName)_ttsx.txt"
         let ctx = container.mainContext
         guard let videos = try? ctx.fetch(FetchDescriptor<Video>()),
               let video = videos.first(where: { ($0.clonedVoiceId ?? "").isEmpty == false }),
@@ -281,7 +281,7 @@ enum DebugSelfTest {
 
     static func runASRFile(path: String) {
         let outPath = ProcessInfo.processInfo.environment["MIXCUT_SELFTEST_OUT"]
-            ?? NSTemporaryDirectory() + "mixcut_asrfile.txt"
+            ?? NSTemporaryDirectory() + "\(Brand.shortName)_asrfile.txt"
         let ff = FFmpegRunner()
         let asr = QwenASRClient()
         Task.detached {
@@ -312,7 +312,7 @@ enum DebugSelfTest {
     @MainActor
     static func runFacade(container: ModelContainer) {
         let outPath = ProcessInfo.processInfo.environment["MIXCUT_SELFTEST_OUT"]
-            ?? NSTemporaryDirectory() + "mixcut_facade.txt"
+            ?? NSTemporaryDirectory() + "\(Brand.shortName)_facade.txt"
         let n = Int(ProcessInfo.processInfo.environment["MIXCUT_SELFTEST_FACADE_N"] ?? "2") ?? 2
         var lines: [String] = ["# SegmentTranscriber 门面探针（不写库、只走本机）"]
 
@@ -367,7 +367,7 @@ enum DebugSelfTest {
     @MainActor
     static func runReid(container: ModelContainer) {
         let outPath = ProcessInfo.processInfo.environment["MIXCUT_SELFTEST_OUT"]
-            ?? NSTemporaryDirectory() + "mixcut_reid.txt"
+            ?? NSTemporaryDirectory() + "\(Brand.shortName)_reid.txt"
         let ctx = container.mainContext
         guard let videos = try? ctx.fetch(FetchDescriptor<Video>()) else { write(outPath, ["无视频"]); return }
         let video = videos.first(where: { $0.name.contains("XCT") && !$0.segments.isEmpty })
@@ -392,7 +392,7 @@ enum DebugSelfTest {
     @MainActor
     static func runDrift(container: ModelContainer) {
         let outPath = ProcessInfo.processInfo.environment["MIXCUT_SELFTEST_OUT"]
-            ?? NSTemporaryDirectory() + "mixcut_drift.txt"
+            ?? NSTemporaryDirectory() + "\(Brand.shortName)_drift.txt"
         let ctx = container.mainContext
         guard let videos = try? ctx.fetch(FetchDescriptor<Video>()) else { write(outPath, ["无视频"]); return }
         // 优先 XCT；否则取第一个有分镜的
@@ -449,7 +449,7 @@ enum DebugSelfTest {
     @MainActor
     static func runASRFull(container: ModelContainer) {
         let outPath = ProcessInfo.processInfo.environment["MIXCUT_SELFTEST_OUT"]
-            ?? NSTemporaryDirectory() + "mixcut_asrfull.txt"
+            ?? NSTemporaryDirectory() + "\(Brand.shortName)_asrfull.txt"
         let ctx = container.mainContext
         guard let videos = try? ctx.fetch(FetchDescriptor<Video>()) else { write(outPath, ["无视频"]); return }
         let infos: [(name: String, path: String, dur: Double)] = videos
@@ -490,7 +490,7 @@ enum DebugSelfTest {
     @MainActor
     static func runASR(container: ModelContainer) {
         let outPath = ProcessInfo.processInfo.environment["MIXCUT_SELFTEST_OUT"]
-            ?? NSTemporaryDirectory() + "mixcut_asr.txt"
+            ?? NSTemporaryDirectory() + "\(Brand.shortName)_asr.txt"
         let ctx = container.mainContext
         guard let videos = try? ctx.fetch(FetchDescriptor<Video>()),
               let video = videos.first(where: { !$0.segments.isEmpty && !$0.localPath.isEmpty
@@ -533,7 +533,7 @@ enum DebugSelfTest {
     @MainActor
     static func runRewrite(container: ModelContainer) {
         let outPath = ProcessInfo.processInfo.environment["MIXCUT_SELFTEST_OUT"]
-            ?? NSTemporaryDirectory() + "mixcut_rewrite.txt"
+            ?? NSTemporaryDirectory() + "\(Brand.shortName)_rewrite.txt"
         let ctx = container.mainContext
         guard let videos = try? ctx.fetch(FetchDescriptor<Video>()), !videos.isEmpty else {
             write(outPath, ["无视频"]); return
@@ -576,7 +576,7 @@ enum DebugSelfTest {
     @MainActor
     static func runGenSchemes(container: ModelContainer, target: Int) {
         let outPath = ProcessInfo.processInfo.environment["MIXCUT_SELFTEST_OUT"]
-            ?? NSTemporaryDirectory() + "mixcut_gen.txt"
+            ?? NSTemporaryDirectory() + "\(Brand.shortName)_gen.txt"
         let ctx = container.mainContext
         guard let videos = try? ctx.fetch(FetchDescriptor<Video>()),
               let video = videos.max(by: { $0.segments.flatMap(\.segmentDubs).count < $1.segments.flatMap(\.segmentDubs).count }) else {

@@ -26,9 +26,17 @@ expect_absent() {
 expect_absent "TC-06 原作者署名/仓库字样" 'MengGang\|13462890087\|RoshanGH\|jinxiushanhehao' "$ROOT/MixCut" 0
 # TC-06b：更新检查组件不得再被任何地方引用
 expect_absent "TC-06b UpdateChecker/UpdateBanner 引用" 'UpdateChecker\|UpdateBanner\|updateChecker' "$ROOT/MixCut" 0
-# TC-05：悬空承诺文案归零；日志路径只允许有 1 处真源
+# TC-05：悬空承诺文案归零；日志路径字面量已收进 Brand.swift，MixCut/ 里只允许引用真源
+# 期望值从 Brand.swift 现场读出，不写死字面量：将来换品牌，这条判据跟着变口径而不是悄悄恒真。
+BRAND_SWIFT="$ROOT/Sources/MixCutCore/Brand.swift"
+BUNDLE_ID=$(sed -n 's/.*static let bundleID = "\(.*\)".*/\1/p' "$BRAND_SWIFT")
+if [ -z "$BUNDLE_ID" ]; then
+  echo "FAIL 取不出 Brand.bundleID —— 判据失效，不算通过"
+  fail=1
+fi
 expect_absent "TC-05 「导出诊断日志」悬空文案" '导出诊断日志' "$ROOT/MixCut" 0
-expect_absent "TC-05 日志路径硬编码处数" 'com.mixcut.app/logs' "$ROOT/MixCut" 1
+expect_absent "TC-05 日志路径字面量残留处数" "$BUNDLE_ID/logs" "$ROOT/MixCut" 0
+expect_absent "TC-05 日志目录真源引用处数" 'Brand\.logDirectoryComponent' "$ROOT/MixCut" 1
 # TC-05b：用户文案必须各自引用真源（数 MixLog.logFileURL 的限定用法，不是数总行数）
 # 基线 3 → 4：2026-09-28 第 2 期给 AIProviderError 的三条完整性文案共用了一处 evidenceHint
 # （见 AIProvider.swift 的 evidenceHint，故意合并成 1 处而不是各写一遍）。新增的是 1 处真源引用，

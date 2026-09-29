@@ -780,7 +780,7 @@ actor ASRService {
     }
 
     private nonisolated static let systemModelDirectories: [String] = [
-        NSHomeDirectory() + "/.cache/mixcut/models",
+        NSHomeDirectory() + "/\(Brand.legacyHomeCacheModelsComponent)",
         NSHomeDirectory() + "/.cache/whisper",
         "/opt/homebrew/share/whisper/models",
     ]

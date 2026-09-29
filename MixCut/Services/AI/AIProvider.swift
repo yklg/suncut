@@ -27,7 +27,7 @@ enum AIProviderError: LocalizedError {
 
     /// 三条新文案共用的"去哪儿看证据"一句话。故意只写一遍：
     /// 路径真源是 MixLog 里的 logFileURL 常量，散开写就会变成 N 处各引一遍、日后漂移。
-    private static let evidenceHint = "证据位置：\(MixLog.logFileURL.path)（日志）与同级 com.mixcut.app/ai-fail 目录（原始响应留证）"
+    private static let evidenceHint = "证据位置：\(MixLog.logFileURL.path)（日志）与同级 \(Brand.aiFailDirectoryComponent) 目录（原始响应留证）"
 
     var errorDescription: String? {
         switch self {

@@ -28,7 +28,7 @@ final class AgentGateway {
     }
 
     static var registerCommand: String {
-        "claude mcp add --transport http mixcut http://127.0.0.1:\(configuredPort)/mcp"
+        "claude mcp add --transport http \(Brand.mcpServerName) http://127.0.0.1:\(configuredPort)/mcp"
     }
 
     func configure(container: ModelContainer) {
@@ -71,7 +71,7 @@ final class AgentGateway {
         switch MCPProtocol.parse(body) {
         case .initialize(let id):
             return MCPProtocol.initializeResponse(
-                id: id, serverName: "mixcut", serverVersion: serverVersion,
+                id: id, serverName: Brand.mcpServerName, serverVersion: serverVersion,
                 instructions: AgentToolCatalog.serverInstructions)
         case .initializedNotification:
             return nil

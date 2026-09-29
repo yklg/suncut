@@ -585,18 +585,18 @@ struct SettingsView: View {
             case .url:
                 return url
             case .claudeCode:
-                return "claude mcp add --transport http mixcut \(url)"
+                return "claude mcp add --transport http \(Brand.mcpServerName) \(url)"
             case .cursorJSON:
                 return """
                 {
                   "mcpServers": {
-                    "mixcut": { "url": "\(url)" }
+                    "\(Brand.mcpServerName)": { "url": "\(url)" }
                   }
                 }
                 """
             case .codex:
                 return """
-                [mcp_servers.mixcut]
+                [mcp_servers.\(Brand.mcpServerName)]
                 command = "npx"
                 args = ["-y", "mcp-remote", "\(url)"]
                 """
@@ -604,7 +604,7 @@ struct SettingsView: View {
                 return """
                 {
                   "mcpServers": {
-                    "mixcut": { "url": "\(url)", "transport": "http" }
+                    "\(Brand.mcpServerName)": { "url": "\(url)", "transport": "http" }
                   }
                 }
                 """
@@ -612,7 +612,7 @@ struct SettingsView: View {
                 return """
                 {
                   "mcpServers": {
-                    "mixcut": { "httpUrl": "\(url)" }
+                    "\(Brand.mcpServerName)": { "httpUrl": "\(url)" }
                   }
                 }
                 """
@@ -620,7 +620,7 @@ struct SettingsView: View {
                 return """
                 {
                   "servers": {
-                    "mixcut": { "type": "http", "url": "\(url)" }
+                    "\(Brand.mcpServerName)": { "type": "http", "url": "\(url)" }
                   }
                 }
                 """
@@ -648,7 +648,7 @@ struct SettingsView: View {
     }
 
     /// 注册后的验证指令：用户复制给 Agent 执行，能返回项目清单即代表链路通了
-    private static let agentVerifyPrompt = "请调用 mixcut 的 list_projects 工具，列出我的所有项目，每行输出：项目名｜状态｜视频数｜分镜数。"
+    private static let agentVerifyPrompt = "请调用 \(Brand.mcpServerName) 的 list_projects 工具，列出我的所有项目，每行输出：项目名｜状态｜视频数｜分镜数。"
 
     private var agentSettings: some View {
         Form {
