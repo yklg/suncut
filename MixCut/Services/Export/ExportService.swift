@@ -275,7 +275,7 @@ enum ExportDestination {
             return "选择的位置不存在或不是文件夹，请重新选择。"
         }
         guard fm.isWritableFile(atPath: directory.path) else {
-            return "没有写入「\(directory.lastPathComponent)」的权限。请换一个目录（例如「桌面」或「下载」），或在「系统设置 → 隐私与安全性 → 文件与文件夹」里授予 MixCut 访问权限。"
+            return "没有写入「\(directory.lastPathComponent)」的权限。请换一个目录（例如「桌面」或「下载」），或在「系统设置 → 隐私与安全性 → 文件与文件夹」里授予 \(Brand.displayName) 访问权限。"
         }
 
         if let estimatedBytes, estimatedBytes > 0 {

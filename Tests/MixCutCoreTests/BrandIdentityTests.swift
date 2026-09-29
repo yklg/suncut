@@ -24,6 +24,7 @@ func brandLiteralsLiveOnlyInBrandSwift() throws {
 
     let forbidden = [
         Brand.shortName,
+        Brand.displayName,
         "\"\(Brand.storeFileName)\"",
         "appendingPathComponent(\"\(Brand.dataDirectoryName)\"",
     ]
@@ -79,7 +80,49 @@ func brandDerivedValuesAndLegacyArePinned() throws {
             .appendingPathComponent("Sources/MixCutCore/Brand.swift"),
         encoding: .utf8)
     for name in ["legacyCacheBundleID", "legacyShortName", "legacyDataDirectoryName",
-                 "legacyStoreFileName", "legacyBundleID"] {
+                 "legacyStoreFileName", "legacyBundleID", "legacyDisplayName", "legacyAbbrev"] {
         #expect(brandText.contains("let \(name) = \""), "\(name) 必须直接赋字面量，不能引用当前身份字段")
+    }
+}
+
+/// 上一轮改名的真实教训：机器身份翻干净了，界面文案还写着旧名，
+/// 而当时所有判据都绿 —— 因为它们只盯**新**名字，看不见**旧**名字残留。
+/// 这条把"旧字样不许留在生产码的字符串字面量里"变成机械判据。
+/// 作用域只放生产码：测试夹具天然要写旧字样，扫 `Tests/` 只会逼出一张会烂掉的豁免清单。
+@Test("旧品牌字样不得残留在生产码的字符串字面量里")
+func legacyBrandTokensDoNotSurviveInProductionStrings() throws {
+    let root = URL(fileURLWithPath: #filePath)
+        .deletingLastPathComponent()
+        .deletingLastPathComponent()
+        .deletingLastPathComponent()
+    let brandFile = "Sources/MixCutCore/Brand.swift"
+    let tokens = [Brand.legacyDisplayName, Brand.legacyAbbrev]
+
+    var offenders: [String] = []
+    var scanned = 0
+    for dir in ["MixCut", "Sources"] {
+        let base = root.appendingPathComponent(dir)
+        guard let en = FileManager.default.enumerator(at: base, includingPropertiesForKeys: nil) else {
+            Issue.record("扫描目录不存在：\(dir) —— 判据失效，不是通过")
+            return
+        }
+        for case let url as URL in en where url.pathExtension == "swift" {
+            var rel = url.path
+            if rel.hasPrefix(root.path) { rel = String(rel.dropFirst(root.path.count + 1)) }
+            if rel == brandFile { continue }
+            scanned += 1
+            let text = (try? String(contentsOf: url, encoding: .utf8)) ?? ""
+            for hit in BrandResidueScanner.hits(in: text, tokens: tokens) {
+                offenders.append("\(rel):\(hit.line)  \(hit.snippet.prefix(78))")
+            }
+        }
+    }
+
+    if scanned <= 100 {
+        Issue.record("只扫到 \(scanned) 个文件，扫描根可能错了 —— 判据失效，不算通过")
+    }
+    if !offenders.isEmpty {
+        let detail = offenders.joined(separator: "\n")
+        Issue.record("旧品牌字样残留在上屏/外发文案里，显示身份必须走 Brand：\n\(detail)")
     }
 }

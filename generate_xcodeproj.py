@@ -211,7 +211,7 @@ for fref_id, path, name, ftype in file_refs:
     pbxproj += f'\t\t{fref_id} /* {name} */ = {{isa = PBXFileReference; lastKnownFileType = {ftype}; path = "{name}"; sourceTree = "<group>"; }};\n'
 
 # App product
-pbxproj += f'\t\t{APP_FILEREF_ID} /* MixCut.app */ = {{isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = MixCut.app; sourceTree = BUILT_PRODUCTS_DIR; }};\n'
+pbxproj += f'\t\t{APP_FILEREF_ID} /* SunCut.app */ = {{isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = SunCut.app; sourceTree = BUILT_PRODUCTS_DIR; }};\n'
 
 # Entitlements
 pbxproj += f'\t\t{ENTITLEMENTS_FILEREF_ID} /* MixCut.entitlements */ = {{isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = MixCut.entitlements; sourceTree = "<group>"; }};\n'
@@ -257,7 +257,7 @@ pbxproj += f"""\t\t{ROOT_GROUP_ID} = {{
 pbxproj += f"""\t\t{PRODUCTS_GROUP_ID} /* Products */ = {{
 \t\t\tisa = PBXGroup;
 \t\t\tchildren = (
-\t\t\t\t{APP_FILEREF_ID} /* MixCut.app */,
+\t\t\t\t{APP_FILEREF_ID} /* SunCut.app */,
 \t\t\t);
 \t\t\tname = Products;
 \t\t\tsourceTree = "<group>";
@@ -302,7 +302,7 @@ pbxproj += f"""\t\t{MAIN_TARGET_ID} /* MixCut */ = {{
 \t\t\t);
 \t\t\tname = MixCut;
 \t\t\tproductName = MixCut;
-\t\t\tproductReference = {APP_FILEREF_ID} /* MixCut.app */;
+\t\t\tproductReference = {APP_FILEREF_ID} /* SunCut.app */;
 \t\t\tproductType = "com.apple.product-type.application";
 \t\t}};
 """
@@ -497,8 +497,8 @@ pbxproj += f"""\t\t{DEBUG_CONFIG_TARGET} /* Debug */ = {{
 \t\t\t\t\t"@executable_path/../Frameworks",
 \t\t\t\t);
 \t\t\t\tMARKETING_VERSION = {MARKETING_VERSION};
-\t\t\t\tPRODUCT_BUNDLE_IDENTIFIER = com.mixcut.app;
-\t\t\t\tPRODUCT_NAME = "$(TARGET_NAME)";
+\t\t\t\tPRODUCT_BUNDLE_IDENTIFIER = com.suncut.app;
+\t\t\t\tPRODUCT_NAME = SunCut;
 \t\t\t\tSWIFT_EMIT_LOC_STRINGS = YES;
 \t\t\t\tSWIFT_VERSION = 5.0;
 \t\t\t}};
@@ -526,8 +526,8 @@ pbxproj += f"""\t\t{RELEASE_CONFIG_TARGET} /* Release */ = {{
 \t\t\t\t\t"@executable_path/../Frameworks",
 \t\t\t\t);
 \t\t\t\tMARKETING_VERSION = {MARKETING_VERSION};
-\t\t\t\tPRODUCT_BUNDLE_IDENTIFIER = com.mixcut.app;
-\t\t\t\tPRODUCT_NAME = "$(TARGET_NAME)";
+\t\t\t\tPRODUCT_BUNDLE_IDENTIFIER = com.suncut.app;
+\t\t\t\tPRODUCT_NAME = SunCut;
 \t\t\t\tSWIFT_EMIT_LOC_STRINGS = YES;
 \t\t\t\tSWIFT_VERSION = 5.0;
 \t\t\t}};

@@ -133,9 +133,9 @@ struct WhisperModelCatalogTests {
     @Test("TC-66 同档两颗（磁盘 + 包内同名）⇒ 选磁盘那颗")
     func diskBeatsBundleForSameTier() throws {
         let onDisk = file("ggml-large-v3.bin", .userDirectory, bytes: largeV3Bytes,
-                          path: "/Library/Application Support/MixCut/whisper-models/ggml-large-v3.bin")
+                          path: "/Library/Application Support/\(Brand.dataDirectoryName)/whisper-models/ggml-large-v3.bin")
         let inBundle = file("ggml-large-v3.bin", .appBundle, bytes: largeV3Bytes,
-                            path: "/Applications/MixCut.app/Contents/Resources/bin/ggml-large-v3.bin")
+                            path: "/Applications/\(Brand.displayName).app/Contents/Resources/bin/ggml-large-v3.bin")
         let report = WhisperModelCatalog.report(files: [inBundle, onDisk])
         #expect(report.selected?.root == .userDirectory,
                 "磁盘优先是本轮裁定项；实际选中 \(String(describing: report.selected?.root))")

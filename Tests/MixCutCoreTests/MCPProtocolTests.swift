@@ -97,15 +97,18 @@ struct MCPProtocolEncodeTests {
     func initializeResponseWithInstructions() throws {
         let data = MCPProtocol.initializeResponse(
             id: .number(1), serverName: "srv", serverVersion: "1.0",
-            instructions: "MixCut（简写 MC）是视频混剪应用")
+            instructions: "说明文字应当原样透传给客户端")
         let result = try #require(try decode(data)["result"] as? [String: Any])
-        #expect(result["instructions"] as? String == "MixCut（简写 MC）是视频混剪应用")
+        #expect(result["instructions"] as? String == "说明文字应当原样透传给客户端")
     }
 
-    @Test("serverInstructions 含 MC 简写/寻址约定/字幕三档/含糊必须反问")
+    @Test("serverInstructions 含当前简写 + 旧名别名/寻址约定/字幕三档/含糊必须反问")
     func serverInstructionsContent() {
         let text = AgentToolCatalog.serverInstructions
-        #expect(text.contains("MC"))
+        // 发给模型的自我介绍必须报出当前名与简写；旧名也要在 —— 老用户改不了嘴。
+        #expect(text.contains(Brand.displayName))
+        #expect(text.contains("用户常用简写：\(Brand.abbrev)"))
+        #expect(text.contains(Brand.legacyDisplayName) && text.contains(Brand.legacyAbbrev))
         #expect(text.contains("video_no"))
         #expect(text.contains("直接烧录") && text.contains("模糊虚化") && text.contains("纯色遮挡"))
         #expect(text.contains("确认"))

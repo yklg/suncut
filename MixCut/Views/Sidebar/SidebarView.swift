@@ -28,10 +28,8 @@ struct SidebarView: View {
                 selectedNavItem = nil
             } label: {
                 HStack(spacing: DesignTokens.Spacing.compact) {
-                    Image(systemName: "film.stack.fill")
-                        .font(DesignTokens.Typography.bodyLarge)
-                        .foregroundStyle(.blue)
-                    Text("MixCut")
+                    BrandLogo(size: 14)
+                    Text(Brand.displayName)
                         .font(.system(size: 14, weight: .bold))
                         .foregroundStyle(.primary)
                     Spacer()

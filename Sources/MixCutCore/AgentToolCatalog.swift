@@ -32,10 +32,11 @@ public enum AgentJSON {
 /// 第一阶段的 9 个 MCP 工具定义（实现在 app target 的 MCPToolHandlers）
 public enum AgentToolCatalog {
     /// initialize 握手时下发给客户端的服务器说明（客户端注入给模型）。
-    /// 作用：让任何注册了本服务的 Agent 自动知道 MC 简写、寻址约定、核心工作流和注意事项。
+    /// 作用：让任何注册了本服务的 Agent 自动知道品牌简写、寻址约定、核心工作流和注意事项。
+    /// 品牌字样一律走 `Brand` 插值：这条文案会原样发给模型，写死就等于第二处身份来源。
     public static let serverInstructions = """
-    MixCut（用户常用简写：MC）是一款 macOS 端 AI 视频混剪应用，面向广告投放团队。\
-    用户说「MC」「混剪工具」时即指本服务。
+    \(Brand.displayName)（用户常用简写：\(Brand.abbrev)；曾用 \(Brand.legacyDisplayName) / \(Brand.legacyAbbrev)，\
+    用户提到这几个名字或说「混剪工具」时也都指本服务）是一款 macOS 端 AI 视频混剪应用，面向广告投放团队。
 
     寻址约定：视频用 video_no（项目内按导入顺序 1 起），分镜用 segment_nos（视频内按时间顺序 1 起，与 UI 卡片 # 编号一致）。\
     用户说「1 号视频的 3~8 号分镜」即 video_no=1, segment_nos=[3,4,5,6,7,8]。先 get_project / list_segments 查看编号再操作。

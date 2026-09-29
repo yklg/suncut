@@ -488,7 +488,7 @@ enum FriendlyError {
         // 无写入权限
         if nsError.code == NSFileWriteNoPermissionError
             || (nsError.domain == NSPOSIXErrorDomain && nsError.code == Int(EACCES)) {
-            return "没有写入该位置的权限。请换一个目录（例如「桌面」或「下载」），或在「系统设置 → 隐私与安全性 → 文件与文件夹」里授予 MixCut 访问权限。"
+            return "没有写入该位置的权限。请换一个目录（例如「桌面」或「下载」），或在「系统设置 → 隐私与安全性 → 文件与文件夹」里授予 \(Brand.displayName) 访问权限。"
         }
         // 只读卷
         if nsError.domain == NSPOSIXErrorDomain && nsError.code == Int(EROFS) {

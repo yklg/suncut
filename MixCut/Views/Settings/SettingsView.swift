@@ -697,7 +697,7 @@ struct SettingsView: View {
                         NSPasteboard.general.setString(Self.agentVerifyPrompt, forType: .string)
                     }
                 }
-                Text("预期返回：你的项目清单，与 MixCut 侧边栏一致（含状态、视频数、分镜数）。能列出来即注册成功；若 Agent 说找不到工具或连接失败，确认 MixCut 正在运行、端口一致后重试。")
+                Text("预期返回：你的项目清单，与 \(Brand.displayName) 侧边栏一致（含状态、视频数、分镜数）。能列出来即注册成功；若 Agent 说找不到工具或连接失败，确认 \(Brand.displayName) 正在运行、端口一致后重试。")
                     .font(DesignTokens.Typography.label)
                     .foregroundStyle(.secondary)
             }

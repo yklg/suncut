@@ -43,20 +43,12 @@ struct OnboardingView: View {
 
     private var welcomePage: some View {
         VStack(spacing: 22) {
-            Image(systemName: "film.stack.fill")
-                .font(.system(size: 56))
-                .foregroundStyle(
-                    .linearGradient(
-                        colors: [.blue, .blue.opacity(0.6)],
-                        startPoint: .top,
-                        endPoint: .bottom
-                    )
-                )
+            BrandLogo(size: 56)
 
             VStack(spacing: 6) {
-                Text("欢迎使用 MixCut")
+                Text("欢迎使用 \(Brand.displayName)")
                     .font(.system(size: 24, weight: .bold))
-                Text("AI 驱动的广告视频混剪工具")
+                Text(Brand.tagline)
                     .font(DesignTokens.Typography.body)
                     .foregroundStyle(.secondary)
             }
@@ -85,7 +77,7 @@ struct OnboardingView: View {
             VStack(spacing: 6) {
                 Text("第一步 · 配置 AI Key")
                     .font(.system(size: 22, weight: .bold))
-                Text("MixCut 需要大模型完成语义分析与混剪策略")
+                Text("\(Brand.displayName) 需要大模型完成语义分析与混剪策略")
                     .font(DesignTokens.Typography.label)
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)
@@ -251,7 +243,7 @@ struct OnboardingView: View {
                     .controlSize(.regular)
                     .keyboardShortcut(.defaultAction)
                 } else {
-                    Button("开始使用 MixCut") {
+                    Button("开始使用 \(Brand.displayName)") {
                         onComplete()
                     }
                     .buttonStyle(.borderedProminent)

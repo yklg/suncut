@@ -11,20 +11,12 @@ struct WelcomeView: View {
 
             // Logo 和标题
             VStack(spacing: DesignTokens.Spacing.normal) {
-                Image(systemName: "film.stack.fill")
-                    .font(.system(size: 48))
-                    .foregroundStyle(
-                        .linearGradient(
-                            colors: [.blue, .blue.opacity(0.6)],
-                            startPoint: .top,
-                            endPoint: .bottom
-                        )
-                    )
+                BrandLogo(size: 48)
 
-                Text("MixCut")
+                Text(Brand.displayName)
                     .font(.system(size: 28, weight: .bold))
 
-                Text("AI 驱动的广告视频混剪工具")
+                Text(Brand.tagline)
                     .font(DesignTokens.Typography.bodyLarge)
                     .foregroundStyle(.secondary)
             }

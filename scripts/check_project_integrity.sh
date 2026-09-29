@@ -65,6 +65,24 @@ if phase_vs_build:
 if not missing and not dangling and not dupes and not phase_vs_build:
     print("PASS 源码树与 pbxproj 引用双向守恒")
 
+# 显示身份对账：菜单栏/Dock/Finder 上的名字来自 pbxproj 的 PRODUCT_NAME，它不在 Brand.swift 里，
+# 是第二处身份来源。上一轮的教训正是「界面文案翻干净了，另一处还写着旧名」—— 这里把两处钉成一处。
+brand_path = os.path.join(root, "Sources", "MixCutCore", "Brand.swift")
+bm = re.search(r'static let displayName = "([^"]+)"', open(brand_path, encoding="utf-8").read())
+if not bm:
+    print(f"FAIL[判据失效] 取不出 Brand.displayName —— 无法对账，不算通过")
+    failed = True
+else:
+    display = bm.group(1)
+    prod = set(re.findall(r"PRODUCT_NAME = ([^;]+);", text))
+    apps = set(re.findall(r"explicitFileType = wrapper\.application;[^}]*?path = ([^;]+);", text))
+    if prod == {display} and apps == {display + ".app"}:
+        print(f"PASS 显示身份单一来源：PRODUCT_NAME 与产物名都等于 Brand.displayName（{display}）")
+    else:
+        print(f"FAIL[显示身份] Brand.displayName={display!r}，但 PRODUCT_NAME={sorted(prod)}、产物={sorted(apps)}")
+        print("   —— 只改 Brand 会让界面叫新名、菜单栏/Dock/Finder 仍叫旧名（改名必须两处一起翻）")
+        failed = True
+
 sys.exit(1 if failed else 0)
 PY
 

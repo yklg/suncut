@@ -28,7 +28,7 @@ enum DebugSelfTest {
             ?? NSTemporaryDirectory() + "\(Brand.shortName)_selftest.txt"
 
         let ctx = container.mainContext
-        var lines: [String] = ["# MixCut 自检报告"]
+        var lines: [String] = ["# \(Brand.displayName) 自检报告"]
 
         guard let videos = try? ctx.fetch(FetchDescriptor<Video>()), !videos.isEmpty else {
             write(outPath, ["无视频，跳过"]); return

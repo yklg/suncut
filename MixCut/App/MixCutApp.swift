@@ -864,7 +864,7 @@ struct MixCutApp: App {
 
         // 旧库必须确实是 MixCut 的库（含 ZPROJECT 表）才迁移
         guard sqliteHasTable(at: legacy.path, table: "ZPROJECT") else {
-            MixLog.info("default.store 不含 MixCut 数据（可能被其它 App 占用），跳过迁移，使用全新专属库")
+            MixLog.info("default.store 不含 \(Brand.legacyDisplayName) 数据（可能被其它 App 占用），跳过迁移，使用全新专属库")
             return
         }
 

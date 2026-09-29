@@ -407,7 +407,7 @@ final class ImportViewModel {
     /// 返回 (video, needsAnalysis) — needsAnalysis=false 表示已有完整分析数据
     private func importOrLinkVideo(url: URL, to project: Project) async throws -> (Video, Bool) {
         guard let context = modelContext else {
-            throw NSError(domain: "MixCut", code: -1, userInfo: [NSLocalizedDescriptionKey: "数据库未就绪"])
+            throw NSError(domain: Brand.bundleID, code: -1, userInfo: [NSLocalizedDescriptionKey: "数据库未就绪"])
         }
 
         phase = .copying

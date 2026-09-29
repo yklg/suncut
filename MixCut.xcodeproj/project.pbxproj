@@ -9,6 +9,7 @@
 /* Begin PBXBuildFile section */
 		0578007877B0EC7F0E74F700 /* KeychainHelper.swift in Sources */ = {isa = PBXBuildFile; fileRef = E57FE62ED6EB761E16B527C6 /* KeychainHelper.swift */; };
 		0C15885CFC5C9DBBFCCDD9D5 /* Toast.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0555732A41AACD16AAE4DBF2 /* Toast.swift */; };
+		528C7A46668926BBE08E53EF /* BrandLogo.swift in Sources */ = {isa = PBXBuildFile; fileRef = A957F563FB2F7912A46CAEEA /* BrandLogo.swift */; };
 		0CEE8F380D03F11142B4AA65 /* CaptionLine.swift in Sources */ = {isa = PBXBuildFile; fileRef = AC9AEA63EB3F5902A10DAADE /* CaptionLine.swift */; };
 		0DCCDEE048CAFE8E53CB3269 /* ShotSegmentationEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = EC364E93C57786EA39A37BB2 /* ShotSegmentationEngine.swift */; };
 		0FA1B2C3D4E5F60718293A4B /* OrphanFileFinder.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0FA1B2C3D4E5F60718293A4C /* OrphanFileFinder.swift */; };
@@ -21,6 +22,7 @@
 		C582D5DC0A5232926E4557EB /* SegmentationCompleteness.swift in Sources */ = {isa = PBXBuildFile; fileRef = 60B558A50ABAFE691C14EF5D /* SegmentationCompleteness.swift */; };
 		81E48EECDE0119AA91B96EA7 /* Brand.swift in Sources */ = {isa = PBXBuildFile; fileRef = E63E055F88B17A6B3E2043F9 /* Brand.swift */; };
 		9C80AEED4587B1320C02A6A6 /* BrandDirectoryMigration.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4169765B52EC8AAF4E1FF1EC /* BrandDirectoryMigration.swift */; };
+		BA2E27944B16BC55D66FE56D /* BrandResidueScanner.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7E8212A6A3C180B93AC5AD93 /* BrandResidueScanner.swift */; };
 		A1B2C3D4E5F60718293A0002 /* SegmentTranscribeOutcome.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F60718293A0001 /* SegmentTranscribeOutcome.swift */; };
 		D6E7F8091A2B3C4D5E6F7081 /* ASRPolicy.swift in Sources */ = {isa = PBXBuildFile; fileRef = A5B1C9D2E4F60718293A4B5C /* ASRPolicy.swift */; };
 		9A8B7C6D5E4F3021A1B2C3D4 /* ASREngineDecision.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0718293A4B5C6D7E8F90112A /* ASREngineDecision.swift */; };
@@ -159,6 +161,7 @@
 /* Begin PBXFileReference section */
 		00BB297E748A24807AAFAB9D /* CaptionBoundaryEditor.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = CaptionBoundaryEditor.swift; path = Sources/MixCutCore/CaptionBoundaryEditor.swift; sourceTree = "<group>"; };
 		0555732A41AACD16AAE4DBF2 /* Toast.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Toast.swift; sourceTree = "<group>"; };
+		A957F563FB2F7912A46CAEEA /* BrandLogo.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BrandLogo.swift; sourceTree = "<group>"; };
 		055695DBC79101AF660DD82B /* SegmentLibraryView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SegmentLibraryView.swift; sourceTree = "<group>"; };
 		091FFFADF81C22E2358CF840 /* SegmentLibraryViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SegmentLibraryViewModel.swift; sourceTree = "<group>"; };
 		0A500B64AE226C6FD193ACCA /* AIProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIProvider.swift; sourceTree = "<group>"; };
@@ -204,6 +207,7 @@
 		60B558A50ABAFE691C14EF5D /* SegmentationCompleteness.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = SegmentationCompleteness.swift; path = Sources/MixCutCore/SegmentationCompleteness.swift; sourceTree = "<group>"; };
 		E63E055F88B17A6B3E2043F9 /* Brand.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = Brand.swift; path = Sources/MixCutCore/Brand.swift; sourceTree = "<group>"; };
 		4169765B52EC8AAF4E1FF1EC /* BrandDirectoryMigration.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = BrandDirectoryMigration.swift; path = Sources/MixCutCore/BrandDirectoryMigration.swift; sourceTree = "<group>"; };
+		7E8212A6A3C180B93AC5AD93 /* BrandResidueScanner.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = BrandResidueScanner.swift; path = Sources/MixCutCore/BrandResidueScanner.swift; sourceTree = "<group>"; };
 		A1B2C3D4E5F60718293A0001 /* SegmentTranscribeOutcome.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = SegmentTranscribeOutcome.swift; path = Sources/MixCutCore/SegmentTranscribeOutcome.swift; sourceTree = "<group>"; };
 		A5B1C9D2E4F60718293A4B5C /* ASRPolicy.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = ASRPolicy.swift; path = Sources/MixCutCore/ASRPolicy.swift; sourceTree = "<group>"; };
 		0718293A4B5C6D7E8F90112A /* ASREngineDecision.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = ASREngineDecision.swift; path = Sources/MixCutCore/ASREngineDecision.swift; sourceTree = "<group>"; };
@@ -299,7 +303,7 @@
 		F4EAFF8FD211495887529EA1 /* DebugSelfTest.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DebugSelfTest.swift; sourceTree = "<group>"; };
 		F6760400393A474358D56B7E /* SegmentCardCompact.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SegmentCardCompact.swift; sourceTree = "<group>"; };
 		F6ACE8F180DF070B5BE8FCE3 /* MixScheme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MixScheme.swift; sourceTree = "<group>"; };
-		F8BEF73BC53AA8F9435A240E /* MixCut.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = MixCut.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		F8BEF73BC53AA8F9435A240E /* SunCut.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = SunCut.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		FD09EFBAFD23D44FB86BE80C /* ProjectViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProjectViewModel.swift; sourceTree = "<group>"; };
 		FF00BB11CC22DD3344EE55AA /* DubStaleness.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = DubStaleness.swift; path = Sources/MixCutCore/DubStaleness.swift; sourceTree = "<group>"; };
 		FF66AA77BB88CC99DD00EE12 /* SegmentDubControls.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SegmentDubControls.swift; sourceTree = "<group>"; };
@@ -475,6 +479,7 @@
 				60B558A50ABAFE691C14EF5D /* SegmentationCompleteness.swift */,
 				E63E055F88B17A6B3E2043F9 /* Brand.swift */,
 				4169765B52EC8AAF4E1FF1EC /* BrandDirectoryMigration.swift */,
+				7E8212A6A3C180B93AC5AD93 /* BrandResidueScanner.swift */,
 				A1B2C3D4E5F60718293A0001 /* SegmentTranscribeOutcome.swift */,
 				A5B1C9D2E4F60718293A4B5C /* ASRPolicy.swift */,
 				0718293A4B5C6D7E8F90112A /* ASREngineDecision.swift */,
@@ -536,6 +541,7 @@
 				AED3F99B8F8399F532667C69 /* SkeletonView.swift */,
 				7441C758FE1B6F0B996DCC3F /* ThumbnailCache.swift */,
 				0555732A41AACD16AAE4DBF2 /* Toast.swift */,
+				A957F563FB2F7912A46CAEEA /* BrandLogo.swift */,
 				F6760400393A474358D56B7E /* SegmentCardCompact.swift */,
 				B9989E690AD7737E922DDAE5 /* PendingDeletionCenter.swift */,
 			);
@@ -627,7 +633,7 @@
 		BF7A2D27A78D590BDEF15AF2 /* Products */ = {
 			isa = PBXGroup;
 			children = (
-				F8BEF73BC53AA8F9435A240E /* MixCut.app */,
+				F8BEF73BC53AA8F9435A240E /* SunCut.app */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -732,7 +738,7 @@
 			);
 			name = MixCut;
 			productName = MixCut;
-			productReference = F8BEF73BC53AA8F9435A240E /* MixCut.app */;
+			productReference = F8BEF73BC53AA8F9435A240E /* SunCut.app */;
 			productType = "com.apple.product-type.application";
 		};
 /* End PBXNativeTarget section */
@@ -851,6 +857,7 @@
 				DB9054B2C9C3D3C7CFED4AA7 /* SkeletonView.swift in Sources */,
 				8DA76769E698732C83DFF23D /* ThumbnailCache.swift in Sources */,
 				0C15885CFC5C9DBBFCCDD9D5 /* Toast.swift in Sources */,
+				528C7A46668926BBE08E53EF /* BrandLogo.swift in Sources */,
 				2E068775441C4A393BF919B4 /* SidebarView.swift in Sources */,
 				FA6F04366C4DEB5E60A2229B /* InsertGapButton.swift in Sources */,
 				442DB34CB4AF607DFB365D1C /* SegmentCardCompact.swift in Sources */,
@@ -863,6 +870,7 @@
 				C582D5DC0A5232926E4557EB /* SegmentationCompleteness.swift in Sources */,
 				81E48EECDE0119AA91B96EA7 /* Brand.swift in Sources */,
 				9C80AEED4587B1320C02A6A6 /* BrandDirectoryMigration.swift in Sources */,
+				BA2E27944B16BC55D66FE56D /* BrandResidueScanner.swift in Sources */,
 				A1B2C3D4E5F60718293A0002 /* SegmentTranscribeOutcome.swift in Sources */,
 				D6E7F8091A2B3C4D5E6F7081 /* ASRPolicy.swift in Sources */,
 				9A8B7C6D5E4F3021A1B2C3D4 /* ASREngineDecision.swift in Sources */,
@@ -950,8 +958,8 @@
 					"@executable_path/../Frameworks",
 				);
 				MARKETING_VERSION = 0.11.0;
-				PRODUCT_BUNDLE_IDENTIFIER = com.mixcut.app;
-				PRODUCT_NAME = "$(TARGET_NAME)";
+				PRODUCT_BUNDLE_IDENTIFIER = com.suncut.app;
+				PRODUCT_NAME = SunCut;
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_VERSION = 5.0;
 			};
@@ -1075,8 +1083,8 @@
 					"@executable_path/../Frameworks",
 				);
 				MARKETING_VERSION = 0.11.0;
-				PRODUCT_BUNDLE_IDENTIFIER = com.mixcut.app;
-				PRODUCT_NAME = "$(TARGET_NAME)";
+				PRODUCT_BUNDLE_IDENTIFIER = com.suncut.app;
+				PRODUCT_NAME = SunCut;
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_VERSION = 5.0;
 			};
