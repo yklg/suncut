@@ -78,7 +78,8 @@ func brandDerivedValuesAndLegacyArePinned() throws {
             .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
             .appendingPathComponent("Sources/MixCutCore/Brand.swift"),
         encoding: .utf8)
-    for name in ["legacyCacheBundleID", "legacyShortName"] {
+    for name in ["legacyCacheBundleID", "legacyShortName", "legacyDataDirectoryName",
+                 "legacyStoreFileName", "legacyBundleID"] {
         #expect(brandText.contains("let \(name) = \""), "\(name) 必须直接赋字面量，不能引用当前身份字段")
     }
 }

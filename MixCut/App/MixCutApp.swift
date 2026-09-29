@@ -72,6 +72,11 @@ struct MixCutApp: App {
         appUndoManager = undoMgr
         _undoState = State(initialValue: UndoUIState(undoMgr))
 
+        // 换 bundle id 之后新域是空的：先把旧域整域搬过来，再开库、再读任何设置。
+        Self.importSettingsFromLegacyDomain()
+        // 目录迁移必须赶在 ModelContainer 打开库文件之前完成（库本体也在被搬的目录里）。
+        FileHelper.migrateToBrandDirectoryIfNeeded()
+
         // 强制浅色外观（AppKit + SwiftUI 同时生效）
         // 用 NSAppearance 设置而非 SwiftUI 的 .preferredColorScheme，
         // 后者只影响 SwiftUI 颜色环境，AppKit 嵌入的 NSTextField 仍读 system effectiveAppearance
@@ -101,6 +106,10 @@ struct MixCutApp: App {
             let config = ModelConfiguration(schema: schema, url: FileHelper.mixCutStoreURL)
             modelContainer = try ModelContainer(for: schema, configurations: [config])
             initError = nil
+
+            // 目录搬完（或还没搬）之后，库里存的绝对路径可能仍指着旧目录。前缀改写必须排在
+            // recoverFromDisk / 孤儿 GC 之前 —— 那两步都拿路径当"文件在不在"的依据。
+            Self.rewriteStoredPathPrefixes(container: modelContainer)
 
             // ⚠️ 不挂 SwiftData 内置 UndoManager：实测在本数据模型上，挂 undoManager 后
             // context.delete(...) 会同步触发 SwiftData 内部 _assertionFailure 崩溃（删 SchemeSegment
@@ -1067,9 +1076,96 @@ struct MixCutApp: App {
         }
     }
 
+    /// 换 bundle id 后新域是空的，所以把旧域的**全部**键搬进新域。
+    ///
+    /// 不能写白名单：`api_key_*` / `selected_model_*` / `thinking_enabled_*` 是按 provider 动态拼的，
+    /// 静态枚举只能列出字面量键，必然漏 API Key。标志存"从哪个域导入过"，
+    /// 于是整域拷贝最多重复一次，且换品牌之后会自动再做一次。
+    private static func importSettingsFromLegacyDomain() {
+        guard Brand.legacyBundleID != Brand.bundleID else { return }   // 还没翻名字：整段空转
+        let doneKey = LegacySettingsImport.importedFromKey
+        guard UserDefaults.standard.string(forKey: doneKey) != Brand.bundleID else { return }
+
+        // 只搬"用户真存过的"键。`UserDefaults(suiteName:).dictionaryRepresentation` 会把系统全局域
+        // （AppleLanguages / NSLanguages / 拼写检查状态 …）和本进程的启动参数一起吐出来 ——
+        // 演练实测多带进 30 个键。这些东西一旦被持久化进新域，将来改代码默认值或用户改系统语言都对老用户失效。
+        // 持久域的内容就在 ~/Library/Preferences/<bundleID>.plist，读它。
+        let plistPath = NSHomeDirectory() + "/Library/Preferences/\(Brand.legacyBundleID).plist"
+        guard let raw = FileManager.default.contents(atPath: plistPath),
+              let object = try? PropertyListSerialization.propertyList(from: raw, options: [], format: nil),
+              let stored = object as? [String: Any] else {
+            MixLog.error("[BrandMigration] 读不到旧域 \(Brand.legacyBundleID).plist —— 本次不导入设置（旧域未被改动，可人工恢复）")
+            return
+        }
+        let keys = LegacySettingsImport.keysToImport(Set(stored.keys))
+        for key in keys {
+            if let value = stored[key] { UserDefaults.standard.set(value, forKey: key) }
+        }
+        UserDefaults.standard.set(Brand.bundleID, forKey: doneKey)
+        MixLog.info("[BrandMigration] 从旧域 \(Brand.legacyBundleID) 导入设置 \(keys.count) 项")
+    }
+
+    /// 一次性改写库里存的绝对路径前缀（旧数据目录 → 当前数据目录）。
+    /// 幂等：只有仍以旧前缀开头的值才动，重复启动不会来回改。
+    @MainActor
+    private static func rewriteStoredPathPrefixes(container: ModelContainer) {
+        let base = FileHelper.appSupportBaseDirectory.path
+        let oldPrefix = "\(base)/\(Brand.legacyDataDirectoryName)"
+        let newPrefix = "\(base)/\(Brand.dataDirectoryName)"
+        guard oldPrefix != newPrefix else { return }
+
+        let ctx = container.mainContext
+        var rewritten = 0
+        var uncovered = 0
+
+        /// 读→判→写。`uncovered` 专门接住"看着像旧路径、但改写规则没命中"的值，不让它静默过去。
+        func apply(_ read: () -> String?, _ write: (String) -> Void) {
+            guard let value = read() else { return }
+            if let fixed = StoredPathPrefixRewriter.rewrite(value, from: oldPrefix, to: newPrefix) {
+                write(fixed)
+                rewritten += 1
+            } else if value.hasPrefix(oldPrefix) {
+                uncovered += 1
+            }
+        }
+
+        for video in (try? ctx.fetch(FetchDescriptor<Video>())) ?? [] {
+            apply({ video.localPath }, { video.localPath = $0 })
+            apply({ video.thumbnailPath }, { video.thumbnailPath = $0 })
+        }
+        for segment in (try? ctx.fetch(FetchDescriptor<Segment>())) ?? [] {
+            apply({ segment.thumbnailPath }, { segment.thumbnailPath = $0 })
+            apply({ segment.replacedPictureVideoPath }, { segment.replacedPictureVideoPath = $0 })
+            apply({ segment.replacedPictureThumbnailPath }, { segment.replacedPictureThumbnailPath = $0 })
+            for shot in segment.physicalShots {
+                apply({ shot.thumbnailPath }, { shot.thumbnailPath = $0 })
+                for variant in shot.variants {
+                    apply({ variant.resultVideoPath }, { variant.resultVideoPath = $0 })
+                    apply({ variant.thumbnailPath }, { variant.thumbnailPath = $0 })
+                }
+            }
+        }
+        // 配音音频不在 GC 扫的那 5 棵树里，但路径同样存在库内，改写必须带上
+        for dub in (try? ctx.fetch(FetchDescriptor<SegmentDub>())) ?? [] {
+            apply({ dub.audioFilePath }, { dub.audioFilePath = $0 })
+        }
+        try? ctx.save()
+
+        MixLog.info("[BrandMigration] 路径前缀改写 \(rewritten) 个值（\(oldPrefix) → \(newPrefix)）")
+        if uncovered > 0 {
+            MixLog.error("[BrandMigration] 有 \(uncovered) 个值以旧前缀开头却没被改写 —— 字段清单不全，需人工核对")
+        }
+    }
+
     /// 按需调度孤儿文件 GC：距上次执行满 24 小时才跑，且延后到启动之后，避免拖慢冷启动。
     @MainActor
     private static func scheduleOrphanGCIfDue(container: ModelContainer) {
+        // 迁移没落地就绝不回收：此时库里的路径还指着旧目录，"未引用"判定全都不可信。
+        // 且**不写 lastOrphanGCAt** —— 否则等于把这枚雷顺延 24 小时，跳过原因就从日志里消失了。
+        guard FileHelper.isBrandDirectoryMigrationComplete else {
+            MixLog.info("[OrphanGC] 品牌目录迁移未完成，本次跳过且不记时间戳")
+            return
+        }
         let key = "lastOrphanGCAt"
         let interval: TimeInterval = 24 * 60 * 60
         let last = UserDefaults.standard.double(forKey: key)

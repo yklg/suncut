@@ -36,6 +36,13 @@ public enum Brand {
     /// 更早的构建把 whisper 模型放在 `~/.cache/<此值>/models`，现在只作为扫描来源读取。
     static let legacyShortName = "mixcut"
 
+    /// 换品牌前已经写在用户盘上的数据目录名与库文件名 —— 一次性迁移要读它们。
+    static let legacyDataDirectoryName = "MixCut"
+    static let legacyStoreFileName = "MixCut.store"
+
+    /// 换品牌前的 bundle id：设置整域拷贝的**来源域**。新域是空的，不搬就等于用户设置全丢。
+    static let legacyBundleID = "com.mixcut.app"
+
     static var legacyWhisperModelsComponent: String { "\(legacyCacheBundleID)/whisper-models" }
     static var legacyHomeCacheModelsComponent: String { ".cache/\(legacyShortName)/models" }
 }

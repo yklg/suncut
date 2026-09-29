@@ -12,16 +12,31 @@ enum FileHelper {
         }
     }
 
+    /// `Application Support` 本身（品牌数据目录的父级）。取不到时退回临时目录，与历史行为一致。
+    static var appSupportBaseDirectory: URL {
+        #if DEBUG
+        // 改名迁移的演练入口：把数据根指到 .scratch 下的假根，让真搬迁/真改写能在克隆数据上跑，
+        // 而不碰用户真目录。假 HOME 这条路实测走不通（Foundation 用户域不认 $HOME），所以只能显式给。
+        // Release 编译不进这一支。
+        if let root = ProcessInfo.processInfo.environment["MIXCUT_DEBUG_APP_SUPPORT_ROOT"],
+           !root.isEmpty {
+            return URL(fileURLWithPath: root, isDirectory: true)
+        }
+        #endif
+        return FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
+            ?? FileManager.default.temporaryDirectory
+    }
+
     /// 应用沙盒中的项目数据目录
     static var appSupportDirectory: URL {
-        guard let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else {
-            let fallback = FileManager.default.temporaryDirectory.appendingPathComponent(Brand.dataDirectoryName, isDirectory: true)
-            ensureDirectory(at: fallback)
-            return fallback
-        }
-        let url = base.appendingPathComponent(Brand.dataDirectoryName, isDirectory: true)
+        let url = appSupportBaseDirectory.appendingPathComponent(Brand.dataDirectoryName, isDirectory: true)
         ensureDirectory(at: url)
         return url
+    }
+
+    /// 换品牌前数据所在的目录。**只读**，不在这里建目录 —— 目录不存在就等于没东西可搬。
+    static var legacyAppSupportDirectory: URL {
+        appSupportBaseDirectory.appendingPathComponent(Brand.legacyDataDirectoryName, isDirectory: true)
     }
 
     // MARK: - SwiftData 数据库
@@ -57,6 +72,21 @@ enum FileHelper {
         return url
     }
 
+    // MARK: - 分镜头/替换画面产物根目录（写入侧与孤儿 GC 共用同一真源）
+
+    /// 目录名只允许写在这里一次：GC 若另抄一份，漂移就会把在用文件当孤儿删。
+    static var shotVariantsDirectory: URL {
+        appSupportDirectory.appendingPathComponent("ShotVariants", isDirectory: true)
+    }
+
+    static var shotThumbnailsDirectory: URL {
+        appSupportDirectory.appendingPathComponent("ShotThumbnails", isDirectory: true)
+    }
+
+    static var replacedPicturesDirectory: URL {
+        appSupportDirectory.appendingPathComponent("ReplacedPictures", isDirectory: true)
+    }
+
     // MARK: - 配音音频存储（按视频 hash / 方案变体 / 分镜 ID 三级目录）
 
     /// 配音音频全局目录：AppSupport/MixCut/Dubs/{videoHash}/{segmentId}/{voiceId}-v{textVariantIndex}.m4a
@@ -73,8 +103,7 @@ enum FileHelper {
 
     /// 分镜头变体视频：AppSupport/MixCut/ShotVariants/{videoHash}/{shotId}/{variantId}.mp4
     static func shotVariantURL(videoHash: String, shotId: UUID, variantId: UUID) -> URL {
-        let dir = appSupportDirectory
-            .appendingPathComponent("ShotVariants", isDirectory: true)
+        let dir = shotVariantsDirectory
             .appendingPathComponent(videoHash, isDirectory: true)
             .appendingPathComponent(shotId.uuidString, isDirectory: true)
         ensureDirectory(at: dir)
@@ -83,8 +112,7 @@ enum FileHelper {
 
     /// 分镜头变体缩略图（与变体视频同目录，后缀 .jpg）
     static func shotVariantThumbnailURL(videoHash: String, shotId: UUID, variantId: UUID) -> URL {
-        let dir = appSupportDirectory
-            .appendingPathComponent("ShotVariants", isDirectory: true)
+        let dir = shotVariantsDirectory
             .appendingPathComponent(videoHash, isDirectory: true)
             .appendingPathComponent(shotId.uuidString, isDirectory: true)
         ensureDirectory(at: dir)
@@ -93,8 +121,7 @@ enum FileHelper {
 
     /// 分镜头首帧缩略图：AppSupport/MixCut/ShotThumbnails/{videoHash}/{shotId}.jpg
     static func shotThumbnailURL(videoHash: String, shotId: UUID) -> URL {
-        let dir = appSupportDirectory
-            .appendingPathComponent("ShotThumbnails", isDirectory: true)
+        let dir = shotThumbnailsDirectory
             .appendingPathComponent(videoHash, isDirectory: true)
         ensureDirectory(at: dir)
         return dir.appendingPathComponent("\(shotId.uuidString).jpg")
@@ -104,8 +131,7 @@ enum FileHelper {
 
     /// 替换画面视频：AppSupport/MixCut/ReplacedPictures/{videoHash}/{segmentId}.mp4
     static func replacedPictureURL(videoHash: String, segmentId: UUID) -> URL {
-        let dir = appSupportDirectory
-            .appendingPathComponent("ReplacedPictures", isDirectory: true)
+        let dir = replacedPicturesDirectory
             .appendingPathComponent(videoHash, isDirectory: true)
         ensureDirectory(at: dir)
         return dir.appendingPathComponent("\(segmentId.uuidString).mp4")
@@ -113,8 +139,7 @@ enum FileHelper {
 
     /// 替换画面缩略图（与替换视频同目录，后缀 .jpg）
     static func replacedPictureThumbnailURL(videoHash: String, segmentId: UUID) -> URL {
-        let dir = appSupportDirectory
-            .appendingPathComponent("ReplacedPictures", isDirectory: true)
+        let dir = replacedPicturesDirectory
             .appendingPathComponent(videoHash, isDirectory: true)
         ensureDirectory(at: dir)
         return dir.appendingPathComponent("\(segmentId.uuidString).jpg")
@@ -253,6 +278,68 @@ enum FileHelper {
         }
     }
 
+    // MARK: - 品牌目录一次性迁移
+
+    /// 完成标志存的是"迁到了哪个目录名"，不是布尔：换品牌时目录名一变，存的值就不再相等，
+    /// 迁移会自动再触发一次。键名与"不许跨域继承"的规则同住 `LegacySettingsImport`。
+    ///
+    /// 这个值同时是孤儿 GC 的冻结门：迁移未完成时库里的路径仍指着旧目录，任何"未引用"判定都不可信。
+    static var isBrandDirectoryMigrationComplete: Bool {
+        UserDefaults.standard.string(forKey: LegacySettingsImport.migratedToKey) == Brand.dataDirectoryName
+    }
+
+    /// 把数据从历史目录名搬到当前目录名。同卷 `moveItem` 是 rename，GB 级也瞬间完成，绝不用 `cp -R`。
+    ///
+    /// 幂等：源已不存在就跳过；**新旧两处同名则整轮中止**（不敢猜哪一份在用）。
+    /// 任何一步没成都不写完成标志，于是 GC 一直冻着 —— 宁可留着孤儿，也不能删错。
+    @discardableResult
+    static func migrateToBrandDirectoryIfNeeded() -> Bool {
+        guard !isBrandDirectoryMigrationComplete else { return true }
+        let fm = FileManager.default
+        let legacy = legacyAppSupportDirectory
+        let target = appSupportDirectory          // 顺带把新目录建出来
+        let entries = (try? fm.contentsOfDirectory(atPath: legacy.path)) ?? []
+        let plan = BrandDirectoryMigration.plan(
+            oldDirectoryName: Brand.legacyDataDirectoryName,
+            newDirectoryName: Brand.dataDirectoryName,
+            legacyStoreFileName: Brand.legacyStoreFileName,
+            storeFileName: Brand.storeFileName,
+            entries: entries
+        )
+
+        var moved = 0
+        switch BrandDirectoryMigration.execute(plan, oldDirectory: legacy, newDirectory: target) {
+        case .collision(let name):
+            MixLog.error("[BrandMigration] \(name) 在新旧两处都有，不敢猜哪一份在用 —— 迁移中止，孤儿 GC 保持冻结")
+            return false
+        case .failed(let name, let reason):
+            MixLog.error("[BrandMigration] 搬迁 \(name) 失败：\(reason) —— 迁移未完成，孤儿 GC 保持冻结")
+            return false
+        case .done(let count):
+            moved = count
+        }
+        excludeFromBackup(target)
+
+        // 旧目录只剩回退料（backup-*），改名 -legacy 摆在原地，免得被当成当前数据目录
+        if Brand.legacyDataDirectoryName != Brand.dataDirectoryName,
+           fm.fileExists(atPath: legacy.path) {
+            let remnant = appSupportBaseDirectory
+                .appendingPathComponent("\(Brand.legacyDataDirectoryName)-legacy", isDirectory: true)
+            if fm.fileExists(atPath: remnant.path) {
+                MixLog.info("[BrandMigration] \(remnant.lastPathComponent) 已存在，旧目录原样保留")
+            } else {
+                do { try fm.moveItem(at: legacy, to: remnant) }
+                catch {
+                    MixLog.error("[BrandMigration] 旧目录改名 -legacy 失败（可容忍，内容已搬空）：\(error.localizedDescription)")
+                }
+            }
+        }
+
+        UserDefaults.standard.set(Brand.dataDirectoryName, forKey: LegacySettingsImport.migratedToKey)
+        MixLog.info("[BrandMigration] 目录迁移完成：搬迁 \(moved) 项，留在旧目录 \(plan.keepBehind.count) 项")
+        return true
+    }
+
     // MARK: - 孤儿文件 GC
 
     /// 回收孤儿文件：扫描全局视频/缩略图目录，删除"数据库已无任何记录引用"的文件。
@@ -273,7 +360,7 @@ enum FileHelper {
             onDisk.append(contentsOf: thumbs.map(\.path))
         }
         // 就地替换画面：ReplacedPictures/{hash}/xxx.mp4|.jpg（两级）
-        let replacedDir = appSupportDirectory.appendingPathComponent("ReplacedPictures", isDirectory: true)
+        let replacedDir = replacedPicturesDirectory
         if let hashDirs = try? fm.contentsOfDirectory(at: replacedDir, includingPropertiesForKeys: nil) {
             for hashDir in hashDirs {
                 if let files = try? fm.contentsOfDirectory(at: hashDir, includingPropertiesForKeys: nil) {
@@ -282,7 +369,7 @@ enum FileHelper {
             }
         }
         // 分镜头缩略图：ShotThumbnails/{hash}/xxx.jpg（两级）
-        let shotThumbDir = appSupportDirectory.appendingPathComponent("ShotThumbnails", isDirectory: true)
+        let shotThumbDir = shotThumbnailsDirectory
         if let hashDirs = try? fm.contentsOfDirectory(at: shotThumbDir, includingPropertiesForKeys: nil) {
             for hashDir in hashDirs {
                 if let files = try? fm.contentsOfDirectory(at: hashDir, includingPropertiesForKeys: nil) {
@@ -291,7 +378,7 @@ enum FileHelper {
             }
         }
         // 分镜头变体产物：ShotVariants/{hash}/{shotId}/xxx.mp4|.jpg（三级）
-        let shotVarDir = appSupportDirectory.appendingPathComponent("ShotVariants", isDirectory: true)
+        let shotVarDir = shotVariantsDirectory
         if let hashDirs = try? fm.contentsOfDirectory(at: shotVarDir, includingPropertiesForKeys: nil) {
             for hashDir in hashDirs {
                 if let shotDirs = try? fm.contentsOfDirectory(at: hashDir, includingPropertiesForKeys: nil) {
