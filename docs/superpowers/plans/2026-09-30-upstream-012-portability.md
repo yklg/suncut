@@ -376,6 +376,62 @@ PBXFileReference"（`LaunchSteps.swift` 就是被它兜住的），所以 0-C **
 `本轮 19 颗：跑 6 / 已记账 12 / 未到期 1 / 被拦 0`（与改造前同形状，这颗既没重跑也没被误拦）、MCP 计数照旧、演练实例已退；
 `swift test` 377 颗全绿 0 失败；守卫族 8 颗脚本 exit 全 0，PASS **130**（`check_schema_ledger_guards.sh` 13）、FAIL 0。
 
+### 3.13 SL-12 销账第一轮：3 颗收口，棘轮 7→4（2026-10-01 凌晨）
+
+提交 `e0401c1` 之后继续。**这轮动的是"吞错记账"的形状，不是执行顺序**，所以不适用"搬一颗跑一次闪屏尺子"
+那条纪律（那条是给把步骤换进账本定的）；仍按形状成组：三颗配音/音色类一次性迁移一颗改法。
+
+收口的三颗：`purgeLegacyQwenDubs`、`purgeLongRefClones`、`resetSchemeDubSelectionToOriginal`。
+三颗原样都是同一形状 —— `if let rows = try? fetch` 读失败当成"没有要改的"、`try? ctx.save()` 吞掉落库失败、
+末尾**无条件** `set(true, forKey:)`。后果不是崩溃而是**永久放弃**：旧 qwen 配音留在库里，
+用户每次重跑一键改写都继续撞引擎的 418；长参考音色与"默认预选改写A"同理。
+现在三颗都 `-> Bool`（进 SL-07 的名单）、读表或落库失败即 `return false` 且不记账，下次启动重试。
+
+**守卫自己又假红一次，记下来免得重踩**：SL-12 把 `fixMissingSemanticTypes` 报成了违规，
+而它体内根本没有被吞的 `save()` —— 命中的是我在 §3.9 写的**文档注释**里那句"以前是 `try? ctx.save()` 吞掉…"。
+判据拿注释当代码，就是把"写清楚了"判成"还犯着"。修法：切出函数体后先剥掉 `//`、`/*`、`*` 开头的行再匹配。
+反向也证了：剥完仍能把真代码（`try? container.mainContext.save()`）数出来 ⇒ `5 颗 > 上限 4` 变红。
+
+**读数**：`xcodebuild Debug` BUILD SUCCEEDED；克隆库启动形状与改前**逐字相同**
+（`本轮 19 颗：跑 6 / 已记账 12 / 未到期 1 / 被拦 0` —— 这三颗的键早已记着，本就该 skip，
+所以这一档证的是"没有误重跑"，不是"失败路径会重试"）；守卫族 8 颗 exit 全 0、PASS 130、FAIL 0；
+SL-12 现单 4 颗：`backfillSegmentFrames`、`cleanExistingTranscripts`、`ensureCustomGroupStrategy`、
+`regenerateSegmentThumbnailsToFirstFrame`。
+
+**未证的部分说清楚**：这三颗的**失败路径没有运行期实测**（`swift test` 物理上碰不到 `MixCut/`；
+演练里它们的键早已写死，走的是 skip 那一支）。最便宜的证法是批 3 真动 schema 那一轮，
+把克隆库设成只读 + 摘掉对应键跑一次，期望看到 `[LaunchLedger] xxx 失败，本次不记成功键` 且下次启动重跑。
+
+### 3.14 SL-12 销账第二轮：又收 3 颗，棘轮 4→1（2026-10-01 早）
+
+`backfillSegmentFrames`、`cleanExistingTranscripts`、`ensureCustomGroupStrategy` 三颗收口（同一形状：
+`try? save()` 吞错 + 无条件记账），SL-07 的名单从 7 颗扩到 **10 颗**，`EXPECT_SWALLOW` 从 4 下调到 **1**。
+
+`backfillSegmentFrames` 多修一层，值得单独记：它以前对"所属视频缺有效 fps 而回填不了"的分镜直接 `continue`，
+然后照样写成功键 —— 那些分镜的边界永久停在秒制，逐帧功能对它们是静默失效。
+现在这类分镜计入 `blocked`，`blocked > 0` 就返回 `false` 且不记账（下次启动重试并再报一次）。
+代价如实写在这：若某条记录真的永远没有有效 fps，这颗每启动跑一次并留一行错误日志 ——
+**可见的重试**比**静默的放弃**好，这正是批 0 要换掉的那个默认。
+
+**两处我自己犯的纪律错，当场补做了**：
+
+1. 变异没证落地就下结论。第一次把"签名回退成 Void"的变异和"新造吞错记账"的变异塞在同一段脚本里跑，
+   结果只看到 SL-04/SL-12 变红，`SL-07` 没红 —— 因为第二个变异的锚点根本没断言命中。
+   重做时先 `assert old in s`（打印"变异已落地"）再跑，`SL-07` 如实变红：
+   `FAIL SL-07 这些步骤不再回报成败（['cleanExistingTranscripts']）`。
+2. 取证顺序错了。上一轮我在 `kill` 之后才查 MCP，拿到的是 `ECONNREFUSED`，那一档**没有数据读数**。
+   重做（启动 → 查 MCP → 再退）后计数照旧对得上。
+
+**读数**：`xcodebuild Debug` BUILD SUCCEEDED；克隆库启动形状仍 `跑 6 / 已记账 12 / 未到期 1 / 被拦 0`
+（三颗的键早已记着 ⇒ 这一档证"没有误重跑"，失败路径依旧只有静态判据、无运行期实测，理由同 §3.13）；
+`swift test` 377 绿；守卫族 8 颗 exit 全 0、PASS 合计 **130**、FAIL 0；
+克隆库 `.store` md5 变为 `bfda4dfe…`（演练自己写过盘，正常），
+**真库仍 `beb203ed…`** —— 与批 0 开工前那份快照逐字节相同。
+
+余下一颗 `regenerateSegmentThumbnailsToFirstFrame`：异步，账本此刻看不到它的成败，
+要收口得先拆成"排上队"与"跑完了"两颗（`LaunchStepLedger` 现有一刻一判的模型装不下半完成态）。
+这是设计动作，不与本轮同形，留到下一次单独做。
+
 ## 4. 批 1~5 逐条判据
 
 

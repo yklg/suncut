@@ -126,16 +126,18 @@ else:
     ok("SL-06 orphanGC 的 requires 覆盖三颗关键前序", "、".join(sorted(gc_req)))
 
 # ---- SL-07 有真信号的步骤必须回报成败 --------------------------------------
-sig_missing = []
-for name in ("rewriteStoredPathPrefixes", "recoverFromDisk", "dedupProjectVideoAssociations",
-             "migrateToProjectVideoRelation"):
-    if not re.search(r"static func " + name + r"\(container: ModelContainer\) -> Bool", app_sw):
-        sig_missing.append(name)
+SIGNALLED = (
+    "rewriteStoredPathPrefixes", "recoverFromDisk", "dedupProjectVideoAssociations",
+    "migrateToProjectVideoRelation", "purgeLegacyQwenDubs", "purgeLongRefClones",
+    "resetSchemeDubSelectionToOriginal", "backfillSegmentFrames", "cleanExistingTranscripts",
+    "ensureCustomGroupStrategy",
+)
+sig_missing = [n for n in SIGNALLED
+               if not re.search(r"static func " + n + r"\(container: ModelContainer\) -> Bool", app_sw)]
 if sig_missing:
     bad("SL-07 这些步骤不再回报成败", sig_missing)
 else:
-    ok("SL-07 四颗有真信号的步骤都回报 Bool",
-       "rewrite / recover / dedup / migrateToProjectVideoRelation")
+    ok("SL-07 有真信号的步骤都回报 Bool", f"{len(SIGNALLED)} 颗：" + "、".join(SIGNALLED))
 
 # ---- SL-08 那两处不许再退回吞错形状 ----------------------------------------
 def body_of(text, name):
@@ -183,21 +185,27 @@ else:
 
 # ---- SL-12 棘轮：还允许多少颗步骤"吞错存盘后照样写成功键" --------------------
 # 这不是认可现状，是把 §3.9 挖出的缺陷形状（存盘失败仍记成功 ⇒ 迁移永不重试）
-# 钉成**只许减不许增**的基线。2026-10-01 实数 7 颗。修掉一颗就把 EXPECT_SWALLOW 往下调一颗，
-# 调低了才算销账；新写一颗（又一个 `try? save()` + `set(true, …)`）当场变红。
+# 钉成**只许减不许增**的基线。2026-10-01：首落 7 颗 → 同日收掉 6 颗
+# （purgeLegacyQwenDubs、purgeLongRefClones、resetSchemeDubSelectionToOriginal、
+#   backfillSegmentFrames、cleanExistingTranscripts、ensureCustomGroupStrategy），当前上限 **1 颗**
+# （只剩 regenerateSegmentThumbnailsToFirstFrame —— 它是异步的，要先拆成"排上队/跑完了"两颗才能收）。
+# 修掉一颗就把 EXPECT_SWALLOW 往下调一颗，调低了才算销账；
+# 新写一颗（又一个 `try? save()` + `set(true, …)`）当场变红。
 lines = app_sw.split("\n")
 starts = [(i, m.group(1)) for i, m in
           ((i, re.match(r"    static func (\w+)\(", l)) for i, l in enumerate(lines)) if m]
 starts.append((len(lines), "<EOF>"))
 swallow_book = []
 for (s, name), (e, _) in zip(starts, starts[1:]):
-    body = "\n".join(lines[s:e])
+    # 判据只看代码，不看注释：解释旧缺陷的 /// 文档里就写着 `try? ctx.save()`，
+    # 不剥注释会把"写清楚了"当成"还犯着"（本轮就假红过一次）。
+    body = "\n".join(l for l in lines[s:e] if not l.lstrip().startswith(("//", "/*", "*")))
     # 形状要写宽：只认 `try? context.save()` 的话，`try? container.mainContext.save()`
     # 与 `try? modelContext?.save()` 会从同一个判据里滑出去（自证时正是这样漏的）。
     if re.search(r"try\?\s+[\w.]+\??\.save\(\)", body) and "set(true, forKey:" in body:
         swallow_book.append(name)
 
-EXPECT_SWALLOW = 7
+EXPECT_SWALLOW = 1
 if len(swallow_book) > EXPECT_SWALLOW:
     bad("SL-12 棘轮涨了：又有步骤吞错存盘后写成功键",
         f"{len(swallow_book)} 颗 > 上限 {EXPECT_SWALLOW}，现单 {swallow_book}")

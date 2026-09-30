@@ -88,16 +88,16 @@ enum LaunchPlan {
         "migrateWhisperModels": { _ in FileHelper.migrateWhisperModelsToAppSupport(); return true },
         "fixMissingSemanticTypes": { MixCutApp.fixMissingSemanticTypes(container: $0); return true },
         "restoreSelfBuiltFlags": { MixCutApp.restoreSelfBuiltFlags(container: $0); return true },
-        "purgeLegacyQwenDubs": { MixCutApp.purgeLegacyQwenDubs(container: $0); return true },
-        "purgeLongRefClones": { MixCutApp.purgeLongRefClones(container: $0); return true },
-        "resetSchemeDubSelection": { MixCutApp.resetSchemeDubSelectionToOriginal(container: $0); return true },
-        "cleanExistingTranscripts": { MixCutApp.cleanExistingTranscripts(container: $0); return true },
-        "backfillSegmentFrames": { MixCutApp.backfillSegmentFrames(container: $0); return true },
+        "purgeLegacyQwenDubs": { MixCutApp.purgeLegacyQwenDubs(container: $0) },
+        "purgeLongRefClones": { MixCutApp.purgeLongRefClones(container: $0) },
+        "resetSchemeDubSelection": { MixCutApp.resetSchemeDubSelectionToOriginal(container: $0) },
+        "cleanExistingTranscripts": { MixCutApp.cleanExistingTranscripts(container: $0) },
+        "backfillSegmentFrames": { MixCutApp.backfillSegmentFrames(container: $0) },
         "migrateToProjectVideoRelation": { MixCutApp.migrateToProjectVideoRelation(container: $0) },
         "recoverFromDisk": { MixCutApp.recoverFromDisk(container: $0) },
         "dedupProjectVideoAssociations": { MixCutApp.dedupProjectVideoAssociations(container: $0) },
         "resetStaleAnalyzingStatus": { MixCutApp.resetStaleAnalyzingStatus(container: $0); return true },
-        "ensureCustomGroupStrategy": { MixCutApp.ensureCustomGroupStrategy(container: $0); return true },
+        "ensureCustomGroupStrategy": { MixCutApp.ensureCustomGroupStrategy(container: $0) },
         "regenerateSegmentThumbnails": { container in
             Task { await MixCutApp.regenerateSegmentThumbnailsToFirstFrame(container: container) }
             return true

@@ -330,80 +330,107 @@ struct MixCutApp: App {
 
     /// CosyVoice 迁移：删除 voiceId 非 CosyVoice 目录的旧配音变体（qwen Cherry/Ethan… 会被引擎拒绝报 418），
     /// 并把各视频已选音色里非法的 id 清掉。一次性执行，用户随后重选 CosyVoice 音色 + 重跑一键改写。
-    static func purgeLegacyQwenDubs(container: ModelContainer) {
+    ///
+    /// - Returns: 这次有没有把改动**落库**。以前两趟 `if let … = try? fetch` 读失败就当"没有要清的"，
+    ///   `try? ctx.save()` 吞掉存盘失败，最后仍无条件写成功键 —— 于是旧配音永久留在库里，
+    ///   而用户每次重跑一键改写都会撞上那颗 418。失败现在不记账，下次启动重试。
+    @discardableResult
+    static func purgeLegacyQwenDubs(container: ModelContainer) -> Bool {
         let key = "didPurgeLegacyQwenDubs_v1"
-        if UserDefaults.standard.bool(forKey: key) { return }
+        if UserDefaults.standard.bool(forKey: key) { return true }
 
         let ctx = ModelContext(container)
         let validIds = Set(CosyVoiceCatalog.all.map(\.id))
 
+        guard let dubs = try? ctx.fetch(FetchDescriptor<SegmentDub>()) else {
+            MixLog.error(" CosyVoice 迁移：读 SegmentDub 失败，本次不记成功键")
+            return false
+        }
         var removedDubs = 0
-        if let dubs = try? ctx.fetch(FetchDescriptor<SegmentDub>()) {
-            for d in dubs where !validIds.contains(d.voiceId) {
-                ctx.delete(d)
-                removedDubs += 1
-            }
+        for d in dubs where !validIds.contains(d.voiceId) {
+            ctx.delete(d)
+            removedDubs += 1
         }
 
+        guard let videos = try? ctx.fetch(FetchDescriptor<Video>()) else {
+            MixLog.error(" CosyVoice 迁移：读 Video 失败，本次不记成功键")
+            return false
+        }
         var cleanedVideos = 0
-        if let videos = try? ctx.fetch(FetchDescriptor<Video>()) {
-            for v in videos {
-                let filtered = v.selectedVoiceIds.filter { validIds.contains($0) }
-                if filtered.count != v.selectedVoiceIds.count {
-                    v.selectedVoiceIds = filtered
-                    cleanedVideos += 1
-                }
+        for v in videos {
+            let filtered = v.selectedVoiceIds.filter { validIds.contains($0) }
+            if filtered.count != v.selectedVoiceIds.count {
+                v.selectedVoiceIds = filtered
+                cleanedVideos += 1
             }
         }
 
+        if (removedDubs > 0 || cleanedVideos > 0) && !ctx.safeSave() {
+            MixLog.error(" CosyVoice 迁移：落库失败，本次不记成功键")
+            return false
+        }
         if removedDubs > 0 || cleanedVideos > 0 {
-            try? ctx.save()
             MixLog.info(" CosyVoice 迁移：清理 \(removedDubs) 个旧 qwen 配音变体，重置 \(cleanedVideos) 个视频的非法音色选择")
         }
         UserDefaults.standard.set(true, forKey: key)
+        return true
     }
 
     /// 一次性迁移：清空用「18s 长参考」克隆出的旧音色。长参考含多句原话，会让 qwen 克隆 TTS
     /// 间歇性"续读参考内容"导致配音混进下一段（实测 18s→clean 1/3，6s→clean 5/5）。
     /// 清空后，用户下次「一键改写」会用 6s 短参考重新克隆。
-    static func purgeLongRefClones(container: ModelContainer) {
+    @discardableResult
+    static func purgeLongRefClones(container: ModelContainer) -> Bool {
         let key = "didPurgeLongRefClones_v1"
-        if UserDefaults.standard.bool(forKey: key) { return }
+        if UserDefaults.standard.bool(forKey: key) { return true }
         let ctx = ModelContext(container)
+        guard let videos = try? ctx.fetch(FetchDescriptor<Video>()) else {
+            MixLog.error(" 长参考音色清理：读 Video 失败，本次不记成功键")
+            return false
+        }
         var cleared = 0
-        if let videos = try? ctx.fetch(FetchDescriptor<Video>()) {
-            for v in videos where (v.clonedVoiceId ?? "").isEmpty == false {
-                v.clonedVoiceId = nil
-                v.selectedVoiceIds = []
-                cleared += 1
-            }
+        for v in videos where (v.clonedVoiceId ?? "").isEmpty == false {
+            v.clonedVoiceId = nil
+            v.selectedVoiceIds = []
+            cleared += 1
+        }
+        if cleared > 0 && !ctx.safeSave() {
+            MixLog.error(" 长参考音色清理：落库失败，本次不记成功键")
+            return false
         }
         if cleared > 0 {
-            try? ctx.save()
             MixLog.info(" 已清空 \(cleared) 个旧长参考克隆音色，下次一键改写将用 6s 短参考重克隆")
         }
         UserDefaults.standard.set(true, forKey: key)
+        return true
     }
 
     /// 一次性迁移：把所有方案分镜的配音选择重置为原声（selectedSegmentDubId = nil）。
     /// 旧逻辑创建方案时默认预选了「改写A」，与「默认播原声、用户手动切」的产品意图不符。
     /// 重置后用户在分镜序列下拉里按需切换克隆改写版，之后的选择不会再被重置。
-    static func resetSchemeDubSelectionToOriginal(container: ModelContainer) {
+    @discardableResult
+    static func resetSchemeDubSelectionToOriginal(container: ModelContainer) -> Bool {
         let key = "didResetSchemeDubSelection_v1"
-        if UserDefaults.standard.bool(forKey: key) { return }
+        if UserDefaults.standard.bool(forKey: key) { return true }
         let ctx = ModelContext(container)
+        guard let segs = try? ctx.fetch(FetchDescriptor<SchemeSegment>()) else {
+            MixLog.error(" 方案配音重置：读 SchemeSegment 失败，本次不记成功键")
+            return false
+        }
         var reset = 0
-        if let segs = try? ctx.fetch(FetchDescriptor<SchemeSegment>()) {
-            for ss in segs where ss.selectedSegmentDubId != nil {
-                ss.selectedSegmentDubId = nil
-                reset += 1
-            }
+        for ss in segs where ss.selectedSegmentDubId != nil {
+            ss.selectedSegmentDubId = nil
+            reset += 1
+        }
+        if reset > 0 && !ctx.safeSave() {
+            MixLog.error(" 方案配音重置：落库失败，本次不记成功键")
+            return false
         }
         if reset > 0 {
-            try? ctx.save()
             MixLog.info(" 已把 \(reset) 个方案分镜的配音选择重置为原声（默认原声）")
         }
         UserDefaults.standard.set(true, forKey: key)
+        return true
     }
 
     /// 一次性迁移：清掉「同一项目内同一视频挂了两份」的历史重复关联行。
@@ -446,83 +473,112 @@ struct MixCutApp: App {
 
     /// 帧化迁移：现有分镜以秒存边界，按各自视频 fps 回填帧号（startFrame/endFrame）。
     /// 一次性执行；之后新建分镜直接走帧化创建。endFrame==0 视为未帧化。
-    static func backfillSegmentFrames(container: ModelContainer) {
+    ///
+    /// - Returns: 是否**回填完并落库**。以前 `try? save()` 吞掉落库失败照样写成功键，
+    ///   而"所属视频缺有效 fps"被跳过的分镜也会随那颗键一起被永久放弃 —— 边界停在秒制上，
+    ///   逐帧功能对这些分镜就是静默失效。现在这两种情况都不记账，下次启动重试。
+    @discardableResult
+    static func backfillSegmentFrames(container: ModelContainer) -> Bool {
         let fixKey = "didBackfillSegmentFrames_v1"
-        if UserDefaults.standard.bool(forKey: fixKey) { return }
+        if UserDefaults.standard.bool(forKey: fixKey) { return true }
 
         let context = container.mainContext
-        guard let segments = try? context.fetch(FetchDescriptor<Segment>()) else { return }
+        guard let segments = try? context.fetch(FetchDescriptor<Segment>()) else {
+            MixLog.error(" 帧化迁移：读 Segment 失败，本次不记成功键")
+            return false
+        }
 
         var fixed = 0
+        var blocked = 0
         for seg in segments {
             if seg.endFrame != 0 { continue }   // 已帧化
-            guard let fps = seg.video?.fps, fps > 0 else { continue }
+            guard let fps = seg.video?.fps, fps > 0 else {
+                blocked += 1
+                continue
+            }
             seg.backfillFramesFromSeconds()
             fixed += 1
         }
+        if fixed > 0 && !context.safeSave() {
+            MixLog.error(" 帧化迁移：落库失败，本次不记成功键")
+            return false
+        }
         if fixed > 0 {
-            try? context.save()
             MixLog.info(" 帧化迁移：已为 \(fixed) 个分镜回填帧号")
         }
+        if blocked > 0 {
+            MixLog.error(" 帧化迁移：\(blocked) 个分镜因所属视频缺有效 fps 无法回填，本次不记成功键（下次启动重试）")
+            return false
+        }
         UserDefaults.standard.set(true, forKey: fixKey)
+        return true
     }
 
     /// 清洗已有分镜台词中的乱码（U+FFFD）和多余空格
     /// 同时清洗 Video.transcript 和 ASR 数据
-    static func cleanExistingTranscripts(container: ModelContainer) {
+    @discardableResult
+    static func cleanExistingTranscripts(container: ModelContainer) -> Bool {
         let fixKey = "didCleanTranscripts_v1"
-        if UserDefaults.standard.bool(forKey: fixKey) { return }
+        if UserDefaults.standard.bool(forKey: fixKey) { return true }
 
         let context = container.mainContext
 
         // 清洗 Segment.text
         let segDescriptor = FetchDescriptor<Segment>()
-        if let segments = try? context.fetch(segDescriptor) {
-            var fixedCount = 0
-            for seg in segments {
-                let original = seg.text
-                let cleaned = cleanText(original)
-                if cleaned != original {
-                    // 清洗只在内容真变时落笔，并把来源记成 cleaned（红线 R8）。
-                    // 计数器跟 `shouldWrite` 走，不跟"我提交了什么"走。
-                    if seg.setText(cleaned, source: .cleaned).shouldWrite {
-                        fixedCount += 1
-                    }
+        guard let segments = try? context.fetch(segDescriptor) else {
+            MixLog.error(" 台词清洗：读 Segment 失败，本次不记成功键")
+            return false
+        }
+        var fixedCount = 0
+        for seg in segments {
+            let original = seg.text
+            let cleaned = cleanText(original)
+            if cleaned != original {
+                // 清洗只在内容真变时落笔，并把来源记成 cleaned（红线 R8）。
+                // 计数器跟 `shouldWrite` 走，不跟"我提交了什么"走。
+                if seg.setText(cleaned, source: .cleaned).shouldWrite {
+                    fixedCount += 1
                 }
             }
-            if fixedCount > 0 {
-                MixLog.info(" 已清洗 \(fixedCount) 个分镜的台词乱码")
-            }
+        }
+        if fixedCount > 0 {
+            MixLog.info(" 已清洗 \(fixedCount) 个分镜的台词乱码")
         }
 
         // 清洗 Video.transcript
         let videoDescriptor = FetchDescriptor<Video>()
-        if let videos = try? context.fetch(videoDescriptor) {
-            for video in videos {
-                if let transcript = video.transcript {
-                    let cleaned = cleanText(transcript)
-                    if cleaned != transcript {
-                        video.transcript = cleaned
-                    }
+        guard let videos = try? context.fetch(videoDescriptor) else {
+            MixLog.error(" 台词清洗：读 Video 失败，本次不记成功键")
+            return false
+        }
+        for video in videos {
+            if let transcript = video.transcript {
+                let cleaned = cleanText(transcript)
+                if cleaned != transcript {
+                    video.transcript = cleaned
                 }
-                // 清洗 ASR sentences
-                var sentences = video.asrSentences
-                var sentencesChanged = false
-                for i in sentences.indices {
-                    let cleaned = cleanText(sentences[i].text)
-                    if cleaned != sentences[i].text {
-                        sentences[i].text = cleaned
-                        sentencesChanged = true
-                    }
+            }
+            // 清洗 ASR sentences
+            var sentences = video.asrSentences
+            var sentencesChanged = false
+            for i in sentences.indices {
+                let cleaned = cleanText(sentences[i].text)
+                if cleaned != sentences[i].text {
+                    sentences[i].text = cleaned
+                    sentencesChanged = true
                 }
-                if sentencesChanged {
-                    video.asrSentences = sentences
-                }
+            }
+            if sentencesChanged {
+                video.asrSentences = sentences
             }
         }
 
-        try? context.save()
+        guard context.safeSave() else {
+            MixLog.error(" 台词清洗：落库失败，本次不记成功键")
+            return false
+        }
         UserDefaults.standard.set(true, forKey: fixKey)
+        return true
     }
 
     /// 清洗文本：移除 U+FFFD 乱码、合并连续空格
@@ -689,14 +745,21 @@ struct MixCutApp: App {
 
     /// 为所有现有项目补上"自定义组合"策略容器（首次升级后执行一次）
     /// 新项目走 ProjectViewModel.createProject 同步创建，老项目走这里补
+    ///
+    /// - Returns: 补出来的策略是否**已落库**。以前 `try? context.save()` 吞掉失败后照样写成功键，
+    ///   于是老项目永远没有「自定义组合」入口，而且再没有第二次机会补。
     @MainActor
-    static func ensureCustomGroupStrategy(container: ModelContainer) {
+    @discardableResult
+    static func ensureCustomGroupStrategy(container: ModelContainer) -> Bool {
         let fixKey = "didEnsureCustomGroupStrategy_v1"
-        if UserDefaults.standard.bool(forKey: fixKey) { return }
+        if UserDefaults.standard.bool(forKey: fixKey) { return true }
 
         let context = container.mainContext
         let descriptor = FetchDescriptor<Project>()
-        guard let projects = try? context.fetch(descriptor) else { return }
+        guard let projects = try? context.fetch(descriptor) else {
+            MixLog.error(" 组合策略补建：读 Project 失败，本次不记成功键")
+            return false
+        }
 
         var addedCount = 0
         for project in projects {
@@ -718,12 +781,16 @@ struct MixCutApp: App {
             }
         }
 
+        if addedCount > 0 && !context.safeSave() {
+            MixLog.error(" 组合策略补建：落库失败，本次不记成功键")
+            return false
+        }
         if addedCount > 0 {
-            try? context.save()
             MixLog.info(" 已为 \(addedCount) 个老项目补建「自定义组合」策略")
         }
 
         UserDefaults.standard.set(true, forKey: fixKey)
+        return true
     }
 
     /// 一次性迁移：把 segment thumbnail 从「中间帧」重新生成为「首帧」
