@@ -40,13 +40,26 @@ GPL-3 全文见同目录 GPL-3.0.txt。
 
   ffprobe 与同架构的 ffmpeg 来自同一个归档文件，参数一致。
 
-对应源码（Corresponding Source）没有打进这个 DMG，按 GPL-3 第 6 条 (b) 项以书面要约提供：
-  自本包分发之日起 3 年内，任何收到本包的人向下方联系方式索取时，提供者提供完整对应源码
-  （含该构建所用 configure 参数与构建脚本），可收取介质工本费。
-  索取联系方式（**发出本 DMG 之前必须填写**）：______________________________
+对应源码（Corresponding Source）随本包提供，位于 DMG 根目录 `Licenses/source/`：
+  源码包与体积（字节）：
+    ffmpeg-8.1.tar.xz      11,702,216
+    ffmpeg-8.1.2.tar.xz    11,710,924
+  sha256：
+    b072aed6871998cce9b36e7774033105ca29e33632be5b6347f3206898e0756a  ffmpeg-8.1.tar.xz
+    464beb5e7bf0c311e68b45ae2f04e9cc2af88851abb4082231742a74d97b524c  ffmpeg-8.1.2.tar.xz
+  上游：https://ffmpeg.org/releases/ffmpeg-8.1.tar.xz
+        https://ffmpeg.org/releases/ffmpeg-8.1.2.tar.xz
+  构建脚本：本仓 scripts/build_universal_binaries.sh（两切片各自的 configure 参数见上文，逐字取自包内二进制）
 
-  ⚠️ 这一条是**要约**，不是礼节性文字：填了就要真的应答。
-     不打算应答的话，改成把 ffmpeg-8.1 / ffmpeg-8.1.2 的源码包直接放进本目录，并删掉这段要约。
+  关于"完整对应源码"的边界（如实说明，不粉饰）：
+  - 以上是 FFmpeg 本身的对应源码 + 本项目实际使用的 configure 参数与构建脚本。
+  - 这两颗构建静态链接了 x264 / x265 / aom / dav1d / opus 等外部库（见上文 configuration 行）。
+    最保守的读法认为"完整对应源码"还应包含这些库的源码。需要者可按 configure 参数里的库名
+    到各自上游取得 —— 本通告不假装这一层已经做完。
+  - 上述 sha256 由本项目于 2026-09-30 下载后在本地计算。ffmpeg.org 只发布 GPG 签名
+    （同名 `.tar.xz.asc`），不发布 sha256；要验证来源请以 FFmpeg 发布密钥环验签。
+  - 打包链会在 `cp -R Licenses` 之前把这两颗 tarball 取回 `Licenses/source/`（该目录 gitignored，
+    不进仓库）；`./scripts/check_license_notice.sh` 在其存在时逐项对账体积与 sha256。
 
 
 2. whisper 与 whisper-cpu —— whisper.cpp 命令行程序
@@ -100,6 +113,7 @@ GPL-3 全文见同目录 GPL-3.0.txt。
 
 【本通告的边界（如实说明）】
 - 只有第 1 项（ffmpeg/ffprobe）的授权是本轮从二进制自身读数确认的，GPL-3 全文已随包。
+- 第 1 项的对应源码自 2026-09-30 起随包提供（`Licenses/source/`），已不走 GPL-3 第 6 条 (b) 的书面要约。
 - 第 2–5 项本轮只登记了上游地址与体积，许可文本**未取回核验**，标了 ⚠️。
 - H.264/H.265/AV1 等编解码器的**专利**授权不在 GPL 射程内，本通告不涉及；
   商用分发场景需另行确认专利侧许可。

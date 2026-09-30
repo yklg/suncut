@@ -13,11 +13,13 @@ import sys
 DEST = os.path.join(os.path.dirname(os.path.abspath(__file__)), "MixCut", "Resources", "bin")
 BINARIES = ["ffmpeg", "ffprobe", "whisper", "whisper-cpu", "demucs"]   # 需为 universal（whisper-cpu=老系统/GPU失败兜底）
 # 架构无关的内置数据文件（模型）。内置后 App 完全自包含、无需运行时下载。
-DATA = ["ggml-htdemucs-4s.bin", "ggml-large-v3-turbo.bin"]
+# 清单以产出方为准：scripts/build_universal_binaries.sh 放进 bin 的是 ggml-large-v3.bin。
+# （large-v3-turbo 是 WhisperModelCatalog 里的运行时下载档，没人往 bin 里放它。）
+DATA = ["ggml-htdemucs-4s.bin", "ggml-large-v3.bin"]
 # 最小体积下限（字节）——防止「下了半个/被截断」的模型蒙混过关（存在性检查拦不住）
 MIN_SIZE = {
-    "ggml-htdemucs-4s.bin": 80_000_000,          # 人声分离模型 ≈ 84MB
-    "ggml-large-v3-turbo.bin": 1_600_000_000,    # Whisper ASR 模型 ≈ 1.62GB
+    "ggml-htdemucs-4s.bin": 80_000_000,           # 人声分离模型 ≈ 84MB
+    "ggml-large-v3.bin": 2_900_000_000,           # Whisper ASR 模型 ≈ 3.10GB
 }
 
 

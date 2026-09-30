@@ -136,6 +136,10 @@ AI 提示词模板存放在 `MixCut/Resources/Prompts/`，通过 `PromptLoader` 
     -destination 'generic/platform=macOS' ARCHS="arm64 x86_64" ONLY_ACTIVE_ARCH=NO build
   V=$(cat VERSION)
   TEMP=$(mktemp -d) && cp -R <DerivedData>/Build/Products/Release/SunCut.app "$TEMP/" && ln -s /Applications "$TEMP/Applications"
+  cp -R Licenses "$TEMP/"
+  # GPL 对应源码：打包前取回（gitignored，不进仓库），并以 REQUIRE_SOURCE=1 硬校验
+  mkdir -p Licenses/source && for v in 8.1 8.1.2; do f="Licenses/source/ffmpeg-$v.tar.xz"; [ -f "$f" ] || curl -fL --retry 3 --max-time 600 -o "$f" "https://ffmpeg.org/releases/ffmpeg-$v.tar.xz"; done
+  REQUIRE_SOURCE=1 ./scripts/check_license_notice.sh
   rm -f ~/Desktop/SunCut-v${V}.dmg
   hdiutil create -volname "SunCut ${V}" -srcfolder "$TEMP" -ov -format UDZO ~/Desktop/SunCut-v${V}.dmg
   rm -rf "$TEMP"
@@ -203,7 +207,7 @@ DMG 内置 Whisper 大模型约 **1.6GB**，GitHub 附件慢、Gitee 附件硬�
 
 **发版标准动作全序列**：
 1. bump 版本号（VERSION + pbxproj 两处 MARKETING_VERSION）→ clean Release universal 构建 → 打 `SunCut-v<版本>.dmg`
-2. 三项强制校验：主程序 `lipo -archs` == `x86_64 arm64`、4 个内置二进制均双架构、DMG 内 `CFBundleShortVersionString` == 目标版本
+2. 四项强制校验：主程序 `lipo -archs` == `x86_64 arm64`、5 个内置二进制均双架构、DMG 内 `CFBundleShortVersionString` == 目标版本、DMG 内含 `Licenses/`
 3. `git commit` → `git tag vX.Y.Z` → `git push origin main && git push gitee main` → `git push origin vX.Y.Z && git push gitee vX.Y.Z`
 4. `gh release create vX.Y.Z --title … --notes-file …`（**不传 DMG**，正文「下载」段指向下载页）
 5. Gitee `POST https://gitee.com/api/v5/repos/jinxiushanhehao/mixed_cut/releases`
@@ -225,14 +229,26 @@ DMG 内置 Whisper 大模型约 **1.6GB**，GitHub 附件慢、Gitee 附件硬�
 SunCut 必须**同时原生支持 Apple Silicon 与 Intel Mac**。任何构建、发版、二进制改动都必须保持 universal，绝不能退回 arm64-only（否则 Intel 同事装了直接报「这台 Mac 不支持此应用程序」）。
 
 1. **主程序**：Release/DMG 构建必须带 `-destination 'generic/platform=macOS' ARCHS="arm64 x86_64" ONLY_ACTIVE_ARCH=NO`。普通 `xcodebuild ... Release build` 只出本机 arm64，**严禁**用它打分发包。
-2. **内置二进制**：ffmpeg / ffprobe / whisper / demucs 必须都是 universal（arm64 + x86_64）静态自包含二进制，由 `./scripts/build_universal_binaries.sh` 生成；改动或更新任何内置二进制后，必须重跑该脚本并 `python3 bundle_deps.py` 校验。
+2. **内置二进制**：ffmpeg / ffprobe / whisper / whisper-cpu / demucs 必须都是 universal（arm64 + x86_64）静态自包含二进制，由 `./scripts/build_universal_binaries.sh` 生成；改动或更新任何内置二进制后，必须重跑该脚本并 `python3 bundle_deps.py` 校验。
 3. **发版前强制校验**（缺一不可）：
    - `lipo -archs <app>/Contents/MacOS/SunCut` == `x86_64 arm64`
-   - 四个内置二进制逐个 `lipo -archs` 均为双架构（或直接 `python3 bundle_deps.py`）
+   - 五个内置二进制逐个 `lipo -archs` 均为双架构（或直接 `python3 bundle_deps.py`）
    - DMG 内 `CFBundleShortVersionString` == 目标版本号
+   - DMG 根目录内有 `Licenses/`（通告 + GPL-3 全文 + `source/` 两颗 ffmpeg 源码包），且
+     `REQUIRE_SOURCE=1 ./scripts/check_license_notice.sh` 绿 ——
+     这条守的是「通告里登记的体积、configure 参数与随包源码，确实对得上包内这颗二进制」；
+     不打进去就等于没履行告知义务。开发期不带 `REQUIRE_SOURCE` 跑，缺源码包只 WARN 不判红。
 4. **新增任何内置二进制/处理链组件**：默认就要做成 universal，并纳入 `build_universal_binaries.sh` 与 `bundle_deps.py` 的校验清单。
 
 > 背景：v0.6.0 曾因 arm64-only 分发导致 Intel 同事「不支持此应用程序」；v0.6.1 起整条链改为 universal。此后**任何发版都必须守住双系统**。
+
+### 许可与署名（不是残留，别顺手清理）
+
+- 根 `LICENSE` 有**两行**版权：`MengGang`（原始版本作者）与 `一路凯歌HNaa`。MIT 要求保留各方版权声明，
+  **删掉任何一行都不算"清理残留"**。TC-06 那条剥离原作者身份的守卫只扫 `MixCut/` 源码树、够不到根目录 ——
+  别把它推广到这里。
+- `Licenses/NOTICE-内置组件许可.txt` 里第 2–5 项标 ⚠️ 的"许可文本未核验"是**如实声明**，不是待办占位符：
+  公开发布前须逐条取回文本并销标，**不许为了好看先把 ⚠️ 删掉**。
 
 ### 不要在修改过程中破坏已有功能（最重要 ⚠️⚠️⚠️）
 
