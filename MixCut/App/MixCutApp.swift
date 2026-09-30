@@ -85,105 +85,51 @@ struct MixCutApp: App {
             NSApplication.shared.appearance = NSAppearance(named: .aqua)
         }
 
-        do {
-            let schema = Schema([
-                Project.self,
-                Video.self,
-                Segment.self,
-                MixStrategy.self,
-                MixScheme.self,
-                SchemeSegment.self,
-                ProjectVideo.self,
-                SegmentDub.self,
-                PhysicalShot.self,
-                ShotVariant.self,
-            ])
-            // 一次性迁移：旧版用共享的 default.store（会被其它非沙盒 App 清库），
-            // 现改用专属库 MixCut.store。仅当旧库确实是 MixCut 的数据时才搬迁。
-            Self.migrateDefaultStoreToDedicated()
+        let schema = Schema(versionedSchema: AppSchemaV1.self)
+        let storeURL = FileHelper.mixCutStoreURL
+        // 一次性迁移：旧版用共享的 default.store（会被其它非沙盒 App 清库），现改用专属库。
+        // 仅当旧库确实是本 app 的数据时才搬迁 —— 必须赶在开库之前。
+        Self.migrateDefaultStoreToDedicated()
 
-            // 用专属库路径，彻底隔离，避免与其它 App 共用 default.store 互相清库
-            let config = ModelConfiguration(schema: schema, url: FileHelper.mixCutStoreURL)
-            modelContainer = try ModelContainer(for: schema, configurations: [config])
+        // 开库必须走 SchemaGuard：门（指纹比对 + 变更分类）→ 改前备份 → 才建 ModelContainer。
+        // 三种结果分开处理，尤其**不**把"门拦住"与"库坏了"合并回同一条 catch —— 既有 catch 的文案
+        // 会叫用户删库，被这道防线拦下的那次启动若复用它，等于教用户删掉它正保护的库。
+        let openedContainer: ModelContainer
+        switch SchemaGuard.openStore(schema: schema, storeURL: storeURL) {
+        case .opened(let onDisk):
+            openedContainer = onDisk
             initError = nil
+        case .degradedInMemory(let inMemory, let message):
+            // 真·库损坏：沿用内存模式降级，但不跑下面任何迁移 / GC / MCP —— 与改造前 catch 分支一致。
+            initError = message
+            modelContainer = inMemory
+            return
+        case .refusedBySchemaGate(let message):
+            // 被门拦住：内存占位容器只为把错误面板画出来。下面所有步骤一律不跑 ——
+            // 这是"你的数据没有被动过"这句话为真的前提。
+            initError = message
+            modelContainer = SchemaGuard.placeholderContainer(schema: schema)
+            return
+        }
+        modelContainer = openedContainer
 
-            // 目录搬完（或还没搬）之后，库里存的绝对路径可能仍指着旧目录。前缀改写必须排在
-            // recoverFromDisk / 孤儿 GC 之前 —— 那两步都拿路径当"文件在不在"的依据。
-            Self.rewriteStoredPathPrefixes(container: modelContainer)
+        do {
+            // 19 颗一次性 fixup / 自愈 / GC 的顺序与前序约束，全在 `LaunchSteps.swift` 的清单里。
+            // 这里不再平铺调用 —— 平铺时"谁必须在谁后面"只写在注释里靠人记，
+            // 而删文件的孤儿 GC 恰好挂在会写坏成功键的那颗后面（数据丢失级）。
+            LaunchPlan.run(container: modelContainer)
 
             // ⚠️ 不挂 SwiftData 内置 UndoManager：实测在本数据模型上，挂 undoManager 后
             // context.delete(...) 会同步触发 SwiftData 内部 _assertionFailure 崩溃（删 SchemeSegment
             // 时必崩，EXC_BREAKPOINT）。已知坑，关 autosave 也无效。撤销改用其它方案，详见下方说明。
             // appUndoManager 暂保留但不挂 context（菜单/快捷键因此为禁用态、不会误触发）。
 
-            // 清除 bundle 内二进制的 quarantine 属性（DMG 分发后 macOS 会阻止执行）
-            Self.removeQuarantineFromBundleBinaries()
-
-            // 一次性迁移：把 Whisper 模型从旧 Caches 目录移到 Application Support
-            // （Caches 会被系统清理，曾导致用户重启后模型丢失）
-            FileHelper.migrateWhisperModelsToAppSupport()
-
-            // 修复空的 semanticTypesData（旧数据迁移丢失）
-            Self.fixMissingSemanticTypes(container: modelContainer)
-            // 自建分镜标记自愈：误启动旧版会把 isUserUploaded 列删掉重建（值全部归零），
-            // 每次启动按注册表 + 特征回填恢复，防止自建分镜混入成片列表
-            Self.restoreSelfBuiltFlags(container: modelContainer)
-            // CosyVoice 迁移：清理 qwen 旧配音变体 + 重置非法音色选择
-            Self.purgeLegacyQwenDubs(container: modelContainer)
-            // 清空旧的"长参考(18s)"克隆音色：长参考会让克隆配音漏读别段，改用 6s 短参考重克隆
-            Self.purgeLongRefClones(container: modelContainer)
-            // 方案配音默认改回原声：清空旧的"默认预选改写A"，让所有分镜默认播原声、用户再手动切
-            Self.resetSchemeDubSelectionToOriginal(container: modelContainer)
-            // 清洗已有台词中的乱码和多余空格
-            Self.cleanExistingTranscripts(container: modelContainer)
-            // 帧化迁移：把现有分镜的秒边界回填成帧号
-            Self.backfillSegmentFrames(container: modelContainer)
-            // 迁移旧版数据：Video.project → ProjectVideo 多对多
-            Self.migrateToProjectVideoRelation(container: modelContainer)
-            // 从磁盘恢复丢失的项目和视频（schema 变更后数据库被清空时）
-            Self.recoverFromDisk(container: modelContainer)
-            // 一次性清理：同一项目内重复挂载同一视频的关联行（必须排在 recoverFromDisk 之后、
-            // 孤儿 GC 之前 —— 恢复路径也会创建关联，清理完才能安全判断哪些文件真成了孤儿）
-            Self.dedupProjectVideoAssociations(container: modelContainer)
-            // 清理上次未正常完成的中间态视频（崩溃 / 强退 / 任务异常导致）
-            Self.resetStaleAnalyzingStatus(container: modelContainer)
-            // 为所有老项目补建"自定义组合"策略
-            Self.ensureCustomGroupStrategy(container: modelContainer)
-            // 重生所有 segment thumbnail 从中间帧→首帧（一次性后台迁移）
-            let containerForMigration = modelContainer
-            Task { await Self.regenerateSegmentThumbnailsToFirstFrame(container: containerForMigration) }
-            // 孤儿文件 GC：回收已删除（只删记录、未删磁盘）且无任何记录引用的视频/缩略图文件。
-            // 必须放在所有迁移/恢复之后，确保 recoverFromDisk 重建的视频已被记录引用，不会误删。
-            //
-            // ⚠️ 启动性能：这一步要 fetch 全部 Video/Segment、遍历 physicalShots→variants（嵌套关系 faulting），
-            // 再扫 5 棵目录树（Thumbnails 已达数百文件）。以前**每次启动都同步跑**，直接拖慢冷启动。
-            // 改为「每 24 小时最多一次」+ 延后到启动完成后跑，不阻塞首屏。
-            Self.migrateGlobalSubtitleFontRatio(container: modelContainer)
-            Self.scheduleOrphanGCIfDue(container: modelContainer)
-            Self.purgeStaleTempFiles()
             // Agent 接入：内嵌 MCP server（仅 127.0.0.1，可在设置中关闭）
+            // —— 这两颗不是 fixup，是运行时接线，故意不进清单：清单作废时界面仍要能用 MCP 排查。
             AgentGateway.shared.configure(container: modelContainer)
             #if DEBUG
             DebugSelfTest.runIfRequested(container: modelContainer)
             #endif
-        } catch {
-            // 数据库损坏时尝试内存模式启动，避免 fatalError 崩溃
-            let schema = Schema([
-                Project.self, Video.self, Segment.self,
-                MixStrategy.self, MixScheme.self, SchemeSegment.self,
-                ProjectVideo.self,
-                SegmentDub.self,
-                PhysicalShot.self,
-                ShotVariant.self,
-            ])
-            let memConfig = ModelConfiguration(schema: schema, isStoredInMemoryOnly: true)
-            do {
-                modelContainer = try ModelContainer(for: schema, configurations: [memConfig])
-            } catch {
-                // 内存模式也失败，使用最简配置
-                modelContainer = try! ModelContainer(for: schema)
-            }
-            initError = "数据库初始化失败：\(error.localizedDescription)\n\n数据库文件可能损坏，当前使用临时模式运行（数据不会保存）。\n请删除 ~/Library/Application Support/\(Brand.dataDirectoryName)/\(Brand.storeFileName) 后重启应用。"
         }
     }
 
@@ -291,7 +237,7 @@ struct MixCutApp: App {
     /// 局限：只兜「列值归零」；若整表被清、由 recoverFromDisk 从磁盘重建 Video（全新 UUID、无分镜），
     /// 注册表与特征均无法匹配，该场景不在本函数兜底范围内。
     @MainActor
-    private static func restoreSelfBuiltFlags(container: ModelContainer) {
+    static func restoreSelfBuiltFlags(container: ModelContainer) {
         let ctx = container.mainContext
         guard let videos = try? ctx.fetch(FetchDescriptor<Video>()) else { return }
 
@@ -334,7 +280,7 @@ struct MixCutApp: App {
     /// 为 semanticTypesData 为 NULL 的分镜填充默认值「过渡」
     /// 用户后续可通过"重新 AI 分析"获取正确的语义类型
     @MainActor
-    private static func fixMissingSemanticTypes(container: ModelContainer) {
+    static func fixMissingSemanticTypes(container: ModelContainer) {
         // 避免每次启动都执行 SQL 查询
         let fixKey = "didFixMissingSemanticTypes_v1"
         if UserDefaults.standard.bool(forKey: fixKey) { return }
@@ -354,7 +300,13 @@ struct MixCutApp: App {
         }
         sqlite3_finalize(countStmt)
 
-        guard nullCount > 0 else { return }
+        guard nullCount > 0 else {
+            // 没有要修的行也是"这颗已经完成"，必须记账：以前这里直接 return，
+            // 于是 `didFixMissingSemanticTypes_v1` 在现网从来没被写过，
+            // 每次启动都要重跑一遍 SQL 统计 —— 正好违背函数开头那句"避免每次启动都执行 SQL 查询"。
+            UserDefaults.standard.set(true, forKey: fixKey)
+            return
+        }
 
         // 编码默认值 ["过渡"]
         guard let defaultData = try? JSONEncoder().encode([SemanticType.transition]) else { return }
@@ -378,7 +330,7 @@ struct MixCutApp: App {
 
     /// CosyVoice 迁移：删除 voiceId 非 CosyVoice 目录的旧配音变体（qwen Cherry/Ethan… 会被引擎拒绝报 418），
     /// 并把各视频已选音色里非法的 id 清掉。一次性执行，用户随后重选 CosyVoice 音色 + 重跑一键改写。
-    private static func purgeLegacyQwenDubs(container: ModelContainer) {
+    static func purgeLegacyQwenDubs(container: ModelContainer) {
         let key = "didPurgeLegacyQwenDubs_v1"
         if UserDefaults.standard.bool(forKey: key) { return }
 
@@ -414,7 +366,7 @@ struct MixCutApp: App {
     /// 一次性迁移：清空用「18s 长参考」克隆出的旧音色。长参考含多句原话，会让 qwen 克隆 TTS
     /// 间歇性"续读参考内容"导致配音混进下一段（实测 18s→clean 1/3，6s→clean 5/5）。
     /// 清空后，用户下次「一键改写」会用 6s 短参考重新克隆。
-    private static func purgeLongRefClones(container: ModelContainer) {
+    static func purgeLongRefClones(container: ModelContainer) {
         let key = "didPurgeLongRefClones_v1"
         if UserDefaults.standard.bool(forKey: key) { return }
         let ctx = ModelContext(container)
@@ -436,7 +388,7 @@ struct MixCutApp: App {
     /// 一次性迁移：把所有方案分镜的配音选择重置为原声（selectedSegmentDubId = nil）。
     /// 旧逻辑创建方案时默认预选了「改写A」，与「默认播原声、用户手动切」的产品意图不符。
     /// 重置后用户在分镜序列下拉里按需切换克隆改写版，之后的选择不会再被重置。
-    private static func resetSchemeDubSelectionToOriginal(container: ModelContainer) {
+    static func resetSchemeDubSelectionToOriginal(container: ModelContainer) {
         let key = "didResetSchemeDubSelection_v1"
         if UserDefaults.standard.bool(forKey: key) { return }
         let ctx = ModelContext(container)
@@ -465,14 +417,15 @@ struct MixCutApp: App {
     ///    归零会让孤儿 GC 把用户的 .mp4 连带收走。
     /// ⚠️ 必须用 mainContext：子上下文里删行，已 faulting 出来的 project.projectVideos
     ///    不会同步移除，会变成"库里清了、界面没清"。
-    private static func dedupProjectVideoAssociations(container: ModelContainer) {
+    @discardableResult
+    static func dedupProjectVideoAssociations(container: ModelContainer) -> Bool {
         let key = "didDedupProjectVideoAssociations_v1"
-        if UserDefaults.standard.bool(forKey: key) { return }
+        if UserDefaults.standard.bool(forKey: key) { return true }
 
         let context = container.mainContext
         guard let rows = try? context.fetch(FetchDescriptor<ProjectVideo>()) else {
             MixLog.error(" 关联去重：读取 ProjectVideo 失败，本次跳过")
-            return
+            return false
         }
         let outcome = ProjectVideoDedup.deduplicate(rows.map {
             ProjectVideoAssociation(pvID: $0.id, projectID: $0.project?.id,
@@ -481,15 +434,19 @@ struct MixCutApp: App {
         let toDelete = rows.filter { outcome.deleted.contains($0.id) }
         for pv in toDelete { context.delete(pv) }
         if !toDelete.isEmpty {
-            context.safeSave()
+            guard context.safeSave() else {
+                MixLog.error(" 关联去重：删除未落库，本次不记成功键（下次启动重跑）")
+                return false
+            }
             MixLog.info(" 关联去重：删除 \(toDelete.count) 条重复的项目↔视频关联（视频、分镜、磁盘文件均未改动）")
         }
         UserDefaults.standard.set(true, forKey: key)
+        return true
     }
 
     /// 帧化迁移：现有分镜以秒存边界，按各自视频 fps 回填帧号（startFrame/endFrame）。
     /// 一次性执行；之后新建分镜直接走帧化创建。endFrame==0 视为未帧化。
-    private static func backfillSegmentFrames(container: ModelContainer) {
+    static func backfillSegmentFrames(container: ModelContainer) {
         let fixKey = "didBackfillSegmentFrames_v1"
         if UserDefaults.standard.bool(forKey: fixKey) { return }
 
@@ -512,7 +469,7 @@ struct MixCutApp: App {
 
     /// 清洗已有分镜台词中的乱码（U+FFFD）和多余空格
     /// 同时清洗 Video.transcript 和 ASR 数据
-    private static func cleanExistingTranscripts(container: ModelContainer) {
+    static func cleanExistingTranscripts(container: ModelContainer) {
         let fixKey = "didCleanTranscripts_v1"
         if UserDefaults.standard.bool(forKey: fixKey) { return }
 
@@ -580,43 +537,49 @@ struct MixCutApp: App {
 
     /// 迁移旧版数据：为没有 ProjectVideo 关联的 Video 创建关联
     /// 旧版 Video 通过 SQLite 直接查 ZPROJECT 外键找到所属项目
-    private static func migrateToProjectVideoRelation(container: ModelContainer) {
+    ///
+    /// - Returns: 关联是否**真的建好并落库**。以前四条失败路（读表失败 / 取不到库路径 /
+    ///   打不开 SQLite / `try? save()` 吞错）**都会写成功键** —— 于是这批 Video 永远没有
+    ///   `projectVideos`，既在项目列表里看不见，也再没有第二次机会补上。
+    ///   失败现在返回 `false` 且**不写键**，下次启动重试。
+    @discardableResult
+    static func migrateToProjectVideoRelation(container: ModelContainer) -> Bool {
         let fixKey = "didMigrateProjectVideo_v1"
-        if UserDefaults.standard.bool(forKey: fixKey) { return }
+        if UserDefaults.standard.bool(forKey: fixKey) { return true }
 
         let context = container.mainContext
 
         // 查找所有没有 ProjectVideo 关联的 Video
         let videoDescriptor = FetchDescriptor<Video>()
         guard let allVideos = try? context.fetch(videoDescriptor) else {
-            UserDefaults.standard.set(true, forKey: fixKey)
-            return
+            MixLog.error(" 关联迁移：读 Video 表失败，本次不记成功键（下次启动重试）")
+            return false
         }
 
         let orphanVideos = allVideos.filter { $0.projectVideos.isEmpty }
         guard !orphanVideos.isEmpty else {
             UserDefaults.standard.set(true, forKey: fixKey)
-            return
+            return true
         }
 
         // 通过 SQLite 查询旧的 Video→Project 外键关系
         guard let storeURL = container.configurations.first?.url else {
-            UserDefaults.standard.set(true, forKey: fixKey)
-            return
+            MixLog.error(" 关联迁移：取不到库文件路径，本次不记成功键")
+            return false
         }
 
         var db: OpaquePointer?
         guard sqlite3_open(storeURL.path, &db) == SQLITE_OK else {
-            UserDefaults.standard.set(true, forKey: fixKey)
-            return
+            MixLog.error(" 关联迁移：打不开库文件，本次不记成功键")
+            return false
         }
         defer { sqlite3_close(db) }
 
         // 查所有项目
         let projectDescriptor = FetchDescriptor<Project>()
         guard let allProjects = try? context.fetch(projectDescriptor) else {
-            UserDefaults.standard.set(true, forKey: fixKey)
-            return
+            MixLog.error(" 关联迁移：读 Project 表失败，本次不记成功键")
+            return false
         }
 
         // 建立 Z_PK → Project 的映射（SwiftData 内部用 Z_PK 作为行号）
@@ -672,21 +635,23 @@ struct MixCutApp: App {
             }
         }
 
+        if migratedCount > 0 && !context.safeSave() {
+            MixLog.error(" 关联迁移：落库失败，本次不记成功键（下次启动重试）")
+            return false
+        }
         if migratedCount > 0 {
-            try? context.save()
             MixLog.info(" 已迁移 \(migratedCount) 个视频到 ProjectVideo 关联")
         }
 
         UserDefaults.standard.set(true, forKey: fixKey)
+        return true
     }
 
-    /// 从磁盘恢复丢失的项目和视频
-    /// 当 schema 变更导致数据库被清空时，扫描旧项目目录自动重建
     /// 清理上次未正常完成的中间态视频
     /// 启动时把所有处于 detectingScenes / transcribing / analyzing 的视频
     /// 标记为 failed 或 imported（取决于是否已有分镜数据），避免 UI 永久卡住"分析中"
     @MainActor
-    private static func resetStaleAnalyzingStatus(container: ModelContainer) {
+    static func resetStaleAnalyzingStatus(container: ModelContainer) {
         let context = container.mainContext
         let descriptor = FetchDescriptor<Video>()
         guard let videos = try? context.fetch(descriptor) else { return }
@@ -725,7 +690,7 @@ struct MixCutApp: App {
     /// 为所有现有项目补上"自定义组合"策略容器（首次升级后执行一次）
     /// 新项目走 ProjectViewModel.createProject 同步创建，老项目走这里补
     @MainActor
-    private static func ensureCustomGroupStrategy(container: ModelContainer) {
+    static func ensureCustomGroupStrategy(container: ModelContainer) {
         let fixKey = "didEnsureCustomGroupStrategy_v1"
         if UserDefaults.standard.bool(forKey: fixKey) { return }
 
@@ -764,7 +729,7 @@ struct MixCutApp: App {
     /// 一次性迁移：把 segment thumbnail 从「中间帧」重新生成为「首帧」
     /// 修复历史 bug: ImportViewModel 早期版本用 (start+end)/2 作为缩略图时间点，与用户「分镜首帧」直觉不符
     @MainActor
-    private static func regenerateSegmentThumbnailsToFirstFrame(container: ModelContainer) async {
+    static func regenerateSegmentThumbnailsToFirstFrame(container: ModelContainer) async {
         let fixKey = "didRegenerateSegmentThumbnailsToFirstFrame_v1"
         if UserDefaults.standard.bool(forKey: fixKey) { return }
 
@@ -916,7 +881,7 @@ struct MixCutApp: App {
 
     /// 清除 bundle 内 FFmpeg/whisper 二进制及 dylib 的 quarantine 属性
     /// DMG 分发后 macOS 会给所有文件打上 com.apple.quarantine，导致 ad-hoc 签名的二进制无法执行
-    private static func removeQuarantineFromBundleBinaries() {
+    static func removeQuarantineFromBundleBinaries() {
         guard let binURL = Bundle.main.resourceURL?.appendingPathComponent("bin") else { return }
         let binPath = binURL.path
         guard FileManager.default.fileExists(atPath: binPath) else { return }
@@ -935,9 +900,12 @@ struct MixCutApp: App {
         }
     }
 
-    private static func recoverFromDisk(container: ModelContainer) {
+    /// 从磁盘恢复丢失的项目和视频
+    /// 当 schema 变更导致数据库被清空时，扫描旧项目目录自动重建
+    @discardableResult
+    static func recoverFromDisk(container: ModelContainer) -> Bool {
         let fixKey = "didRecoverFromDisk_v1"
-        if UserDefaults.standard.bool(forKey: fixKey) { return }
+        if UserDefaults.standard.bool(forKey: fixKey) { return true }
 
         let context = container.mainContext
 
@@ -947,7 +915,7 @@ struct MixCutApp: App {
         if !existingProjects.isEmpty {
             // 数据库有数据，不需要恢复
             UserDefaults.standard.set(true, forKey: fixKey)
-            return
+            return true
         }
 
         // 扫描旧项目目录
@@ -958,7 +926,7 @@ struct MixCutApp: App {
             includingPropertiesForKeys: nil
         ) else {
             UserDefaults.standard.set(true, forKey: fixKey)
-            return
+            return true
         }
 
         // 收集所有去重的视频文件路径（按文件名去重）
@@ -992,7 +960,7 @@ struct MixCutApp: App {
 
         guard !uniqueVideos.isEmpty else {
             UserDefaults.standard.set(true, forKey: fixKey)
-            return
+            return true
         }
 
         MixLog.info(" 发现 \(uniqueVideos.count) 个视频文件，开始恢复...")
@@ -1012,10 +980,15 @@ struct MixCutApp: App {
             ProjectVideo.associate(project: project, video: video, in: context)
         }
 
-        try? context.save()
+        // 存不下就**不写成功键**：这批 Video 只活在内存里，重启后磁盘上那些文件会被判成孤儿。
+        guard context.safeSave() else {
+            MixLog.error(" 磁盘恢复落库失败，本次不记成功键（下次启动重跑，孤儿 GC 已被清单拦住）")
+            return false
+        }
         MixLog.info(" 已恢复 \(uniqueVideos.count) 个视频到「恢复的项目」，请重新执行 AI 分析")
 
         UserDefaults.standard.set(true, forKey: fixKey)
+        return true
     }
 
     /// 启动时孤儿文件 GC：收集所有 Video/Segment 记录引用到的文件路径，
@@ -1031,7 +1004,7 @@ struct MixCutApp: App {
     /// 字幕字号原本是存在 UserDefaults 里的全局设置（改一处 = 改所有视频的所有分镜），
     /// 后来改成逐分镜独立。若不迁移，老用户之前调好的字号会突然回落到默认值。
     @MainActor
-    private static func migrateGlobalSubtitleFontRatio(container: ModelContainer) {
+    static func migrateGlobalSubtitleFontRatio(container: ModelContainer) {
         let doneKey = "didMigrateSubtitleFontRatioToSegment_v1"
         guard !UserDefaults.standard.bool(forKey: doneKey) else { return }
         defer { UserDefaults.standard.set(true, forKey: doneKey) }
@@ -1054,7 +1027,7 @@ struct MixCutApp: App {
     /// 但异常分支（抛错 / 取消 / 崩溃）会漏删，且以前**没有任何兜底清理**，
     /// 长期使用会持续占盘。这里在启动后台清掉超过 24 小时的残留（正在进行的任务不会被误删）。
     @MainActor
-    private static func purgeStaleTempFiles() {
+    static func purgeStaleTempFiles() {
         Task.detached(priority: .background) {
             let dir = FileHelper.tempDirectory
             let cutoff = Date().addingTimeInterval(-24 * 60 * 60)
@@ -1107,12 +1080,16 @@ struct MixCutApp: App {
 
     /// 一次性改写库里存的绝对路径前缀（旧数据目录 → 当前数据目录）。
     /// 幂等：只有仍以旧前缀开头的值才动，重复启动不会来回改。
+    ///
+    /// - Returns: 这次**有没有**留下仍指着旧前缀的值。`false` 会拦住孤儿 GC ——
+    ///   未改写完就按"库内引用"判孤儿，等于把还在盘上、只是路径没对上的在用素材删掉。
     @MainActor
-    private static func rewriteStoredPathPrefixes(container: ModelContainer) {
+    @discardableResult
+    static func rewriteStoredPathPrefixes(container: ModelContainer) -> Bool {
         let base = FileHelper.appSupportBaseDirectory.path
         let oldPrefix = "\(base)/\(Brand.legacyDataDirectoryName)"
         let newPrefix = "\(base)/\(Brand.dataDirectoryName)"
-        guard oldPrefix != newPrefix else { return }
+        guard oldPrefix != newPrefix else { return true }
 
         let ctx = container.mainContext
         var rewritten = 0
@@ -1129,11 +1106,21 @@ struct MixCutApp: App {
             }
         }
 
-        for video in (try? ctx.fetch(FetchDescriptor<Video>())) ?? [] {
+        // 三张表都必须**读到**才算改写完成：以前是 `(try? fetch) ?? []`，
+        // 读失败会伪装成"没有要改的行"，改写静默空转一趟还被记成成功。
+        guard let videos = try? ctx.fetch(FetchDescriptor<Video>()) else {
+            MixLog.error("[BrandMigration] 读 Video 表失败，本次前缀改写未完成")
+            return false
+        }
+        for video in videos {
             apply({ video.localPath }, { video.localPath = $0 })
             apply({ video.thumbnailPath }, { video.thumbnailPath = $0 })
         }
-        for segment in (try? ctx.fetch(FetchDescriptor<Segment>())) ?? [] {
+        guard let segments = try? ctx.fetch(FetchDescriptor<Segment>()) else {
+            MixLog.error("[BrandMigration] 读 Segment 表失败，本次前缀改写未完成")
+            return false
+        }
+        for segment in segments {
             apply({ segment.thumbnailPath }, { segment.thumbnailPath = $0 })
             apply({ segment.replacedPictureVideoPath }, { segment.replacedPictureVideoPath = $0 })
             apply({ segment.replacedPictureThumbnailPath }, { segment.replacedPictureThumbnailPath = $0 })
@@ -1146,20 +1133,29 @@ struct MixCutApp: App {
             }
         }
         // 配音音频不在 GC 扫的那 5 棵树里，但路径同样存在库内，改写必须带上
-        for dub in (try? ctx.fetch(FetchDescriptor<SegmentDub>())) ?? [] {
+        guard let dubs = try? ctx.fetch(FetchDescriptor<SegmentDub>()) else {
+            MixLog.error("[BrandMigration] 读 SegmentDub 表失败，本次前缀改写未完成")
+            return false
+        }
+        for dub in dubs {
             apply({ dub.audioFilePath }, { dub.audioFilePath = $0 })
         }
-        try? ctx.save()
+        guard ctx.safeSave() else {
+            MixLog.error("[BrandMigration] 前缀改写落库失败，本次改写未记账")
+            return false
+        }
 
         MixLog.info("[BrandMigration] 路径前缀改写 \(rewritten) 个值（\(oldPrefix) → \(newPrefix)）")
         if uncovered > 0 {
             MixLog.error("[BrandMigration] 有 \(uncovered) 个值以旧前缀开头却没被改写 —— 字段清单不全，需人工核对")
+            return false
         }
+        return true
     }
 
     /// 按需调度孤儿文件 GC：距上次执行满 24 小时才跑，且延后到启动之后，避免拖慢冷启动。
     @MainActor
-    private static func scheduleOrphanGCIfDue(container: ModelContainer) {
+    static func scheduleOrphanGCIfDue(container: ModelContainer) {
         // 迁移没落地就绝不回收：此时库里的路径还指着旧目录，"未引用"判定全都不可信。
         // 且**不写 lastOrphanGCAt** —— 否则等于把这枚雷顺延 24 小时，跳过原因就从日志里消失了。
         guard FileHelper.isBrandDirectoryMigrationComplete else {

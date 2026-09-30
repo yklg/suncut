@@ -125,14 +125,16 @@ else
     fi
   fi
 
-  CALL_FILE=$( { grep -rlI "Self.dedupProjectVideoAssociations(container" "$SRC" 2>/dev/null || true; } | head -1)
+  # 0-A 之后执行顺序的唯一来源是启动清单（`MixCut/App/LaunchSteps.swift` 的 `steps`），
+  # 不再是某个文件里的平铺调用。所以这里按**声明顺序**判，而不是按调用顺序判。
+  CALL_FILE=$( { grep -rlI 'LaunchStep(id: "dedupProjectVideoAssociations"' "$SRC" 2>/dev/null || true; } | head -1)
   if [ -z "$CALL_FILE" ]; then
-    echo "FAIL TC-19f 清理没被挂进启动序列"
+    echo "FAIL TC-19f 清理没被挂进启动清单（找不到 id: \"dedupProjectVideoAssociations\"）"
     fail=1
   else
-    L_RECOVER=$(grep -n 'Self.recoverFromDisk(container' "$CALL_FILE" | head -1 | cut -d: -f1)
-    L_CLEAN=$(grep -n 'Self.dedupProjectVideoAssociations(container' "$CALL_FILE" | head -1 | cut -d: -f1)
-    L_GC=$(grep -n 'Self.scheduleOrphanGCIfDue(container' "$CALL_FILE" | head -1 | cut -d: -f1)
+    L_RECOVER=$(grep -n 'LaunchStep(id: "recoverFromDisk"' "$CALL_FILE" | head -1 | cut -d: -f1)
+    L_CLEAN=$(grep -n 'LaunchStep(id: "dedupProjectVideoAssociations"' "$CALL_FILE" | head -1 | cut -d: -f1)
+    L_GC=$(grep -n 'LaunchStep(id: "orphanGC"' "$CALL_FILE" | head -1 | cut -d: -f1)
     if [ -n "$L_RECOVER" ] && [ -n "$L_CLEAN" ] && [ -n "$L_GC" ] && \
        [ "$L_CLEAN" -gt "$L_RECOVER" ] && [ "$L_CLEAN" -lt "$L_GC" ]; then
       echo "PASS TC-19f 挂载顺序正确（recover :$L_RECOVER → 清理 :$L_CLEAN → 孤儿 GC :${L_GC}）"

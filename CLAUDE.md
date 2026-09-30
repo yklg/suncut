@@ -53,7 +53,7 @@ SunCut 是一款 macOS 原生桌面应用（SwiftUI + SwiftData），面向广�
 
 ```
 App/          → 入口 + 主路由（MixCutApp, ContentView）
-Models/       → SwiftData 模型（6 个 @Model 类，含 ProjectVideo 中间表）
+Models/       → SwiftData 模型（10 个 @Model 类，含 ProjectVideo 中间表；清单真源是 SchemaVersions.swift 的 AppSchemaV1.models）
 ViewModels/   → @Observable VM，持有 Service 引用，@MainActor
 Services/     → actor 隔离的业务逻辑，无 UI 依赖
 Views/        → SwiftUI 视图，按功能分子目录
@@ -407,19 +407,46 @@ var body: some View {
 - `ContentView.onAppear` 额外给 `segmentLibraryVM.loadSegments(for: 启动选中的项目)` 预热一次，带 `loadedProjectID == nil` 闸门（每进程至多一次）。**这不是把加载搬上导航边界**：视图自己的 `.task(id:)` 一行没动，预热只是把「第一次进这个面」的那次骨架提前消掉；别顺手把它改成每次换项目都跑（实测那条方向批六整块撤销过）
 新增视图如果依赖项目数据，必须遵循以上模式；机械判据见 `scripts/check_navigation_readiness_guards.sh`。
 
-### Schema 变更必须先备份数据库
+### Schema 变更：备份门已装在开库前，改代码阶段仍要手动留一份
 
-修改 SwiftData 模型（增删字段、修改关系）前，必须先备份数据库文件：
+**先纠正一条害人的旧命令**：本节原先写的 `cp ~/Library/Application Support/default.store …` 指向的是
+2026-04-21 的 73KB 死库。真库在这里，而且跑 WAL 模式，**三件套必须一起**（实测现网 `.store` 348KB
+而 `.store-wal` 2.16MB —— 最近的写入几乎都在 WAL 里，只拷主文件等于拷半份库）：
+
 ```bash
-cp ~/Library/Application\ Support/default.store ~/Library/Application\ Support/default.store.bak
+cd /Users/yilukaige/mixed_cut-main
+TS=$(date -u +%Y%m%d-%H%M%S)
+mkdir -p .scratch/store-backup-${TS}
+cp ~/Library/Application\ Support/Suncut/Suncut.store* .scratch/store-backup-${TS}/
 ```
-SwiftData 无 VersionedSchema 时，schema 不兼容会导致数据库被清空。
+
+改 SwiftData 模型（增删字段、改类型、改关系）时的流程：
+
+1. **动手前先手动留一份三件套**（上面的命令）。运行时那道备份门只在**开库前**触发，
+   改代码阶段它救不了你。
+2. 模型清单与版本锚点在 `MixCut/Models/SchemaVersions.swift`（`AppSchemaV1` = 当前 10 个 `@Model`）。
+   开库走 `MixCut/App/SchemaGuard.swift`：算描述行 → 指纹比对 → 变更分类 → 需要时备份三件套 →
+   `PRAGMA integrity_check` 自证 → 才建 `ModelContainer`。
+3. **只增行**（加可选字段、加实体）会被判成轻量兼容 ⇒ 备份后照常开库。
+   **有行消失**（删字段、改类型、改属性名、改关系）判成不可自动迁移 ⇒ **拒绝开库**并给出备份路径。
+   这时不要绕门：补一个 `AppSchemaV2` + `MigrationStage.custom`，或明确接受"退回上一版"。
+4. 门的两处已知不完备，写在这而不是藏在代码里：
+   - 新增**必需且无默认值**的字段会落在"只增"，轻量迁移不一定过得去 —— 那种失败会走内存降级，
+     其文案已改成**不指引删库**；
+   - `#Index` 变更**不进指纹**（`Entity.indices` 要 macOS 15+，本工程部署目标 14.0），
+     所以"指纹没变"只能读成"除索引外没变"。
+5. 机械判据：`LC_ALL=en_US.UTF-8 ./scripts/check_schema_ledger_guards.sh`（SL-01~11）——
+   `@Model` 与 `AppSchemaV1.models` 逐名对账、清单/动作条数相等、`did…_v1` 键与账本**双向**覆盖、
+   `orphanGC` 的 `requires` 必须含三颗、有真信号的步骤必须回报 `Bool`、防线文案不得叫用户删库。
+   启动顺序与前序约束的**唯一来源**是 `MixCut/App/LaunchSteps.swift` 的清单，别退回平铺调用。
 
 ## 已知问题与改进方向
 
-- **数据库保存**: 大量 `try? modelContext?.save()` 吞掉错误，后续应加日志或用户提示
+- **数据库保存**: `try? ….save()` 吞错仍剩 **48 处**（2026-10-01 实数，`grep -rEc` 口径见 SL 守卫脚本头），
+  后续应逐处换 `safeSave`/`saveOrWarn`；启动链上那三处会连累孤儿 GC 的已收口，由 SL-08 钉住不许退回
 - **并发安全**: 多视频并行导入时共享 ModelContext 可能有竞态风险（当前实际为顺序处理）
-- **Schema 版本**: 未使用 SwiftData VersionedSchema，模型结构变更需注意兼容性
+- **Schema 版本**: 已采纳 `VersionedSchema`（V1 = 采纳点，`stages` 为空是当前正确状态）；
+  启动链上那 19 颗一次性迁移的账本正在收进 `LaunchStepLedger`，见 `docs/superpowers/plans/2026-09-30-upstream-012-portability.md`
 - **样式规范**: 已创建 `DesignTokens.swift`（Corner/Spacing/Padding），部分视图已迁移，其余视图待统一
 
 ## 开发阶段
