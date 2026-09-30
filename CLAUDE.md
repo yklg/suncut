@@ -284,56 +284,117 @@ SunCut 必须**同时原生支持 Apple Silicon 与 Intel Mac**。任何构建�
 
 // ✅ 写法 B：.task(id: project.id) — 在 project.id 变化时自动重新执行
 .task(id: project.id) {
-    isLoading = true
-    viewModel.loadData(for: project)
-    isLoading = false
+    viewModel.loadData(for: project)      // ⚠️ 视图里不要再放 isLoading，见下一节
 }
 
 // ❌ 错误：仅 onAppear（切换项目时视图复用不会重新触发）
 .onAppear { viewModel.loadData(for: project) }
 ```
 
+#### 骨架屏判据：住在 ViewModel，而且**换项目不许上屏**（2026-09-30 闪屏事故，两轮才修对）
+
+**绝对不要**在模块视图里写 `@State private var isLoading`。`ContentView.detailView(for:)` 是
+`@ViewBuilder switch`，分支返回不同**类型**，所以**每次点侧边栏切模块，旧视图实例都被销毁、新实例被重建** ——
+视图自己的 `@State` 必然回到初始值，于是本该只为「切项目」服务的骨架屏每次切模块都上一帧。这是第一轮修掉的闪屏。
+
+第二轮才量出来：**骨架屏自己上屏的那几帧，就是残余跳动的本体**。`mainContent → SkeletonView → mainContent`
+这次结构翻转要在同一次提交里拆掉整棵旧内容树，主线程被占住、窗口拿不到新帧 —— 逐帧实测侧栏区连续
+3–10 帧（**50–133ms**）完全没有内容。消融对照：把内容区整块换空仍剩 33–50ms（换入换出本身的底价），
+**不亮骨架则 359 帧一帧不丢**。所以判据只能看「屏上还有没有东西可留」：
+
+```swift
+// ✅ 正确：骨架只在「屏上还没有任何项目数据」时亮；换项目不换分支，旧画面留屏但禁点
+Group {
+    if viewModel.readiness.needsSkeleton {
+        SkeletonView(layout: .segmentLibrary)
+    } else {
+        mainContent
+            .allowsHitTesting(viewModel.readiness.holdsData(for: project.id))
+    }
+}
+.task(id: project.id) {
+    viewModel.loadSegments(for: project)   // 加载末尾自己 markLoaded
+}
+
+// ❌ 错误一：视图自持开关 —— 每次切模块都被重建复位，闪屏复发
+@State private var isLoading = true
+// ❌ 错误二：needsSkeleton(for: project.id) —— 判据长出项目维度，换项目就又上一次骨架
+```
+
+`needsSkeleton` **不带任何参数**。它一旦长出项目（或模块）维度，闪屏当场复发。
+换项目期间屏上是**上一个项目的画面**，靠 `holdsData(for:)` 禁点补回来，不靠遮罩 ——
+禁点不是可选项：画面上那些按钮的回调捕获的是**新的** `project`（如「上传自建分镜」走
+`importSelfSegments(into: project)`），那 150ms 不关窗口就是跨项目误操作。
+
+机械判据：`scripts/check_navigation_readiness_guards.sh`（G01 整棵 `MixCut/Views` 里 `isLoading` 必须为 0，
+G04/G05/G13 锁两条判据的接口面与禁点落点，G15 锁冷启动预热及其每进程一次的闸门，G14 保证一次性探针已删净）。
+量法：`scripts/measure_nav_blank.sh <录屏.mov>`（逐帧「边缘能量塌缩」）。**改过导航或渲染就必须跑它**，
+判据：切项目时侧栏区空白 ≤ 1 帧。
+
+**修完之后仍然剩下的那一次骨架**：冷启动后第一次进某个面 —— 那个 VM 连一个项目都没加载过，屏上确实没东西可留，
+`needsSkeleton` 为真是正确判定。但它照样要付那 100ms 空窗，所以 `ContentView.onAppear` 给分镜库表面**预热一次**
+（闸门 `readiness.loadedProjectID == nil` ⇒ 每进程至多一次；实测 load 0–11ms）。
+这不属于「判据长出项目维度」：判据仍然无参数，只是让它从启动那一刻起就为假。
+
+四条已被实测排除的旧假设，别再走回去（证据与数字见计划 `fluid-spring-char` §批九）：
+① `loadXXX` 的调用时机 —— load 实测 0–11ms，空白 50–133ms，不是一回事（批六整批因此撤销）；
+② 容器交叉淡入 —— `.animation` 整条关掉照旧跳，且空白帧是静止帧不是渐变；
+③ 网格重排 / 340pt 详情栏 —— 空白帧里布局子树整体缺席；
+④ 卡片与 `AVPlayer` 的拆除 —— 消融后仍剩 33–50ms，是底价不是主犯。
+
 #### 🚨 致命陷阱：`.task(id:)` 必须放在 body 最外层
 
 **绝对不要**把 `.task(id: project.id)` 附加在条件渲染的子视图上：
 
 ```swift
-// ❌ 致命错误：当 isLoading=false 时 SkeletonView 不渲染 → task 消失 → 切换项目不联动！
+// ❌ 致命错误：骨架分支不渲染时 task 也一起消失 → 切项目不联动！
 var body: some View {
-    if isLoading {
+    if viewModel.readiness.needsSkeleton {
         SkeletonView()
-            .task(id: project.id) { ... isLoading = false }   // ← task 绑在条件分支上
+            .task(id: project.id) { ... }        // ← task 绑在条件分支上
     } else {
         mainContent
     }
 }
 
-// ✅ 正确：task 在 Group 外层，无论 isLoading 状态如何都监听 project.id
+// ✅ 正确：task 在 Group 外层，无论当前走哪个分支都监听 project.id
 var body: some View {
     Group {
-        if isLoading { SkeletonView() } else { mainContent }
+        if viewModel.readiness.needsSkeleton { SkeletonView() } else { mainContent }
     }
     .task(id: project.id) {        // ← task 跟随整个 view 生命周期
-        isLoading = true
-        // load data...
-        isLoading = false
+        viewModel.loadData(for: project)
     }
 }
 ```
 
-**为什么犯过这个错**：2026-05-23 我把性能优化的 task 绑到了 SkeletonView 上，导致从其他项目切回来时（isLoading 已经是 false）task 不触发，数据停留在上一个项目。这种错误**视觉上一切正常但数据完全是错的**，必须人工切项目验证才能发现。
+**为什么犯过这个错**：2026-05-23 我把性能优化的 task 绑到了 SkeletonView 上，导致从其他项目切回来时（已经不需要骨架）task 不触发，数据停留在上一个项目。这种错误**视觉上一切正常但数据完全是错的**，必须人工切项目验证才能发现。
+
+#### 换项目会「露出上一个项目的残留」的，不能只靠 `.task` 清
+
+`.task(id:)` 跑在**首帧之后**。任何「换项目必须当帧就不该看到」的东西（红色错误 banner、跨项目的选中/预览），
+放在视图的 `.task` 里会晚一帧露出来 —— 视图没有骨架屏挡着时尤其明显。这类清理挂在常驻的壳上：
+`ContentView` 的 `.onChange(of: projectVM.selectedProject?.id)`。
 
 #### 检查清单（改完依赖项目的视图必须人工跑一遍）
 1. 项目 A → 项目 B：视频列表、分镜、统计数据是否变成 B 的？
 2. B → A 回切：A 数据完整？
 3. 多选状态下切项目：选中状态是否清空？
+4. **概览 ↔ 素材导入 ↔ 分镜素材库 来回切 ≥3 次：不得出现灰骨架屏，不得向白底塌陷**（换模块判据）。
+4b. **停在分镜素材库页，点侧栏项目名来回切 ≥4 次：不得有任何一帧侧栏整块没内容**（换项目判据）。肉眼容易看漏，跑 `scripts/measure_nav_blank.sh` 出数，要求侧栏区空白 ≤1 帧。
+4c. **完全退出 App 再启动（预热闸门是每进程一次，热启动测不出回归），进去后第一次点「分镜素材库」：不得出现空窗**（冷启动判据）。同一条尺子的期望值：**整段录屏空白段 = 0**；出现 1 段 100ms 就是预热被删/失效。
+5. 从概览的「快速操作」按钮进去（这些写入没包 `withAnimation`）与从侧栏行进同一页，淡入时长看起来是否一致、有无回弹？
+6. 项目 A 的素材导入页报错时直接切到项目 B：banner 必须在切换那一帧就不在（不能"闪一下 A 的报错再消失"）。
+7. 日志里 `[Perf] <模块>` 有、`[Readiness]` 没有 → 判为骨架卡死而非加载慢。
 
-#### 已修复 / 必须遵循此模式的视图
-- ProjectOverviewView（用 `.task(id: project.id)`）
-- ImportView（用 `.task(id: project.id)`）
-- SegmentLibraryView（用 `.task(id: project.id)`）
-- SchemeListView、ExportView（用 `onAppear + onChange`）
-新增视图如果依赖项目数据，必须遵循以上模式。
+#### 各模块现在的加载方式（改视图时按这表核对，别再往回退）
+- ProjectOverviewView：`.task(id: project.id)` 调 `projectVM.refreshOverviewSnapshot(for:)`；骨架由 `projectVM.readiness.needsSkeleton`（无参数）决定，换项目留旧画面 + `holdsData(for:)` 禁点
+- SegmentLibraryView：`.task(id: project.id)` 调 `viewModel.loadSegments(for:)`；同上，由 `viewModel.readiness` 决定
+- ImportView：**无骨架屏**（正文实时读 `project.videos`，SwiftData 的 Observation 就是权威源）；`.task(id: project.id)` 只剩封面预热
+- SchemeListView、ExportView（用 `onAppear + onChange`，同样没有骨架屏）
+- 跨项目残留清理（`importVM.errorMessage` 等）挂在 `ContentView` 的 `.onChange(of: selectedProject?.id)`，不放视图的 `.task`
+- `ContentView.onAppear` 额外给 `segmentLibraryVM.loadSegments(for: 启动选中的项目)` 预热一次，带 `loadedProjectID == nil` 闸门（每进程至多一次）。**这不是把加载搬上导航边界**：视图自己的 `.task(id:)` 一行没动，预热只是把「第一次进这个面」的那次骨架提前消掉；别顺手把它改成每次换项目都跑（实测那条方向批六整块撤销过）
+新增视图如果依赖项目数据，必须遵循以上模式；机械判据见 `scripts/check_navigation_readiness_guards.sh`。
 
 ### Schema 变更必须先备份数据库
 

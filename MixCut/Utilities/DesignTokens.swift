@@ -102,6 +102,8 @@ enum DesignTokens {
         static let overlayScrim = Color.black.opacity(0.5)
         /// 9:16 letterbox 留边统一用纯黑，避免各处深浅不一。
         static let letterbox = Color.black
+        /// 详情区底色。切模块时新旧两页会交叉淡入，没有这层不透明底就会向窗口白底塌陷 —— 用户看到的「闪一下白」。
+        static let detailBackdrop = Color(nsColor: .windowBackgroundColor)
 
         enum Status {
             static let success = Color.green

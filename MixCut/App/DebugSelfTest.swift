@@ -20,6 +20,7 @@ enum DebugSelfTest {
         if env["MIXCUT_SELFTEST_ASRFULL"] == "1" { runASRFull(container: container); return }
         if env["MIXCUT_SELFTEST_ASR"] == "1" { runASR(container: container); return }
         if env["MIXCUT_SELFTEST_CLEAN"] == "1" { runCleanFanout(container: container); return }
+        if env["MIXCUT_SELFTEST_READINESS"] == "1" { runReadiness(container: container); return }
         if let n = env["MIXCUT_SELFTEST_GEN_REAL"], let t = Int(n) { runGenReal(container: container, target: t); return }
         if env["MIXCUT_SELFTEST_REWRITE"] == "1" { runRewrite(container: container); return }
         if let n = env["MIXCUT_SELFTEST_GEN"], let target = Int(n) { runGenSchemes(container: container, target: target); return }
@@ -157,6 +158,108 @@ enum DebugSelfTest {
         }
         try? ctx.save()
         write(outPath, ["# 清理 fan-out 残留", "删除方案: \(removedSchemes)", "删除空AI策略: \(removedStrats)", "[done]"])
+    }
+
+    // MARK: - 就绪态与切项目联动（计划 fluid-spring-char 批五 · TC-I02 / TC-I04）
+    //
+    // 只覆盖「有活入口」的两条：判据都在 ViewModel 的公开 API 上，能在真实库上直接调。
+    //   · TC-I01「换项目当帧清 banner」的触发点在 ContentView 的 .onChange 里 —— 那是视图修饰符，
+    //     自检程序没有视图图，触发不到。硬测它就得把清理逻辑挪进 VM 或暴露内部状态，属为测试改架构，
+    //     已改为人工判据（CLAUDE.md 检查清单第 6 条）。
+    //   · TC-I03「prewarm 同项目不互杀」要读 ThumbnailCache 的私有 task 句柄，同理不测；
+    //     它的可观察代理是「首屏封面不再同步解码」，看 [Perf] 日志与上屏卡顿。
+
+    /// 真库上验证：多选残留不跨重载（悬空 id 必被清）、骨架判据随项目翻转、快照读到真值。
+    /// 全程只建两个临时项目，不动用户数据；结束按 runGenSchemes 的先例清理。
+    @MainActor
+    static func runReadiness(container: ModelContainer) {
+        let outPath = ProcessInfo.processInfo.environment["MIXCUT_SELFTEST_OUT"]
+            ?? NSTemporaryDirectory() + "\(Brand.shortName)_readiness.txt"
+        let ctx = container.mainContext
+        // 取样有两个坑，都会把判据变成假绿，所以同时避开：
+        //   · 必须取两个**不同**的视频：若 A、B 挂同一个，「B 里不得混入 A 的分镜」恒成立。
+        //   · 每个视频必须**自带分镜**：若 B 挂的是 0 分镜视频，空集与任何集合求交都是 0，那条同样恒成立。
+        let allVideos = (try? ctx.fetch(FetchDescriptor<Video>())) ?? []
+        let withSegments = allVideos.filter { !$0.segments.isEmpty }
+        guard let videoA = withSegments.first else {
+            write(outPath, ["库里没有任何带分镜的视频（视频总数 \(allVideos.count)），无法取样 —— 本判据不算通过"]); return
+        }
+        let videoB = withSegments.count > 1 ? withSegments[1] : nil
+
+        let projectA = Project(name: "【自检临时A】请忽略")
+        let projectB = Project(name: "【自检临时B】请忽略")
+        ctx.insert(projectA); ctx.insert(projectB)
+        ProjectVideo.associate(project: projectA, video: videoA, in: ctx)
+        if let videoB { ProjectVideo.associate(project: projectB, video: videoB, in: ctx) }
+        else { ProjectVideo.associate(project: projectB, video: videoA, in: ctx) }   // 退化取样，foreign 判据下面会标未跑
+        try? ctx.save()
+        let ids = (projectA.id, projectB.id)
+
+        let sampleBName = String((videoB ?? videoA).name.prefix(24))
+        let sampleBSegCount = videoB.map { "（分镜 \($0.segments.count) 条）" } ?? ""
+        let sameSourceNote = videoB == nil ? "（库里只有 1 个带分镜的视频，AB 同源 → 跨项目纯净性判据记为未跑）" : ""
+        var r: [String] = ["# 就绪态与切项目联动自检",
+                           "取样池：视频 \(allVideos.count) 个，其中带分镜的 \(withSegments.count) 个",
+                           "取样：A←视频「\(String(videoA.name.prefix(24)))」（分镜 \(videoA.segments.count) 条），B←视频「\(sampleBName)」\(sampleBSegCount)\(sameSourceNote)"]
+
+        // —— TC-I04：骨架判据与禁点判据必须分离（批十契约：换项目不上屏骨架，只禁点）——
+        let projectVM = ProjectViewModel()
+        projectVM.setModelContext(ctx)
+        let coldSkeleton = projectVM.readiness.needsSkeleton
+        r.append("冷启动 needsSkeleton=\(coldSkeleton)（期望 true —— 屏上还没有任何项目的数据可留）\(coldSkeleton ? "✅" : "❌ FAIL")")
+        projectVM.refreshOverviewSnapshot(for: projectA)
+        let snapA = projectVM.overviewSnapshot          // 先存下 A 的读数，否则下面那行会把 B 的值当成 A 报出去
+        let afterA: (Bool, Bool, Bool) = (projectVM.readiness.needsSkeleton,
+                                          projectVM.readiness.holdsData(for: projectA.id),
+                                          projectVM.readiness.holdsData(for: projectB.id))
+        r.append("加载 A 后：needsSkeleton=\(afterA.0)（期望 false）/ holdsData(A)=\(afterA.1)（期望 true）/ holdsData(B)=\(afterA.2)（期望 false）→ \(afterA == (false, true, false) ? "✅" : "❌ FAIL")")
+        projectVM.refreshOverviewSnapshot(for: projectB)
+        let afterB: (Bool, Bool, Bool) = (projectVM.readiness.needsSkeleton,
+                                          projectVM.readiness.holdsData(for: projectA.id),
+                                          projectVM.readiness.holdsData(for: projectB.id))
+        r.append("切到 B 后：needsSkeleton=\(afterB.0)（期望 false —— 换项目**不再**上屏骨架）/ holdsData(A)=\(afterB.1)（期望 false → 屏上是旧画面，该禁点）/ holdsData(B)=\(afterB.2)（期望 true）→ \(afterB == (false, false, true) ? "✅" : "❌ FAIL")")
+        r.append("快照规模 A=\(snapA.videoCount) 视频 / B=\(projectVM.overviewSnapshot.videoCount) 视频（各挂 1 个视频，必须读到 1；读到 0 就是「先画 0 视频」的回归）")
+
+        // —— TC-I02：重载必须把选中重新对齐到现存数据（含悬空引用保护）——
+        let segVM = SegmentLibraryViewModel()
+        segVM.setModelContext(ctx)
+        segVM.loadSegments(for: projectA)
+        let aSegIDs = Set(segVM.segments.map(\.id))
+        // 故意植入两个凭空的分镜 id（不属于任何现存数据），先证明植入成立
+        segVM.selectedSegmentIDs.insert(UUID())
+        segVM.selectedSegmentIDs.insert(UUID())
+        segVM.setSelectionMode(true)
+        r.append("植入后：selectedSegmentIDs=\(segVM.selectedSegmentIDs.count)（期望 2）A 的分镜数=\(aSegIDs.count)")
+        segVM.loadSegments(for: projectB)   // 切项目重载
+        let selectedCleared = segVM.selectedSegmentIDs.isEmpty && segVM.selectedSegment == nil && !segVM.isSelectionMode
+        let selectedReadout = segVM.selectedSegment == nil ? "nil" : "残留"
+        let verdict = selectedCleared ? "✅" : "❌"
+        r.append("重载 B 后：IDs=\(segVM.selectedSegmentIDs.count)（期望 0）selectedSegment=\(selectedReadout)（期望 nil）多选模式=\(segVM.isSelectionMode)（期望 false）→ \(verdict)")
+        if videoB != nil {
+            let bSegIDs = Set(segVM.segments.map(\.id))
+            let foreign = aSegIDs.intersection(bSegIDs).count
+            // 非空洞性自证：只要有一侧分镜为空，「交集为 0」就恒成立 —— 那条判据当场没测到东西，必须判 FAIL 而不是打 ✅。
+            let purityVerdict: String
+            if aSegIDs.isEmpty || bSegIDs.isEmpty {
+                purityVerdict = "❌ FAIL（取样退化：有一侧分镜为空，空集求交恒为 0，不构成判据）"
+            } else {
+                purityVerdict = foreign == 0 ? "✅" : "❌ FAIL（交集 \(foreign) 条非空，A 的数据漏进了 B）"
+            }
+            r.append("跨项目纯净性：A 分镜数=\(aSegIDs.count) / B 分镜数=\(bSegIDs.count)，与 A 的分镜 id 交集=\(foreign)（期望两侧都 >0 且交集为 0）→ \(purityVerdict)")
+        } else {
+            r.append("跨项目纯净性：未跑（库里只有 1 个带分镜的视频，AB 同源 → 交集必然等于全部，不构成判据）")
+        }
+
+        r.append("判读：上面每一行括号里的期望都要与实读一致；任何一处不符即本自检失败。")
+
+        // 清理：先摘关联行再删临时项目，避免级联把用户的真实关联一起带走
+        if let rows = try? ctx.fetch(FetchDescriptor<ProjectVideo>()) {
+            for row in rows where row.project?.id == ids.0 || row.project?.id == ids.1 { ctx.delete(row) }
+        }
+        ctx.delete(projectA); ctx.delete(projectB)
+        try? ctx.save()
+        r.append("[done]")
+        write(outPath, r)
     }
 
     // MARK: - 测短参考音的 clean 率（用 N 秒参考重新克隆，同台词合成5次看漏读几次）

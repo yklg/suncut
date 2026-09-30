@@ -23,7 +23,37 @@ final class ProjectViewModel {
     var newProjectName = ""
     var errorMessage: String?
 
+    /// 概览页的数字快照。
+    ///
+    /// 原先这四个值写在 `ProjectOverviewView` 的 `@State` 里，而视图实例每次切模块都被销毁重建
+    /// （`ContentView.detailView` 是 `@ViewBuilder switch`），于是每次进入都得从骨架屏重画一遍 —— 就是用户看到的闪屏。
+    /// 快照与「就绪与否」必须同生命周期，所以搬到本 VM。
+    struct OverviewSnapshot: Equatable {
+        var videos: [Video] = []
+        var videoCount = 0
+        var segmentCount = 0
+        var schemeCount = 0
+    }
+
+    private(set) var overviewSnapshot = OverviewSnapshot()
+    private(set) var readiness = ProjectDataReadiness()
+
     private var modelContext: ModelContext?
+
+    /// 概览页的数据读取：关系字段是计算属性（每次访问都走一遍 dedup），所以一次读全、缓存到本 VM。
+    func refreshOverviewSnapshot(for project: Project) {
+        let t0 = Date()
+        let allVideos = project.videos
+        let realVideos = allVideos.filter { !$0.isUserUploaded }            // 成片视频（自建分镜不算「视频」，只在分镜库出现）
+        let segCount = allVideos.reduce(0) { $0 + $1.segments.count }       // 分镜计数含自建分镜
+        overviewSnapshot = OverviewSnapshot(videos: realVideos,
+                                            videoCount: realVideos.count,
+                                            segmentCount: segCount,
+                                            schemeCount: project.schemeCount)
+        readiness.markLoaded(for: project.id)
+        MixLog.info("[Readiness] 项目概览已就绪 project=\(project.id)")
+        MixLog.info("[Perf] ProjectOverview: \(Int(Date().timeIntervalSince(t0) * 1000))ms / videos=\(overviewSnapshot.videoCount) segs=\(overviewSnapshot.segmentCount)")
+    }
 
     func setModelContext(_ context: ModelContext) {
         self.modelContext = context

@@ -11,38 +11,45 @@ struct SegmentLibraryView: View {
     @State private var showBatchExportSheet = false
     @State private var showBatchDeleteConfirm = false
     @State private var showArrangeSheet = false
-    @State private var isLoading = true
     @State private var dubVM = DubbingViewModel()
     /// 搜索防抖任务句柄：新按键到来时取消上一个，避免每敲一个字就全量重算。
     @State private var searchDebounceTask: Task<Void, Never>?
     /// 字幕烧录字号（全局设置，与卡片预览、导出共用同一 UserDefaults 键）
+    /// ⚠️ 这是本视图**私有**的 ImportViewModel，与 ContentView 那个不是同一实例；
+    ///    .task 里那句 setModelContext 是给它注上下文的**唯一一处**，删不得（自建分镜上传/拆分都走它）。
     @State private var importVM = ImportViewModel()
     @Environment(\.modelContext) private var modelContext
 
     var body: some View {
-        // ⚠️ .task(id: project.id) 必须在 body 最外层，不能放进子分支（见 CLAUDE.md）
+        // ⚠️ .task(id: project.id) 必须放在 body 最外层，不能放进子分支（见 CLAUDE.md）
         Group {
-            if isLoading {
+            // 骨架只在屏上还没有任何项目数据时亮。换项目**不**换分支：那次结构翻转要在同一次提交里
+            // 拆掉整棵旧内容树，窗口因此连续 50–133ms 拿不到新帧 —— 就是用户报的闪屏（见 ProjectDataReadiness）。
+            if viewModel.readiness.needsSkeleton {
                 SkeletonView(layout: .segmentLibrary)
             } else {
+                // 数据还没换过来时屏上是上一个项目的画面：照常画，但点不动。
+                // 不能留可点 —— 这里面的按钮回调捕获的 project 已经是新那一个了。
                 mainContent
+                    .allowsHitTesting(viewModel.readiness.holdsData(for: project.id))
             }
         }
         .task(id: project.id) {
+            // 上面那个 @State importVM 是本视图私有的实例，这里是它拿到 context 的唯一一处 ——
+            // 删不得：自建分镜上传与拆分两条路径都走它。
             importVM.setModelContext(modelContext)
             let t0 = Date()
-            isLoading = true
             // 退出多选模式 + 清空选中（避免不同项目的 ID 串到一起）
             viewModel.setSelectionMode(false)
-            let thumbPaths = project.videos.compactMap(\.thumbnailPath)
-            ThumbnailCache.shared.prewarm(paths: thumbPaths)
+            let videoCovers = project.videos.compactMap(\.thumbnailPath)
             viewModel.loadSegments(for: project)
-            // ⚠️ 真正铺满屏幕的是**分镜**缩略图（可达数百张），上面那行只预热了每个视频 1 张封面。
-            // 不预热的话，LazyVGrid 每滚出一行都要在主线程同步读盘+解码 → 滚动掉帧。
-            // 放在 loadSegments 之后，因为要用它算出来的分镜列表。
-            ThumbnailCache.shared.prewarm(paths: viewModel.segments.compactMap(\.thumbnailPath))
+            // ⚠️ 一次调用同时预热「每个视频的封面」和「全部分镜缩略图」。
+            // 旧写法是连发两次 prewarm，而第二次会 cancel 第一次 —— 视频封面从来没预热成过。
+            // 真正铺满屏幕的是分镜缩略图（可达数百张）；不预热的话 LazyVGrid 每滚出一行
+            // 都要在主线程同步读盘+解码 → 滚动掉帧。
+            let covers = videoCovers + viewModel.segments.compactMap(\.thumbnailPath)
+            ThumbnailCache.shared.prewarm(paths: covers, for: project.id)
             MixLog.info("[Perf] SegmentLibrary: \(Int(Date().timeIntervalSince(t0) * 1000))ms / segs=\(viewModel.segments.count)")
-            isLoading = false
         }
     }
 

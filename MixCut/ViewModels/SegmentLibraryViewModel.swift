@@ -35,6 +35,10 @@ final class SegmentLibraryViewModel {
     var sortByQuality = false
     var isGridView = true
 
+    /// 骨架屏判据：手上有没有「这个项目」的分镜数据。
+    /// 住在 VM 而不是视图，是因为视图实例每次切模块都被销毁重建，自持 `@State isLoading` 会让换模块也上一帧骨架。
+    private(set) var readiness = ProjectDataReadiness()
+
     /// 微调后触发预览播放的回调信号
     var previewRequest: SegmentPreviewRequest?
 
@@ -84,6 +88,8 @@ final class SegmentLibraryViewModel {
         }
         segments = allSegments
         applyFilter()   // applyFilter 内部会调用 recomputeAllDerived
+        readiness.markLoaded(for: project.id)
+        MixLog.info("[Readiness] 分镜数据已就绪 project=\(project.id) segs=\(segments.count)")
     }
 
     // MARK: - 批量导出多选

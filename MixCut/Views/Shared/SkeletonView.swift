@@ -4,7 +4,6 @@ import SwiftUI
 struct SkeletonView: View {
     enum Layout {
         case projectOverview   // 项目概览：统计 + 视频卡片
-        case importMedia       // 素材导入：拖拽区 + 视频卡片列表
         case segmentLibrary    // 分镜库：网格
     }
 
@@ -16,8 +15,6 @@ struct SkeletonView: View {
             switch layout {
             case .projectOverview:
                 projectOverviewSkeleton
-            case .importMedia:
-                importMediaSkeleton
             case .segmentLibrary:
                 segmentLibrarySkeleton
             }
@@ -54,20 +51,6 @@ struct SkeletonView: View {
             ForEach(0..<3, id: \.self) { _ in
                 // 真实卡片 = 9:16 缩略图 + 文件名 + 元信息；骨架必须同高，否则加载完成时布局大幅位移
                 shimmerBlock(height: DesignTokens.Size.videoHeight(forWidth: 225) + 44)
-            }
-        }
-    }
-
-    @ViewBuilder
-    private var importMediaSkeleton: some View {
-        // 拖拽区
-        shimmerBlock(height: 180)
-        bar(width: 100, height: 12)
-            .padding(.top, 8)
-        // 视频卡片
-        LazyVGrid(columns: [GridItem(.adaptive(minimum: 380, maximum: 440))], spacing: DesignTokens.Spacing.comfortable) {
-            ForEach(0..<2, id: \.self) { _ in
-                shimmerBlock(height: 220)
             }
         }
     }

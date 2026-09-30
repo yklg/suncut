@@ -5,18 +5,15 @@ struct ProjectOverviewView: View {
     @Bindable var projectVM: ProjectViewModel
     @Binding var selectedNavItem: NavigationItem?
 
-    @State private var isLoading = true
-    // 缓存计算结果，避免 mainContent 反复访问 project.videoCount / segmentCount（每次都触发 SwiftData fetch）
-    @State private var videoCount = 0
-    @State private var segmentCount = 0
-    @State private var schemeCount = 0
-    @State private var videosCached: [Video] = []
+    /// 概览的数字与视频列表快照。真源在 `ProjectViewModel` —— 视图实例每次切模块都被销毁重建，
+    /// 把快照存在这儿会让同项目再进入先画一帧「0 视频 · 0 分镜」。
+    private var snapshot: ProjectViewModel.OverviewSnapshot { projectVM.overviewSnapshot }
 
     /// 当前该做的下一步 —— 按流水线进度推断，用来在「快速操作」里实心高亮那一个，
     /// 让用户一眼知道接下来干什么（而不是三个同等权重的按钮里瞎猜）。
     private var nextStep: NavigationItem {
-        if videoCount == 0 { return .importMedia }
-        if schemeCount == 0 { return .schemes }
+        if snapshot.videoCount == 0 { return .importMedia }
+        if snapshot.schemeCount == 0 { return .schemes }
         return .export
     }
 
@@ -25,28 +22,20 @@ struct ProjectOverviewView: View {
         // .task(id: project.id) 必须放在 body 最外层（Group 上），不能放进 if/else 子分支
         // 否则切换项目时如果当前是 mainContent 分支，SkeletonView 不渲染 → task 消失 → 不联动
         Group {
-            if isLoading {
+            // 骨架只在屏上还没有任何项目数据时亮。换项目**不**换分支：那次结构翻转要在同一次提交里
+            // 拆掉整棵旧内容树，窗口因此连续 50–133ms 拿不到新帧 —— 就是用户报的闪屏（见 ProjectDataReadiness）。
+            if projectVM.readiness.needsSkeleton {
                 SkeletonView(layout: .projectOverview)
             } else {
+                // 数据还没换过来时屏上是上一个项目的画面：照常画，但点不动
+                // （「快速操作」那排按钮拿的 selectedNavItem/project 已经是新项目的语境了）。
                 mainContent
+                    .allowsHitTesting(projectVM.readiness.holdsData(for: project.id))
             }
         }
         .task(id: project.id) {
-            let t0 = Date()
-            isLoading = true   // 每次切换都重置，确保 skeleton 显示 + 数据刷新
-            // 一次性读取所有 SwiftData 关系字段
-            let allVideos = project.videos
-            let realVideos = allVideos.filter { !$0.isUserUploaded }   // 成片视频（自建分镜不算「视频」，只在分镜库出现）
-            let segCount = allVideos.reduce(0) { $0 + $1.segments.count }   // 分镜计数含自建分镜
-            videosCached = realVideos
-            videoCount = realVideos.count
-            segmentCount = segCount
-            schemeCount = project.schemeCount
-
-            let thumbPaths = realVideos.compactMap(\.thumbnailPath)
-            ThumbnailCache.shared.prewarm(paths: thumbPaths)
-            MixLog.info("[Perf] ProjectOverview: \(Int(Date().timeIntervalSince(t0) * 1000))ms / videos=\(videoCount) segs=\(segmentCount)")
-            isLoading = false
+            projectVM.refreshOverviewSnapshot(for: project)
+            ThumbnailCache.shared.prewarm(paths: snapshot.videos.compactMap(\.thumbnailPath), for: project.id)
         }
     }
 
@@ -68,15 +57,15 @@ struct ProjectOverviewView: View {
 
                 // 统计卡片（用缓存的数值，避免每次重绘触发 SwiftData 关系遍历）
                 HStack(spacing: DesignTokens.Spacing.normal) {
-                    StatCard(title: "视频", value: "\(videoCount)", icon: "film", color: .blue) {
+                    StatCard(title: "视频", value: "\(snapshot.videoCount)", icon: "film", color: .blue) {
                         withAnimation(DesignTokens.Motion.transition) { selectedNavItem = .importMedia }
                     }
-                    StatCard(title: "分镜", value: "\(segmentCount)", icon: "film.stack", color: .green,
-                             onTap: segmentCount > 0
+                    StatCard(title: "分镜", value: "\(snapshot.segmentCount)", icon: "film.stack", color: .green,
+                             onTap: snapshot.segmentCount > 0
                              ? { withAnimation(DesignTokens.Motion.transition) { selectedNavItem = .segmentLibrary } }
                              : nil)
-                    StatCard(title: "方案", value: "\(schemeCount)", icon: "list.bullet.clipboard", color: .purple,
-                             onTap: schemeCount > 0
+                    StatCard(title: "方案", value: "\(snapshot.schemeCount)", icon: "list.bullet.clipboard", color: .purple,
+                             onTap: snapshot.schemeCount > 0
                              ? { withAnimation(DesignTokens.Motion.transition) { selectedNavItem = .schemes } }
                              : nil)
                 }
@@ -101,7 +90,7 @@ struct ProjectOverviewView: View {
                             title: "生成方案",
                             icon: "wand.and.stars",
                             color: .accentColor,
-                            disabled: segmentCount == 0,
+                            disabled: snapshot.segmentCount == 0,
                             isPrimary: nextStep == .schemes
                         ) {
                             selectedNavItem = .schemes
@@ -111,7 +100,7 @@ struct ProjectOverviewView: View {
                             title: "导出视频",
                             icon: "square.and.arrow.up",
                             color: .accentColor,
-                            disabled: schemeCount == 0,
+                            disabled: snapshot.schemeCount == 0,
                             isPrimary: nextStep == .export
                         ) {
                             selectedNavItem = .export
@@ -121,8 +110,8 @@ struct ProjectOverviewView: View {
 
                 Divider()
 
-                // 视频列表预览（用缓存数组，避免重绘时反复触发 SwiftData fetch）
-                if videosCached.isEmpty {
+                // 视频列表预览（读 VM 快照，避免重绘时反复触发 SwiftData fetch）
+                if snapshot.videos.isEmpty {
                     VStack(spacing: DesignTokens.Spacing.normal) {
                         Image(systemName: "film.stack")
                             .font(.system(size: 36))
@@ -158,7 +147,7 @@ struct ProjectOverviewView: View {
                             Text("已导入视频")
                                 .font(DesignTokens.Typography.labelEmphasis)
                                 .foregroundStyle(.secondary)
-                            Text("\(videoCount)")
+                            Text("\(snapshot.videoCount)")
                                 .font(.system(size: 10, weight: .medium, design: .rounded))
                                 .foregroundStyle(.tertiary)
                                 .padding(.horizontal, 5)
@@ -173,7 +162,7 @@ struct ProjectOverviewView: View {
                         LazyVGrid(columns: [
                             GridItem(.adaptive(minimum: 200, maximum: 250))
                         ], spacing: DesignTokens.Spacing.normal) {
-                            ForEach(videosCached) { video in
+                            ForEach(snapshot.videos) { video in
                                 VideoCard(video: video)
                             }
                         }

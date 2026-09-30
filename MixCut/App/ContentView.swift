@@ -73,12 +73,30 @@ struct ContentView: View {
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
+            // 交叉淡入得有东西垫在后面，否则新旧两页会一起透出窗口白底 —— 就是「闪一下白」。
+            .background(DesignTokens.Palette.detailBackdrop)
+            // 动画只在这一处驱动。导航写入散在 12 个地方（6 处带 withAnimation、6 处裸写），
+            // 挂在分支上只会让侧栏有淡入、概览的「快速操作」硬切 —— 同一个手势两种手感。
+            .animation(DesignTokens.Motion.transition, value: selectedNavItem)
+            // 素材导入页已经没有骨架屏了，靠它自己的 .task 清 banner 会晚一帧，
+            // 上一个项目的红色报错会在切换那一瞬露出来。改在换项目当帧同步清。
+            .onChange(of: projectVM.selectedProject?.id) { _, _ in
+                importVM.errorMessage = nil
+            }
         }
         .onAppear {
             projectVM.setModelContext(modelContext)
             importVM.setModelContext(modelContext)
             segmentLibraryVM.setModelContext(modelContext)
             schemeVM.setModelContext(modelContext)
+            // 冷启动预热：此刻分镜素材库那个面还没有任何项目的数据，第一次点它就会上一次骨架 ——
+            // 实测那次骨架上屏要在同一次提交里拆掉整棵内容树，窗口连续 100ms 拿不到新帧
+            // （尺子 scripts/measure_nav_blank.sh；它自己的 .task 照旧会再跑一次，这里不替代它）。
+            // 守卫刻意用 loadedProjectID == nil：每进程至多预热一次，后续 onAppear 不会再擦掉用户的选中。
+            if let project = projectVM.selectedProject,
+               segmentLibraryVM.readiness.loadedProjectID == nil {
+                segmentLibraryVM.loadSegments(for: project)
+            }
         }
         .onReceive(NotificationCenter.default.publisher(for: .mixCutNavigate)) { notification in
             if let item = notification.object as? NavigationItem {

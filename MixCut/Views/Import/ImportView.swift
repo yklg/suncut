@@ -15,29 +15,19 @@ struct ImportView: View {
     @Environment(\.modelContext) private var modelContext
     @State private var isDragTargeted = false
     @State private var showingFilePicker = false
-    @State private var isLoading = true
     /// 导入任务句柄，用于「停止导入」取消
     @State private var importTask: Task<Void, Never>?
 
     var body: some View {
-        // ⚠️ .task(id: project.id) 必须在 body 最外层，不能放进子分支（见 CLAUDE.md）
-        Group {
-            if isLoading {
-                SkeletonView(layout: .importMedia)
-            } else {
-                mainContent
+        // 本模块不挂骨架屏：正文实时读 `project.videos`（SwiftData 的 Observation 就是权威源），
+        // 原先的 SkeletonView 唯一的副作用就是每次换模块白闪一帧。
+        mainContent
+            .task(id: project.id) {
+                let t0 = Date()
+                let thumbPaths = project.videos.compactMap(\.thumbnailPath)
+                ThumbnailCache.shared.prewarm(paths: thumbPaths, for: project.id)
+                MixLog.info("[Perf] Import: \(Int(Date().timeIntervalSince(t0) * 1000))ms / videos=\(project.videos.count)")
             }
-        }
-        .task(id: project.id) {
-            let t0 = Date()
-            isLoading = true
-            // 切项目铁律：清空上一个项目的错误提示，避免红色 banner 跨项目残留
-            importVM.errorMessage = nil
-            let thumbPaths = project.videos.compactMap(\.thumbnailPath)
-            ThumbnailCache.shared.prewarm(paths: thumbPaths)
-            MixLog.info("[Perf] Import: \(Int(Date().timeIntervalSince(t0) * 1000))ms / videos=\(project.videos.count)")
-            isLoading = false
-        }
     }
 
     private var mainContent: some View {

@@ -13,6 +13,15 @@ enum MixLog {
 
     private static let logPath: String = logFileURL.path
 
+    /// 时间戳必须到毫秒：导航空白只有 50–134ms，秒级时间戳里同一秒内的先后分不出来，
+    /// 「加载耗时 vs 画面空了多久」这类对账就只能靠肉眼。
+    private static let timestampFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.dateFormat = "yyyy-MM-dd HH:mm:ss.SSS"
+        return formatter
+    }()
+
     static func info(_ msg: String) {
         write("ℹ️", msg)
     }
@@ -22,7 +31,7 @@ enum MixLog {
     }
 
     private static func write(_ level: String, _ msg: String) {
-        let line = "[\(Date())] \(level) \(msg)\n"
+        let line = "[\(timestampFormatter.string(from: Date()))] \(level) \(msg)\n"
         guard let data = line.data(using: .utf8) else { return }
         if FileManager.default.fileExists(atPath: logPath) {
             if let handle = FileHandle(forWritingAtPath: logPath) {

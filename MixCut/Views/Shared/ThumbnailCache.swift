@@ -33,8 +33,16 @@ final class ThumbnailCache {
     /// 网格滚动时这是每秒几十次的无谓磁盘 IO，且永远不会成功。
     private var failedPaths: Set<String> = []
 
-    /// 当前的预热任务。切项目时取消上一个，避免过期项目的解码继续抢占 CPU。
+    /// 在飞的预热任务，以及它属于哪个项目。
+    ///
+    /// 旧实现是「一条全局 task + 每次调用无条件 cancel」：分镜库在同一个 `.task` 里先预热视频封面、
+    /// 再预热分镜封面，第二次调用必然掐死第一次 —— 视频封面从来没预热成过，第一次上屏全靠主线程同步解码。
     private var prewarmTask: Task<Void, Never>?
+    private var prewarmProjectID: UUID?
+
+    /// 预热批次编号。只用来判断「我是不是最新那一批」，以便跑完后干净地让出 `prewarmTask`，
+    /// 不要让一个已经完成的 task 引用长期挂在字典里。
+    private var prewarmGeneration = 0
 
     private init() {}
 
@@ -52,10 +60,25 @@ final class ThumbnailCache {
     }
 
     /// 预热：异步预加载（后台线程降采样解码，主线程入缓存）。
-    /// 每次调用会取消上一次未完成的预热——用户快速切项目时，不该让旧项目的缩略图继续解码。
-    func prewarm(paths: [String]) {
-        prewarmTask?.cancel()
+    ///
+    /// 取消策略按项目走：**换了项目**才取消上一条（用户已经不在旧项目上，继续解码是纯浪费 CPU）；
+    /// **同一个项目**的多次预热排成一条队列接着跑，不再互相掐死。
+    func prewarm(paths: [String], for projectID: UUID) {
+        let previous: Task<Void, Never>?
+        if projectID != prewarmProjectID {
+            prewarmTask?.cancel()
+            prewarmTask = nil
+            previous = nil
+        } else {
+            previous = prewarmTask          // 同项目：排队接手，而不是取消
+        }
+
+        prewarmProjectID = projectID
+        prewarmGeneration += 1
+        let generation = prewarmGeneration
+
         prewarmTask = Task.detached(priority: .utility) {
+            if let previous { _ = await previous.value }
             for path in paths {
                 if Task.isCancelled { return }
                 // 已在缓存里、或已知解码失败的，直接跳过
@@ -75,6 +98,10 @@ final class ThumbnailCache {
                     }
                 }
             }
+            await MainActor.run {
+                // 只有「我仍然是最新一批」才让出手柄，别把后一批的 task 引用清掉
+                if generation == self.prewarmGeneration { self.prewarmTask = nil }
+            }
         }
     }
 
@@ -87,6 +114,8 @@ final class ThumbnailCache {
     func clear() {
         prewarmTask?.cancel()
         prewarmTask = nil
+        prewarmProjectID = nil
+        prewarmGeneration += 1      // 让已在飞的批次跑完时不去清别人的柄
         cache.removeAllObjects()
         failedPaths.removeAll()
     }
