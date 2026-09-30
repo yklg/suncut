@@ -19,7 +19,7 @@ pass() { echo "PASS $1"; }
 
 # G1 规则层不得读写用户偏好存储（破一次，"下沉=可测"这条前提就废了）
 # 只匹配真实用法：文档注释里也会写这个词（例如本策略的说明），数注释会把守卫变成误报机器
-hits=$(grep -rn "UserDefaults\.standard" "$CORE" 2>/dev/null | wc -l | tr -d ' ')
+hits=$(grep -rn --include="*.swift" "UserDefaults\.standard" "$CORE" 2>/dev/null | wc -l | tr -d ' ')
 if [[ "$hits" == "0" ]]; then
   pass "G1 Sources/MixCutCore 内 UserDefaults.standard 命中数=0"
 else
@@ -96,7 +96,7 @@ done
 # ---------- 2c：逐段重听门面（R4/R5） ----------
 
 # G13 云端客户端只许门面构造（TC-83）。DebugSelfTest 是 #if DEBUG 探针，进允许清单
-bad=$(grep -rl 'QwenASRClient(' "$APP" 2>/dev/null | sed "s|$APP/||" \
+bad=$(grep -rl --include="*.swift" 'QwenASRClient(' "$APP" 2>/dev/null | sed "s|$APP/||" \
       | grep -v '^Services/ASR/SegmentTranscriber.swift$' | grep -v '^App/DebugSelfTest.swift$' | sort | tr '\n' ' ')
 if [[ -z "$bad" ]]; then
   pass "G13 云端 ASR 客户端只在门面里构造（VM 不再自己 new）"
@@ -105,7 +105,7 @@ else
 fi
 
 # G14 逐段切音频也只许门面做（格式由引擎定，R5）：VM 里再出现切段调用就是第四处实现
-bad=$(grep -rl 'extractSegmentPCM' "$APP" 2>/dev/null | sed "s|$APP/||" \
+bad=$(grep -rl --include="*.swift" 'extractSegmentPCM' "$APP" 2>/dev/null | sed "s|$APP/||" \
       | grep -v '^Services/ASR/SegmentTranscriber.swift$' \
       | grep -v '^Services/VideoProcessing/FFmpegRunner.swift$' \
       | grep -v '^App/DebugSelfTest.swift$' | sort | tr '\n' ' ')
@@ -124,7 +124,7 @@ else
 fi
 
 # G16 outcome 档位不许被就地拆成私有判据（分类只有核心层一个出处）
-bad=$(grep -rn 'outcome == .replaced\|outcome != .replaced' "$APP/ViewModels" 2>/dev/null | wc -l | tr -d ' ')
+bad=$(grep -rn --include="*.swift" 'outcome == .replaced\|outcome != .replaced' "$APP/ViewModels" 2>/dev/null | wc -l | tr -d ' ')
 if [[ "$bad" == "0" ]]; then
   pass "G16 VM 只问 gotText，不自建 outcome 判据"
 else
@@ -150,7 +150,7 @@ else
 fi
 
 # G18 能力面只许问 `ASRSettings.hasCloudKey`（布尔），不许在 MCP 目录里直接读 Keychain
-hits=$(grep -rn 'KeychainHelper' "$APP/Services/MCP" 2>/dev/null | wc -l | tr -d ' ')
+hits=$(grep -rn --include="*.swift" 'KeychainHelper' "$APP/Services/MCP" 2>/dev/null | wc -l | tr -d ' ')
 if [[ "$hits" == "0" ]]; then
   pass "G18 MCP 目录内零 KeychainHelper 引用（凭据只以布尔出现在能力面上，TC-100 的前提）"
 else
@@ -168,7 +168,7 @@ fi
 
 # G20 陈旧联动的原因措辞不许在界面/能力面各写一遍
 # 只算**代码**里的字符串：注释里引用这个词是为了说明"为什么要分两档"，数注释就把守卫变成误报机器
-bad=$(grep -rn '"原台词变了"' "$APP" 2>/dev/null | awk -F: '{
+bad=$(grep -rn --include="*.swift" '"原台词变了"' "$APP" 2>/dev/null | awk -F: '{
         line=""; for (i=3; i<=NF; i++) line = line $i ((i<NF)?":" : "");
         gsub(/^[ \t]+/, "", line);
         if (line !~ /^\/\//) print
@@ -180,13 +180,13 @@ else
 fi
 
 # G6 档位名与下载 URL 只许住在核心表里（红线 R3/R7：出现第二份就会分家）
-hits=$(grep -rn 'ggml-large\|ggml-base\|ggml-small\|ggml-medium' "$APP" 2>/dev/null | wc -l | tr -d ' ')
+hits=$(grep -rn --include="*.swift" 'ggml-large\|ggml-base\|ggml-small\|ggml-medium' "$APP" 2>/dev/null | wc -l | tr -d ' ')
 if [[ "$hits" == "0" ]]; then
   pass "G6a App 侧无第二份 whisper 档位文件名"
 else
   fail "G6a App 侧写死了 whisper 档位文件名（$hits 处）：档位只能来自 ASRPolicy/WhisperModelCatalog"
 fi
-hits=$(grep -rn 'https://hf-mirror\.com\|https://huggingface\.co' "$ASR_DIR" 2>/dev/null | wc -l | tr -d ' ')
+hits=$(grep -rn --include="*.swift" 'https://hf-mirror\.com\|https://huggingface\.co' "$ASR_DIR" 2>/dev/null | wc -l | tr -d ' ')
 if [[ "$hits" == "0" ]]; then
   pass "G6b App 侧 ASR 目录内无第二份模型下载 URL"
 else
@@ -194,7 +194,7 @@ else
 fi
 
 # G7 红线 R1：识别路径里不许有下载。downloadModelIfNeeded 只允许「1 处定义 + 设置页 1 处调用」
-callers=$(grep -rl 'downloadModelIfNeeded' "$APP" 2>/dev/null | sed "s|$APP/||" | sort | tr '\n' ' ')
+callers=$(grep -rl --include="*.swift" 'downloadModelIfNeeded' "$APP" 2>/dev/null | sed "s|$APP/||" | sort | tr '\n' ' ')
 expected="Services/ASR/ASRService.swift Views/Settings/SettingsView.swift "
 if [[ "$callers" == "$expected" ]]; then
   pass "G7a downloadModelIfNeeded 只有定义 + 设置页一个调用点"
@@ -211,7 +211,7 @@ fi
 # ---------- 2b：来源列 / 唯一写入口 / 陈旧联动 ----------
 
 # G9 陈旧判定只能走聚合入口（计划 §3.3③：两处各拼一次 ⇒ 第三处必漏）
-hits=$(grep -rn 'DubStaleness\.check(' "$APP" 2>/dev/null | wc -l | tr -d ' ')
+hits=$(grep -rn --include="*.swift" 'DubStaleness\.check(' "$APP" 2>/dev/null | wc -l | tr -d ' ')
 if [[ "$hits" == "0" ]]; then
   pass "G9 App 侧无 DubStaleness.check( 直调（一律走 checkAll）"
 else
@@ -247,7 +247,7 @@ else
 fi
 
 # G12 来源列本身也只能被 setText 写（否则"来源"会与实际内容分家）
-hits=$(grep -rn '\.textSourceRaw\s*=' "$APP" 2>/dev/null | grep -v 'Models/Segment.swift' | wc -l | tr -d ' ')
+hits=$(grep -rn --include="*.swift" '\.textSourceRaw\s*=' "$APP" 2>/dev/null | grep -v 'Models/Segment.swift' | wc -l | tr -d ' ')
 if [[ "$hits" == "0" ]]; then
   pass "G12 类外无 textSourceRaw 赋值（来源与内容同进同退）"
 else
@@ -267,7 +267,7 @@ if [[ "$hits" == "0" ]]; then
 else
   fail "G8b ASR 服务里直接读 UserDefaults（$hits 处）"
 fi
-hits=$(grep -rl 'asr\.enginePreference' "$ROOT/MixCut" "$ROOT/Sources" 2>/dev/null | wc -l | tr -d ' ')
+hits=$(grep -rl --include="*.swift" 'asr\.enginePreference' "$ROOT/MixCut" "$ROOT/Sources" 2>/dev/null | wc -l | tr -d ' ')
 if [[ "$hits" == "1" ]]; then
   pass "G8c 偏好 key 字面量全仓只出现 1 个文件（宿主唯一）"
 else
@@ -276,16 +276,26 @@ fi
 
 # ============ 逐段重听的短窗对策（计划 v5 §守卫） ============
 
-# G21 --prompt 只准出现在 ASRService.swift（整片与逐段共用同一个进程构造器，别处传就分家）
-files=$(grep -rl -- '--prompt' "$APP" 2>/dev/null | wc -l | tr -d ' ')
-if [[ "$files" == "1" ]] && grep -q -- '--prompt' "$ASR_DIR/ASRService.swift" 2>/dev/null; then
-  pass "G21 --prompt 字面量只出现在 ASRService.swift"
+# G21 --prompt 的**使用点**全仓必须唯一，且就在 ASRService.swift（整片与逐段共用同一个进程构造器，别处传就分家）
+# 取样面三件事，少一件这条门就说假话（2026-09-30 的恒红就是这么来的）：
+#   ① 只扫 *.swift —— 旧写法 `grep -rl -- '--prompt' $APP` 会把包内 whisper、whisper-cpu 两颗二进制
+#      当成命中文件（它们自带的帮助文本里有这个词），于是在真树上永远报"散落在 3 个文件"。
+#   ② 盯字面量形态 `"--prompt"` 而不是词本身 —— 核心层那两处（ASRPolicy.swift、
+#      SegmentTranscribeOutcome.swift）是文档注释里用反引号提它，属正当提及，不该算分家。
+#   ③ 注释行再保险地滤一遍，免得有人拿注释试参数。
+hits=$(grep -rn --include="*.swift" -F -- '"--prompt"' "$APP" "$CORE" 2>/dev/null \
+       | grep -v ':[0-9]*:[[:space:]]*\(//\|///\|\*\)' || true)
+n=$(printf '%s' "$hits" | grep -c .)
+ufiles=$(printf '%s\n' "$hits" | cut -d: -f1 | sort -u | wc -l | tr -d ' ')
+if [[ "$n" == "1" && "$ufiles" == "1" && "$hits" == *"/ASRService.swift:"* ]]; then
+  pass "G21 --prompt 使用点唯一且在 ASRService.swift（注释提及不计）"
 else
-  fail "G21 --prompt 散落在 $files 个文件：识别参数必须只有一个出口"
+  fail "G21 --prompt 使用点 $n 处、分布在 $ufiles 个文件：识别参数必须只有一个出口（多出来的那份会让整片与逐段走两套设置）"
+  printf '%s\n' "$hits" | sed 's/^/     /'
 fi
 
 # G22 风格锚字面量全仓只 1 处，且传给 --prompt 的实参不得是拼出来的
-anchor_files=$(grep -rl '下面是一段简体中文口语旁白' "$ROOT/Sources" "$ROOT/MixCut" 2>/dev/null | wc -l | tr -d ' ')
+anchor_files=$(grep -rl --include="*.swift" '下面是一段简体中文口语旁白' "$ROOT/Sources" "$ROOT/MixCut" 2>/dev/null | wc -l | tr -d ' ')
 prompt_line=$(grep -n -- '"--prompt"' "$ASR_DIR/ASRService.swift" 2>/dev/null | head -1)
 if [[ "$anchor_files" == "1" ]] && [[ -n "$prompt_line" ]] \
    && ! grep -q -- '--prompt.*[+]\|--prompt.*\\(' <<<"$prompt_line"; then
@@ -297,7 +307,7 @@ fi
 # G23 锚与回吐判据只能由门面问核心层，VM 不许自己决定带不带锚
 # （v8：这里原本数的是"算窗与裁回"，那套实现已随宽窗删除 ⇒ 判据对象换成锚这一族）
 facade_hits=$(grep -c 'SegmentRetakeRule\.' "$ASR_DIR/SegmentTranscriber.swift" 2>/dev/null || true)
-vm_hits=$(grep -rn 'SegmentRetakeRule\.' "$APP/ViewModels" 2>/dev/null | wc -l | tr -d ' ')
+vm_hits=$(grep -rn --include="*.swift" 'SegmentRetakeRule\.' "$APP/ViewModels" 2>/dev/null | wc -l | tr -d ' ')
 if [[ "$facade_hits" -ge 2 ]] && [[ "$vm_hits" == "0" ]]; then
   pass "G23 锚与回吐判据只在门面里问核心层（$facade_hits 处），VM 零处"
 else
@@ -305,8 +315,8 @@ else
 fi
 
 # G26 锚回吐判据只有一份（单测与探针共用，否则两边口径会分家）
-def_hits=$(grep -rn 'func containsAnchorEcho' "$ROOT/Sources" "$ROOT/MixCut" 2>/dev/null | wc -l | tr -d ' ')
-use_hits=$(grep -rn 'containsAnchorEcho' "$ASR_DIR" 2>/dev/null | wc -l | tr -d ' ')
+def_hits=$(grep -rn --include="*.swift" 'func containsAnchorEcho' "$ROOT/Sources" "$ROOT/MixCut" 2>/dev/null | wc -l | tr -d ' ')
+use_hits=$(grep -rn --include="*.swift" 'containsAnchorEcho' "$ASR_DIR" 2>/dev/null | wc -l | tr -d ' ')
 if [[ "$def_hits" == "1" ]] && [[ "$use_hits" -ge 1 ]]; then
   pass "G26 锚回吐判据唯一且被门面使用"
 else
@@ -318,7 +328,7 @@ fi
 RULE_FILE="$CORE/SegmentTranscribeOutcome.swift"
 unaccounted=""
 while read -r fname; do
-  callers=$(grep -rn "$fname(" "$ROOT/MixCut" "$CORE" 2>/dev/null | grep -v "func $fname(" | wc -l | tr -d ' ')
+  callers=$(grep -rn --include="*.swift" "$fname(" "$ROOT/MixCut" "$CORE" 2>/dev/null | grep -v "func $fname(" | wc -l | tr -d ' ')
   if [[ "$callers" == "0" ]]; then
     defline=$(grep -n "public static func $fname(" "$RULE_FILE" | head -1 | cut -d: -f1)
     if [[ -z "$defline" ]] || [[ "$(sed -n "$((defline - 1))p" "$RULE_FILE" | grep -c 'known-dead:')" == "0" ]]; then

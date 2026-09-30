@@ -12,7 +12,7 @@ expect_absent() {
   local label="$1" pattern="$2" path="$3" want="$4"
   local got
   # grep 无命中时退出码为 1，会让 set -e 在断言之前静默中止 —— 这里显式吞掉它，把判定交给计数
-  got=$( { grep -rc "$pattern" "$path" 2>/dev/null || true; } | awk -F: '{s+=$2} END{print s+0}')
+  got=$( { grep -rcI "$pattern" "$path" 2>/dev/null || true; } | awk -F: '{s+=$2} END{print s+0}')
   if [ "$got" = "$want" ]; then
     echo "PASS ${label}（命中 ${got}，期望 ${want}）"
   else

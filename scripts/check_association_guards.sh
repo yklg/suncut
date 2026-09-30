@@ -15,7 +15,7 @@ fail=0
 
 count() {  # 统计 pattern 在若干文件里的出现次数；grep 无命中时退出码 1 会被 set -e 吞掉整条脚本 ⇒ 显式吞掉
   local pattern="$1"; shift
-  { grep -rn "$pattern" "$@" 2>/dev/null || true; } | awk -F: '{c++} END{print c+0}'
+  { grep -rnI "$pattern" "$@" 2>/dev/null || true; } | awk -F: '{c++} END{print c+0}'
 }
 
 check() {
@@ -25,14 +25,14 @@ check() {
     echo "PASS ${label}（命中 ${got}，期望 ${want}）"
   else
     echo "FAIL ${label}（命中 ${got}，期望 ${want}）"
-    grep -rn "$pattern" "$@" 2>/dev/null | head -6 || true
+    grep -rnI "$pattern" "$@" 2>/dev/null | head -6 || true
     fail=1
   fi
 }
 
 echo "== TC-19a 关联行构造点必须收口到 associate（§3.2）=="
 # 期望：全 MixCut/ 里只有 associate 的工厂本体构造 ProjectVideo，别处一律走 associate
-PV_CONSTRUCT_HITS=$(grep -rn 'ProjectVideo(project:' "$SRC" 2>/dev/null || true)
+PV_CONSTRUCT_HITS=$(grep -rnI 'ProjectVideo(project:' "$SRC" 2>/dev/null || true)
 PV_CONSTRUCT_FILES=$(printf '%s' "$PV_CONSTRUCT_HITS" | awk -F: 'NF>1{print $1}' | sort -u)
 if [ "$(printf '%s' "$PV_CONSTRUCT_HITS" | grep -c 'ProjectVideo(project:')" = "1" ] && \
    [ "$PV_CONSTRUCT_FILES" = "$SRC/Models/ProjectVideo.swift" ]; then
@@ -45,7 +45,7 @@ fi
 
 echo "== TC-19b 幂等入口存在且**非 async**（§3.2 的原子性约束）=="
 # 判据要精确到失败种类：不是"有没有 associate"，而是"判重与插入之间会不会出现 await"
-if [ -n "$( { grep -rn "static func associate" "$SRC" 2>/dev/null || true; } | grep 'async' )" ]; then
+if [ -n "$( { grep -rnI "static func associate" "$SRC" 2>/dev/null || true; } | grep 'async' )" ]; then
   echo "FAIL TC-19b associate 是 async ⇒ 判重与插入之间可能挂起，MainActor 上的原子性没了"
   fail=1
 elif [ "$(count 'static func associate' "$SRC")" = "0" ]; then
@@ -89,7 +89,7 @@ fi
 echo "== TC-19f 一次性清理：函数体内取判据 + 挂载顺序（§3.4 的 D 项）=="
 # 必须**在清理函数体内**判定，不能整文件扫：MixCutApp.swift 里别的迁移本来就用子上下文，
 # 整文件扫会把别人的写法算成这次的违规（假红），也会漏掉"清理自己用了子上下文"（假绿）。
-MIG_FILE=$( { grep -rl "func dedupProjectVideoAssociations" "$SRC" 2>/dev/null || true; } | head -1)
+MIG_FILE=$( { grep -rlI "func dedupProjectVideoAssociations" "$SRC" 2>/dev/null || true; } | head -1)
 if [ -z "$MIG_FILE" ]; then
   echo "FAIL TC-19f 找不到一次性清理的迁移函数"
   fail=1
@@ -125,7 +125,7 @@ else
     fi
   fi
 
-  CALL_FILE=$( { grep -rl "Self.dedupProjectVideoAssociations(container" "$SRC" 2>/dev/null || true; } | head -1)
+  CALL_FILE=$( { grep -rlI "Self.dedupProjectVideoAssociations(container" "$SRC" 2>/dev/null || true; } | head -1)
   if [ -z "$CALL_FILE" ]; then
     echo "FAIL TC-19f 清理没被挂进启动序列"
     fail=1
