@@ -1,0 +1,105 @@
+SunCut 内置第三方组件 · 许可通告
+================================================
+
+打包日期：2026-09-29
+复核日期：2026-09-30（品牌改名为 SunCut 后逐条重测：7 项字节登记、5 项 universal 架构、两条 ffmpeg configuration 行（644 / 873 字符）均与下方登记逐字相同）
+SunCut 版本：0.11.0
+本通告覆盖 SunCut.app/Contents/Resources/bin/ 目录内随包分发的全部第三方二进制与模型。
+SunCut 自身源码授权见本 DMG 内 SunCut.app 同层的仓库 LICENSE（MIT）。
+
+以下每一项的"上游地址""configure 参数""文件体积"都是从包内这颗二进制自己读出来的，
+不是从文档抄的；核对方法见文末【怎么自己验一遍】。
+
+
+1. ffmpeg / ffprobe —— GNU GPL version 3
+-------------------------------------------------
+文件与体积（字节）：
+  ffmpeg   132,109,112   （arm64 与 x86_64 两切片 lipo 合成的 universal）
+  ffprobe  131,753,864   （与 ffmpeg 同一构建归档）
+
+上游（两架构各自下载静态构建后 lipo 合成）：
+  arm64   ：https://www.osxexperts.net/ffmpeg81arm.zip      （ffmpeg 8.1）
+  x86_64  ：https://evermeet.cx/ffmpeg/ffmpeg-8.1.2.zip     （ffmpeg 8.1.2-tessus）
+FFmpeg 源码本身：https://ffmpeg.org/download.html （对应 8.1 与 8.1.2）
+
+为什么是 GPL-3 而不是 LGPL：
+两颗切片的 configure 参数里都有 --enable-gpl（x86_64 另带 --enable-version3），
+按 FFmpeg 官方授权说明，带 --enable-gpl 的构建整体按 GNU GPL version 3（或更新版本）分发。
+GPL-3 全文见同目录 GPL-3.0.txt。
+
+两颗切片都**没有** --enable-nonfree，因此这份包允许分发；如有人往这两颗二进制里
+加过 --enable-nonfree（例如 libfdk-aac），本通告随之失效，必须重新核对。
+
+包内二进制自己打印的 configuration 行，逐字复制如下（可用来核对"发给我的就是这个构建"）：
+
+  [ffmpeg · arm64 切片 · 8.1]
+  configuration: --prefix=/Volumes/tempdisk/sw --extra-cflags=-fno-stack-check --arch=arm64 --cc=/usr/bin/clang --enable-gpl --enable-libvmaf --enable-libopenjpeg --enable-libopus --enable-libmp3lame --enable-libx264 --enable-libx265 --enable-libvvenc --enable-libvpx --enable-libwebp --enable-libass --enable-libfreetype --enable-fontconfig --enable-libtheora --enable-libvorbis --enable-libsnappy --enable-libaom --enable-libvidstab --enable-libzimg --enable-libsvtav1 --enable-libharfbuzz --enable-libkvazaar --pkg-config-flags=--static --enable-ffplay --enable-neon --enable-runtime-cpudetect --disable-indev=qtkit --disable-indev=x11grab_xcb
+
+  [ffmpeg · x86_64 切片 · 8.1.2-tessus]
+  configuration: --cc=/usr/bin/clang --prefix=/opt/ffmpeg --extra-version=tessus --enable-avisynth --enable-fontconfig --enable-gpl --enable-libaom --enable-libass --enable-libbluray --enable-libdav1d --enable-libfreetype --enable-libgsm --enable-libharfbuzz --enable-libmodplug --enable-libmp3lame --enable-libmysofa --enable-libopencore-amrnb --enable-libopencore-amrwb --enable-libopenh264 --enable-libopenjpeg --enable-libopus --enable-librubberband --enable-libshine --enable-libsnappy --enable-libsoxr --enable-libspeex --enable-libtheora --enable-libtwolame --enable-libvidstab --enable-libvmaf --enable-libvo-amrwbenc --enable-libvorbis --enable-libvpx --enable-libwebp --enable-libx264 --enable-libx265 --enable-libxavs --enable-libxml2 --enable-libxvid --enable-libzimg --enable-libzmq --enable-libzvbi --enable-version3 --pkg-config-flags=--static --disable-ffplay
+
+  ffprobe 与同架构的 ffmpeg 来自同一个归档文件，参数一致。
+
+对应源码（Corresponding Source）没有打进这个 DMG，按 GPL-3 第 6 条 (b) 项以书面要约提供：
+  自本包分发之日起 3 年内，任何收到本包的人向下方联系方式索取时，提供者提供完整对应源码
+  （含该构建所用 configure 参数与构建脚本），可收取介质工本费。
+  索取联系方式（**发出本 DMG 之前必须填写**）：______________________________
+
+  ⚠️ 这一条是**要约**，不是礼节性文字：填了就要真的应答。
+     不打算应答的话，改成把 ffmpeg-8.1 / ffmpeg-8.1.2 的源码包直接放进本目录，并删掉这段要约。
+
+
+2. whisper 与 whisper-cpu —— whisper.cpp 命令行程序
+-------------------------------------------------
+文件与体积（字节）：
+  whisper      7,707,656   （arm64 含 Metal 加速；x86_64 走 CPU/Accelerate）
+  whisper-cpu  5,563,912   （两架构都不链接 Metal，老系统或 GPU 失败时兜底）
+上游：https://github.com/ggml-org/whisper.cpp （源码本机两架构编译后 lipo 合成，未改动上游代码）
+授权：以上游仓库根目录 LICENSE 文件为准。
+  ⚠️ 本轮**没有**逐字核验该 LICENSE 文本，只登记了上游地址；对外公开发布前应先取回该文本一并附上。
+
+
+3. demucs —— 人声分离程序
+-------------------------------------------------
+文件与体积（字节）：
+  demucs  5,128,944
+上游：https://github.com/sevagh/demucs.cpp （源码本机两架构编译后 lipo 合成，含其子模块）
+授权：以上游仓库及其子模块各自的 LICENSE 文件为准。
+  ⚠️ 同上，本轮**未逐字核验**；demucs.cpp 依赖的 Meta demucs 权重与模型授权见第 5 项。
+
+
+4. 语音模型 ggml-large-v3.bin
+-------------------------------------------------
+文件与体积（字节）：
+  ggml-large-v3.bin  3,095,033,483
+上游下载地址（本仓构建脚本实际使用的地址）：
+  https://hf-mirror.com/ggerganov/whisper.cpp/resolve/main/ggml-large-v3.bin
+  备用：https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3.bin
+对应模型权重原始来源：OpenAI Whisper large-v3。
+授权：以上游 HuggingFace 仓库页面与 OpenAI 官方发布的模型授权页为准。
+  ⚠️ 本轮**未核验**该权重文件的再分发条款；它占了这份包体积的绝大部分，
+     对外公开发布前这一项必须先确认。
+
+
+5. 分离模型 ggml-htdemucs-4s.bin
+-------------------------------------------------
+文件与体积（字节）：
+  ggml-htdemucs-4s.bin  83,994,361
+上游下载地址（本仓构建脚本实际使用的地址）：
+  https://hf-mirror.com/datasets/Retrobear/demucs.cpp/resolve/main/ggml-model-htdemucs-4s-f16.bin
+  备用：https://huggingface.co/datasets/Retrobear/demucs.cpp/resolve/main/ggml-model-htdemucs-4s-f16.bin
+授权：以上游 dataset 页面为准。⚠️ 本轮**未核验**。
+
+
+【怎么自己验一遍】
+在本机对包内二进制跑这几条，输出应与上面的登记逐字对应：
+  <DMG 挂载路径>/SunCut.app/Contents/Resources/bin/ffmpeg -version | sed -n '1,3p'
+  lipo -thin x86_64 <...>/bin/ffmpeg -output /tmp/ffmpeg_x86 && /tmp/ffmpeg_x86 -version | sed -n '1,3p'
+  lipo -archs <...>/bin/ffmpeg          # 期望：x86_64 arm64
+  ls -l <...>/bin/                      # 期望：与上面各处登记的字节数一致
+
+【本通告的边界（如实说明）】
+- 只有第 1 项（ffmpeg/ffprobe）的授权是本轮从二进制自身读数确认的，GPL-3 全文已随包。
+- 第 2–5 项本轮只登记了上游地址与体积，许可文本**未取回核验**，标了 ⚠️。
+- H.264/H.265/AV1 等编解码器的**专利**授权不在 GPL 射程内，本通告不涉及；
+  商用分发场景需另行确认专利侧许可。
