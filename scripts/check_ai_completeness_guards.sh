@@ -131,9 +131,9 @@ fi
 
 echo
 if [ "$failures" -eq 0 ]; then
-  echo "ALL PASS（$ROOT）"
+  echo "ALL PASS（${ROOT}）"
   exit 0
 else
-  echo "共 $failures 条不达标（$ROOT）"
+  echo "共 $failures 条不达标（${ROOT}）"
   exit 1
 fi

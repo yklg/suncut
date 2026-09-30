@@ -42,7 +42,7 @@ EOF
     exit 1
 fi
 if [[ ! -f "$DMG" ]]; then
-    echo "❌ 找不到 $DMG，请先用 Release 配置编译并打包 DMG" >&2
+    echo "❌ 找不到 ${DMG}，请先用 Release 配置编译并打包 DMG" >&2
     exit 1
 fi
 

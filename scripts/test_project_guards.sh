@@ -14,9 +14,9 @@ expect_absent() {
   # grep 无命中时退出码为 1，会让 set -e 在断言之前静默中止 —— 这里显式吞掉它，把判定交给计数
   got=$( { grep -rc "$pattern" "$path" 2>/dev/null || true; } | awk -F: '{s+=$2} END{print s+0}')
   if [ "$got" = "$want" ]; then
-    echo "PASS $label（命中 $got，期望 $want）"
+    echo "PASS ${label}（命中 ${got}，期望 ${want}）"
   else
-    echo "FAIL $label（命中 $got，期望 $want）"
+    echo "FAIL ${label}（命中 ${got}，期望 ${want}）"
     grep -rn "$pattern" "$path" 2>/dev/null | head -5
     fail=1
   fi
@@ -53,9 +53,9 @@ set +e
 out=$(python3 "$PROBE/generate_xcodeproj.py" 2>&1); rc=$?
 set -e
 if [ "$rc" -ne 0 ] && printf '%s' "$out" | grep -q "拒绝运行"; then
-  echo "PASS TC-03 生成器被守卫拦下（退出码 $rc，含拒绝原因与正确做法）"
+  echo "PASS TC-03 生成器被守卫拦下（退出码 ${rc}，含拒绝原因与正确做法）"
 else
-  echo "FAIL TC-03 生成器未被拦下（退出码 $rc）—— 工程有被生成器改坏的风险"
+  echo "FAIL TC-03 生成器未被拦下（退出码 ${rc}）—— 工程有被生成器改坏的风险"
   printf '%s\n' "$out" | head -5
   fail=1
 fi
@@ -64,7 +64,7 @@ set +e
 out=$(python3 "$PROBE/generate_xcodeproj.py" --force 2>&1); rc=$?
 set -e
 if [ "$rc" -ne 0 ]; then
-  echo "PASS TC-07 无旁路：--force 仍被拦下（退出码 $rc）"
+  echo "PASS TC-07 无旁路：--force 仍被拦下（退出码 ${rc}）"
 else
   echo "FAIL TC-07 存在旁路：--force 绕过了守卫"
   fail=1

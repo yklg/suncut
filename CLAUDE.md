@@ -160,6 +160,12 @@ AI 提示词模板存放在 `MixCut/Resources/Prompts/`，通过 `PromptLoader` 
 
 > **背景**：之前我多次只编译就 commit，结果 UI 完全坏掉用户才发现。这是浪费用户时间的根因，必须杜绝。
 
+5. **判据脚本要在用户那个 locale 下再跑一遍**：`LC_ALL=en_US.UTF-8 LANG=en_US.UTF-8 ./scripts/xxx.sh`。
+   我的执行环境是 `LANG=""` / `LC_CTYPE=C`，而 macOS 自带 bash 3.2 在 UTF-8 下会把紧贴在变量展开后面的
+   全角标点首字节吞进变量名，`set -u` 当场死在第一条判定上 —— 2026-09-30 就是这个差异让守卫脚本
+   「我这边 24 条全绿、用户一跑两行就死」。写法约定：消息串里变量一律加花括号（`${label}` 后再接全角括号），
+   `scripts/check_project_integrity.sh` 已把它变成机械门（全仓 `.sh` 命中数必须为 0，`bash -n` 测不出这类运行期错）。
+
 ## 视频显示比例（必须遵守 ⚠️）
 
 **SunCut 的所有视频素材都是信息流广告，目标投放在手机端，统一使用 9:16 竖屏比例**。

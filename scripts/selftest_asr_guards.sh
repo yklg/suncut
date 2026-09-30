@@ -146,7 +146,7 @@ echo "== ② 注入探针树（必须 33 条红）"
 GUARD_ROOT="$DIRTY" bash "$ROOT/scripts/check_asr_guards.sh" --selftest > "$PROBE_ROOT/dirty.log" 2>&1
 rc=$?
 red=$(grep -c "^FAIL" "$PROBE_ROOT/dirty.log")
-echo "注入树变红条数=$red（期望 33），selftest 退出码=$rc"
+echo "注入树变红条数=${red}（期望 33），selftest 退出码=$rc"
 grep "^FAIL" "$PROBE_ROOT/dirty.log"
 if [[ "$rc" != "0" || "$red" != "33" ]]; then
   echo "SELFTEST FAIL：判据没抓全（某条恒绿，或红数超出预期说明探针污染）"

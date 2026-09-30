@@ -75,7 +75,7 @@ APP="$ROOT/MixCut"
 ASR_DIR="$APP/Services/ASR"
 for must in "$APP" "$CORE"; do
   if [[ ! -d "$must" ]]; then
-    echo "FAIL 守卫根缺失：$must（探针树没拷全，后面的判定不作数）"
+    echo "FAIL 守卫根缺失：${must}（探针树没拷全，后面的判定不作数）"
     exit 1
   fi
 done
@@ -137,7 +137,7 @@ fi
 policy_file=$(grep -o 'engineFileName: String = "[^"]*"' "$CORE/ASRPolicy.swift" 2>/dev/null | sed 's/.*= "//; s/"$//')
 script_file=$(grep -o 'WMODEL="\$DEST/[^"]*"' "$ROOT/scripts/build_universal_binaries.sh" 2>/dev/null | sed 's|.*DEST/||; s/"$//')
 if [[ -n "$policy_file" && "$policy_file" == "$script_file" ]]; then
-  pass "G17 打包内置模型 == ASRPolicy.engineFileName（$policy_file）"
+  pass "G17 打包内置模型 == ASRPolicy.engineFileName（${policy_file}）"
 else
   fail "G17 打包链与运行期分家：脚本装的是 '${script_file:-取不到}'，ASRPolicy 裁定的是 '${policy_file:-取不到}'"
 fi
@@ -146,7 +146,7 @@ wmin=$(grep -o '^WMIN=[0-9]*' "$ROOT/scripts/build_universal_binaries.sh" 2>/dev
 if [[ -n "$wmin" && "$wmin" -le 3095033483 && "$wmin" -gt 2900000000 ]]; then
   pass "G17b 打包体积闸门 $wmin 落在 large-v3 真实字节数量级内"
 else
-  fail "G17b 打包体积闸门异常（$wmin）：太低会把半截文件当成功，太高会把正常文件判成要重下"
+  fail "G17b 打包体积闸门异常（${wmin}）：太低会把半截文件当成功，太高会把正常文件判成要重下"
 fi
 
 # G18 能力面只许问 `ASRSettings.hasCloudKey`（布尔），不许在 MCP 目录里直接读 Keychain
@@ -163,7 +163,7 @@ wired=$(grep -c 'case "get_asr_status"' "$APP/Services/MCP/MCPToolHandlers.swift
 if [[ "$decl" == "1" && "$wired" == "1" ]]; then
   pass "G19 get_asr_status 在目录声明 1 次、在派发接上 1 次"
 else
-  fail "G19 能力面接线不完整（声明 $decl / 派发 $wired）：写了却没人能跑 = 伪装成防线的死代码"
+  fail "G19 能力面接线不完整（声明 $decl / 派发 ${wired}）：写了却没人能跑 = 伪装成防线的死代码"
 fi
 
 # G20 陈旧联动的原因措辞不许在界面/能力面各写一遍

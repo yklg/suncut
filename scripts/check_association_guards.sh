@@ -22,9 +22,9 @@ check() {
   local label="$1" pattern="$2" want="$3"; shift 3
   local got; got=$(count "$pattern" "$@")
   if [ "$got" = "$want" ]; then
-    echo "PASS $label（命中 $got，期望 $want）"
+    echo "PASS ${label}（命中 ${got}，期望 ${want}）"
   else
-    echo "FAIL $label（命中 $got，期望 $want）"
+    echo "FAIL ${label}（命中 ${got}，期望 ${want}）"
     grep -rn "$pattern" "$@" 2>/dev/null | head -6 || true
     fail=1
   fi
@@ -36,7 +36,7 @@ PV_CONSTRUCT_HITS=$(grep -rn 'ProjectVideo(project:' "$SRC" 2>/dev/null || true)
 PV_CONSTRUCT_FILES=$(printf '%s' "$PV_CONSTRUCT_HITS" | awk -F: 'NF>1{print $1}' | sort -u)
 if [ "$(printf '%s' "$PV_CONSTRUCT_HITS" | grep -c 'ProjectVideo(project:')" = "1" ] && \
    [ "$PV_CONSTRUCT_FILES" = "$SRC/Models/ProjectVideo.swift" ]; then
-  echo "PASS TC-19a 裸构造只剩 associate 工厂本体 1 处（$PV_CONSTRUCT_FILES）"
+  echo "PASS TC-19a 裸构造只剩 associate 工厂本体 1 处（${PV_CONSTRUCT_FILES}）"
 else
   echo "FAIL TC-19a associate 之外仍有裸构造关联的地方（期望仅工厂本体 1 处）"
   printf '%s\n' "$PV_CONSTRUCT_HITS" | head -6
@@ -135,9 +135,9 @@ else
     L_GC=$(grep -n 'Self.scheduleOrphanGCIfDue(container' "$CALL_FILE" | head -1 | cut -d: -f1)
     if [ -n "$L_RECOVER" ] && [ -n "$L_CLEAN" ] && [ -n "$L_GC" ] && \
        [ "$L_CLEAN" -gt "$L_RECOVER" ] && [ "$L_CLEAN" -lt "$L_GC" ]; then
-      echo "PASS TC-19f 挂载顺序正确（recover :$L_RECOVER → 清理 :$L_CLEAN → 孤儿 GC :$L_GC）"
+      echo "PASS TC-19f 挂载顺序正确（recover :$L_RECOVER → 清理 :$L_CLEAN → 孤儿 GC :${L_GC}）"
     else
-      echo "FAIL TC-19f 挂载顺序不对（recover=$L_RECOVER 清理=$L_CLEAN GC=$L_GC，要求 recover < 清理 < GC）"
+      echo "FAIL TC-19f 挂载顺序不对（recover=$L_RECOVER 清理=$L_CLEAN GC=${L_GC}，要求 recover < 清理 < GC）"
       fail=1
     fi
   fi

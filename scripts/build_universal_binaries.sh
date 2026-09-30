@@ -92,7 +92,7 @@ for b in whisper-cpu demucs; do
   minfirst=$(otool -l "$DEST/$b" | awk '/minos/{print $2; exit}')
   major=${minfirst%%.*}
   if [ -n "$major" ] && [ "$major" -ge 16 ]; then
-    echo "❌ $b 部署目标过高（minos=$minfirst），老系统会 dyld 崩溃。确认 CMAKE_OSX_DEPLOYMENT_TARGET=$DEPLOY 生效。"; exit 1
+    echo "❌ $b 部署目标过高（minos=${minfirst}），老系统会 dyld 崩溃。确认 CMAKE_OSX_DEPLOYMENT_TARGET=$DEPLOY 生效。"; exit 1
   fi
   if nm -u "$DEST/$b" 2>/dev/null | grep -q MTLResidencySet; then
     echo "❌ $b 强引用 macOS26 独有符号 MTLResidencySetDescriptor（Metal 未关干净），老系统会崩。"; exit 1
