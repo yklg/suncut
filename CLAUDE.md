@@ -18,9 +18,15 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## 项目概述
 
-> **用户约定**：用户说「MC」即指 MixCut 本应用。凡是"MC 的项目 / 让 MC 导入 / MC 导出"等说法，一律指调用本机 mixcut MCP 服务（http://127.0.0.1:8787/mcp，23 个工具）操作 MixCut。
+> **用户约定**：用户说「SC」即指 SunCut 本应用（原名 MixCut，用户嘴里说「MC」时也是它）。凡是"SC 的项目 / 让 SC 导入 / SC 导出"等说法，一律指调用本机 suncut MCP 服务（http://127.0.0.1:8787/mcp，24 个工具）操作 SunCut。
 
-MixCut 是一款 macOS 原生桌面应用（SwiftUI + SwiftData），面向广告投放团队的 AI 视频混剪工具。用户导入广告素材视频，AI 自动按语义切分镜头并标注类型，然后智能排列组合生成多条差异化的混剪广告视频。
+SunCut 是一款 macOS 原生桌面应用（SwiftUI + SwiftData），面向广告投放团队的 AI 视频混剪工具。用户导入广告素材视频，AI 自动按语义切分镜头并标注类型，然后智能排列组合生成多条差异化的混剪广告视频。
+
+> **名字分三层，别混着改**：
+> - **给人看的**：产品名/产物名/进程名 = `SunCut`（`SunCut.app`、`pkill -x SunCut`、`Contents/MacOS/SunCut`），由 `Brand.displayName` + pbxproj `PRODUCT_NAME` 两处一致决定，`check_project_integrity.sh` 会对账。
+> - **机器身份（小写，不跟拼写漂）**：bundle id `com.suncut.app`、MCP 注册名/日志名 `suncut`。翻这些 = 再迁一次设置域 + TCC 重新授权。
+> - **盘上目录**：`~/Library/Application Support/Suncut/`（一次性迁移时的名字）。翻它 = 再搬一次 3GB 模型与库。
+> - **仓库与工程名仍是 `MixCut`**：`MixCut.xcodeproj` / scheme `MixCut` / target `MixCut` / `Sources/MixCutCore/` 都不动。
 
 ## 构建与运行
 
@@ -33,7 +39,7 @@ MixCut 是一款 macOS 原生桌面应用（SwiftUI + SwiftData），面向广�
 
 - **FFmpeg**: 视频处理（镜头检测、静音检测、缩略图、导出拼接）— 内置于 `Resources/bin/`
 - **Whisper (whisper.cpp)**: 本地语音识别（ASR）— 内置于 `Resources/bin/`
-- **Whisper 模型**: `ggml-small.bin` (~488MB) — 首次使用时自动下载到 `~/Library/Caches/com.mixcut.app/whisper-models/`
+- **Whisper 模型**: `ggml-small.bin` (~488MB) — 首次使用时自动下载到 `~/Library/Application Support/Suncut/whisper-models/`
 
 > **核心原则：开箱即用** — 像剪映一样，用户双击即可使用，不需要安装 homebrew、FFmpeg、Whisper 等任何外部依赖。
 > 内置二进制均为**静态自包含 universal（arm64 + x86_64）**，无外部 dylib，支持 Intel Mac。
@@ -66,7 +72,7 @@ Project 1──* ProjectVideo *──1 Video   （中间表）
 - **全局共享**：同一视频（SHA-256 哈希相同）全局只有一个 Video 实体和一组 Segment，多项目共享
 - 导入已分析视频秒级完成（直接创建 ProjectVideo 关联，不重复处理）
 - 在任何项目中修改分镜，所有项目即时同步
-- 视频文件按 hash 存储在全局目录 `AppSupport/MixCut/Videos/{hash}/`
+- 视频文件按 hash 存储在全局目录 `AppSupport/Suncut/Videos/{hash}/`
 - `Project`: 7 种状态（created → importing → analyzing → ready → generating → completed → archived）
 - `Video`: 6 种状态（imported → detectingScenes → transcribing → analyzing → completed → failed）
 - `Segment`: 11 种语义类型（SemanticType，支持多个）+ 3 种位置类型（PositionType，单个）
@@ -114,28 +120,28 @@ AI 提示词模板存放在 `MixCut/Resources/Prompts/`，通过 `PromptLoader` 
 
 ## 开发工作流
 
-- **编译后自动重启应用**: 每次 xcodebuild 编译成功后，必须执行 `pkill -x MixCut; sleep 1; open <DerivedData路径>/Build/Products/Debug/MixCut.app` 自动重启用户的应用
-- **DerivedData 路径**: `/Users/menggang/Library/Developer/Xcode/DerivedData/MixCut-byytuggmhodpumcmwnwrtzwkmavr/`
+- **编译后自动重启应用**: 每次 xcodebuild 编译成功后，必须执行 `pkill -x SunCut; sleep 1; open <DerivedData路径>/Build/Products/Debug/SunCut.app` 自动重启用户的应用（进程名与产物名都是 SunCut；杀用户实例前先跟用户确认）
+- **DerivedData 路径**: `/Users/yilukaige/Library/Developer/Xcode/DerivedData/MixCut-bwzwtxgcuznkvsbxqcduvqzndian/`（目录名仍随工程名走 `MixCut-<hash>`，产物在其 `Build/Products/Debug/SunCut.app`）
 - **版本号以「发版」动作为准（2026-07-28 修订）**：只在用户明确要发版时才 bump 版本号（VERSION + pbxproj 两处 MARKETING_VERSION），平时改代码、打测试包**都不动版本号**。测试包内部版本号抬高会导致同事装了之后收不到真正新版的更新提示。
-- **测试包按需打，不自动打**：日常改动只做 Debug 编译+重启验证；用户要分发测试时才打 Release 测试包，命名 `MixCut-v<当前版本>-<用途>-test.dmg`（如 `MixCut-v0.9.2-mcp-test.dmg`），一看即知是测试包。正式发版包才叫 `MixCut-v<新版本>.dmg`。
-- **⚠️ 产物文件名必须带版本号**：**绝不允许**打成 `MixCut.dmg`。桌面上会同时存在多个包，不带版本号分不清也没法传网盘。卷名（`-volname`）同样带版本号。
+- **测试包按需打，不自动打**：日常改动只做 Debug 编译+重启验证；用户要分发测试时才打 Release 测试包，命名 `SunCut-v<当前版本>-<用途>-test.dmg`（如 `SunCut-v0.9.2-mcp-test.dmg`），一看即知是测试包。正式发版包才叫 `SunCut-v<新版本>.dmg`。
+- **⚠️ 产物文件名必须带版本号**：**绝不允许**打成 `SunCut.dmg`。桌面上会同时存在多个包，不带版本号分不清也没法传网盘。卷名（`-volname`）同样带版本号。
   ```bash
   # 0. bump 版本号（VERSION 文件 + pbxproj 的两处 MARKETING_VERSION 必须一致）
   # 1. Debug 编译 + 重启本地应用
   xcodebuild -project MixCut.xcodeproj -scheme MixCut -configuration Debug build
-  pkill -x MixCut; sleep 1; open <DerivedData>/Build/Products/Debug/MixCut.app
+  pkill -x SunCut; sleep 1; open <DerivedData>/Build/Products/Debug/SunCut.app
   # 2. Release 编译 + 打包 DMG（后台执行，不阻塞用户）
   # ⚠️ 必须带 universal 参数，否则默认只编本机 arm64，Intel Mac 装了报「不支持此应用程序」
   xcodebuild -project MixCut.xcodeproj -scheme MixCut -configuration Release \
     -destination 'generic/platform=macOS' ARCHS="arm64 x86_64" ONLY_ACTIVE_ARCH=NO build
   V=$(cat VERSION)
-  TEMP=$(mktemp -d) && cp -R <DerivedData>/Build/Products/Release/MixCut.app "$TEMP/" && ln -s /Applications "$TEMP/Applications"
-  rm -f ~/Desktop/MixCut-v${V}.dmg
-  hdiutil create -volname "MixCut ${V}" -srcfolder "$TEMP" -ov -format UDZO ~/Desktop/MixCut-v${V}.dmg
+  TEMP=$(mktemp -d) && cp -R <DerivedData>/Build/Products/Release/SunCut.app "$TEMP/" && ln -s /Applications "$TEMP/Applications"
+  rm -f ~/Desktop/SunCut-v${V}.dmg
+  hdiutil create -volname "SunCut ${V}" -srcfolder "$TEMP" -ov -format UDZO ~/Desktop/SunCut-v${V}.dmg
   rm -rf "$TEMP"
   ```
 
-  > **发版前务必校验 DMG 内主程序是 universal**：`lipo -archs <app>/Contents/MacOS/MixCut` 应为 `x86_64 arm64`。
+  > **发版前务必校验 DMG 内主程序是 universal**：`lipo -archs <app>/Contents/MacOS/SunCut` 应为 `x86_64 arm64`。
   > 普通 `xcodebuild ... Release build`（不带 `-destination generic + ARCHS`）只出 arm64，会悄悄丢掉 Intel 支持。
   > 同时校验 DMG 内 `CFBundleShortVersionString` == 目标版本号（挂载后用 PlistBuddy 读），别只信构建目录。
 
@@ -143,7 +149,7 @@ AI 提示词模板存放在 `MixCut/Resources/Prompts/`，通过 `PromptLoader` 
 
 **改完代码必须先自己跑、自己看、自己点，确认没问题再交给用户**。具体要求：
 
-1. **每次改 UI 后必须**：编译 → `pkill -x MixCut; open <app>` 重启 → 用 `screencapture -l <window-id> /tmp/check.png` 截图查看效果，或自己用 LSP/编译反馈反复验证
+1. **每次改 UI 后必须**：编译 → `pkill -x SunCut; open <app>` 重启 → 用 `screencapture -l <window-id> /tmp/check.png` 截图查看效果，或自己用 LSP/编译反馈反复验证
 2. **不能验证的**（比如需要鼠标交互、播放视频、跨多个视图状态切换等），列出明确的"用户必须测试项"清单，注明每项验证步骤
 3. **绝对不允许**："看上去应该没问题"、"理论上能跑"、"等你测一下"这种把验证甩给用户的话
 4. **每个 commit 之前**必须确认本次改动**自己肉眼看过/截过图**，不光是编译通过
@@ -152,7 +158,7 @@ AI 提示词模板存放在 `MixCut/Resources/Prompts/`，通过 `PromptLoader` 
 
 ## 视频显示比例（必须遵守 ⚠️）
 
-**MixCut 的所有视频素材都是信息流广告，目标投放在手机端，统一使用 9:16 竖屏比例**。
+**SunCut 的所有视频素材都是信息流广告，目标投放在手机端，统一使用 9:16 竖屏比例**。
 
 任何展示视频画面 / 缩略图 / 视频预览的视图，**必须使用 9:16 竖屏比例**（手机端纵向），不能使用 16:9 横屏或正方形比例。具体约束：
 
@@ -196,7 +202,7 @@ DMG 内置 Whisper 大模型约 **1.6GB**，GitHub 附件慢、Gitee 附件硬�
 > **不要用 `./release_gitee.sh`** —— 它会强制上传 1.6GB DMG 到 Gitee，必然失败。
 
 **发版标准动作全序列**：
-1. bump 版本号（VERSION + pbxproj 两处 MARKETING_VERSION）→ clean Release universal 构建 → 打 `MixCut-v<版本>.dmg`
+1. bump 版本号（VERSION + pbxproj 两处 MARKETING_VERSION）→ clean Release universal 构建 → 打 `SunCut-v<版本>.dmg`
 2. 三项强制校验：主程序 `lipo -archs` == `x86_64 arm64`、4 个内置二进制均双架构、DMG 内 `CFBundleShortVersionString` == 目标版本
 3. `git commit` → `git tag vX.Y.Z` → `git push origin main && git push gitee main` → `git push origin vX.Y.Z && git push gitee vX.Y.Z`
 4. `gh release create vX.Y.Z --title … --notes-file …`（**不传 DMG**，正文「下载」段指向下载页）
@@ -216,12 +222,12 @@ DMG 内置 Whisper 大模型约 **1.6GB**，GitHub 附件慢、Gitee 附件硬�
 
 ### 双系统（Universal）支持铁律 ⚠️⚠️⚠️
 
-MixCut 必须**同时原生支持 Apple Silicon 与 Intel Mac**。任何构建、发版、二进制改动都必须保持 universal，绝不能退回 arm64-only（否则 Intel 同事装了直接报「这台 Mac 不支持此应用程序」）。
+SunCut 必须**同时原生支持 Apple Silicon 与 Intel Mac**。任何构建、发版、二进制改动都必须保持 universal，绝不能退回 arm64-only（否则 Intel 同事装了直接报「这台 Mac 不支持此应用程序」）。
 
 1. **主程序**：Release/DMG 构建必须带 `-destination 'generic/platform=macOS' ARCHS="arm64 x86_64" ONLY_ACTIVE_ARCH=NO`。普通 `xcodebuild ... Release build` 只出本机 arm64，**严禁**用它打分发包。
 2. **内置二进制**：ffmpeg / ffprobe / whisper / demucs 必须都是 universal（arm64 + x86_64）静态自包含二进制，由 `./scripts/build_universal_binaries.sh` 生成；改动或更新任何内置二进制后，必须重跑该脚本并 `python3 bundle_deps.py` 校验。
 3. **发版前强制校验**（缺一不可）：
-   - `lipo -archs <app>/Contents/MacOS/MixCut` == `x86_64 arm64`
+   - `lipo -archs <app>/Contents/MacOS/SunCut` == `x86_64 arm64`
    - 四个内置二进制逐个 `lipo -archs` 均为双架构（或直接 `python3 bundle_deps.py`）
    - DMG 内 `CFBundleShortVersionString` == 目标版本号
 4. **新增任何内置二进制/处理链组件**：默认就要做成 universal，并纳入 `build_universal_binaries.sh` 与 `bundle_deps.py` 的校验清单。
