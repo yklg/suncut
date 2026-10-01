@@ -474,7 +474,7 @@ SL-12 现单 4 颗：`backfillSegmentFrames`、`cleanExistingTranscripts`、`ens
 |---|---|---|---|---|---|---|
 | 1.1 | 边界直输时间码 | `FrameTime.swift:25-37` 只有格式化**无解析器**；View 是单帧号框 `SegmentLibraryView.swift:1799-1825`；越界**静默 clamp**（`SegmentLibraryViewModel.swift:423,439`） | `分:秒:帧` 三段各自可点直改；帧段按真实 fps 封顶（30fps 只能输 0~29）；回车生效 / Esc 取消；越界**拦下并说明可用范围**，不得静默改值 | Core 新 `TimecodeParser`：P4 三点法、P11 tie-break、P12 越界不得当合法值 | 三段点击手感、Esc、文案 | ⚠️ `adjust_segment_boundary` 现在也是 clamp 语义，界面改拒绝而 MCP 仍 clamp 会分叉 ⇒ 见 Q5 |
 | 1.3 | ⌘Z 宽限 5s→5min | `PendingDeletionCenter.swift:21` 一颗常量 ⚠️ **此格漏了同一颗常量还驱动浮条时长、且提示是单槽位 ⇒ 见下方落地记录，判据已升级** | 4 分 59 秒可放回、5 分 01 秒不可放回 | 无（落地后改为 Core 可测，14 条） | 浮条停留时长 | 无 |
-| 1.4 | 悬停角标 | 配音标识在文字下方（`SchemeDetailView.swift:408,453-500`） | 视频区 `bottomLeading` 显示「改写A 配音」/「原声」 | 无 | 位置与可读性 | 无 |
+| 1.4 | 悬停角标 | 配音标识在文字下方（`SchemeDetailView.swift:408,453-500`）⚠️ 这格漏了两口：浅底搬到画面上会糊、`bottomLeading` 隔壁那颗时长角标占的就是 `bottomTrailing` ⇒ 见下方落地记录 | 视频区 `bottomLeading` 显示「改写A 配音」/「原声」 | 无（纯界面，无下沉点） | 位置与可读性；另加「画面上点得开下拉」一条 | 无 |
 | 1.5 | 方案变体多选 | `SchemeListView.swift:605` 单选、`:616-618` 只删单条 | 多选后批量删（走 `PendingDeletionCenter` 可撤销） | 复用既有 | 框选手感 | 无 |
 | 1.6 | 方向键移卡 | Views 内唯一按键 `SegmentLibraryView.swift:1090` | ←→ 移光标、回车进详情 | 无 | 键盘走一遍 | 无 |
 
@@ -506,6 +506,26 @@ SL-12 现单 4 颗：`backfillSegmentFrames`、`cleanExistingTranscripts`、`ens
 **仍欠三条**：倒计时两帧对照（只抓到 `3:52` 一个读数，"在走"是推算不是对照）、「上一条已确认删除」文案、
 「撤销批量遮挡」那枚像素（四次抓取未赶上，实现按同组件落地）。`swift test` 未跑，交回用户。
 零断言面从上表的「浮条停留时长」扩大为「浮条停留时长 + 两槽位同屏的可读性」。
+
+**1.4 已落（2026-10-01，`SchemeDetailView.swift` 单文件 11+/9−）—— 上表「缺的那一口」只写了落点，漏了两口**
+
+预览闸口选了 **档 A**（深底白字）。落码：`dubBadge` 从正文 `VStack` 删掉，改挂
+`.overlay(alignment: .bottomLeading)`；选中改写版时文案写「改写X 配音」，未选写「原声」，
+锁定态保持「原声（锁定）」；三处胶囊底换成 `Color.black.opacity(0.55)`，字色白／绿／橙分三态。
+`minHeight: 380` / `height: 400` 未动。
+
+上表两处漏写，都是当场挖出来补的：
+
+1. **判据只说"搬到 `bottomLeading`"，没说搬过去会看不清** —— 原胶囊是浅底深字（`gray/green/orange.opacity(0.12~0.15)`），
+   在白卡片上成立，压到明暗不可控的视频帧上直接糊（预览里拿同一个真视频帧画了档 A/档 B 两屏对照）。
+2. **画面右下角不是空的** —— `bottomTrailing` 已被时长角标占着（实测左缘在卡片 2x 坐标 x=202）。
+   三态里最挤的是「原声（锁定）」，右缘 x=192，净距只剩 10px（5pt）。
+
+读数：Debug 编译 **BUILD SUCCEEDED**、8 颗 `check_*.sh` 全 rc=0；新 dylib 里 ` 配音` 出现 6 次 vs 旧那份 5 次（字面量确实进了产物）。
+真机复拍已过四条 —— 角标在画面左下、正文那行消失（同一 x 窗口切行段：旧卡 6 段 → 新卡 5 段）、
+卡片变矮实测 **53px = 26.5pt**（预览预测 51px = 25.5pt，差 2px 属阈值噪声）、白色泡沫托（画面最亮处）上白字仍读得清。
+**仍欠两条**：「改写A 配音」文案与 C3「画面上点得开下拉」—— 本机 `ZSEGMENTDUB` 行数在克隆库与真库都是 **0**，
+那支 Menu 渲不出来，只能等真有一条配音变体后由用户点一次。测试层仍为「无」（纯界面，无下沉点）。
 
 ### 批 2（全零 schema）
 

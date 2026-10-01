@@ -347,7 +347,7 @@ struct StoryboardCard: View {
     var body: some View {
         VStack(alignment: .leading, spacing: DesignTokens.Spacing.compact) {
             if let segment = schemeSeg.segment {
-                // 视频播放器 + 序号叠加 + hover 操作按钮
+                // 视频播放器 + 序号叠加 + 配音角标叠加 + hover 操作按钮
                 // 用 .overlay 而非 ZStack，避免 ZStack propose 不传递 height 导致 SegmentInlinePlayer 塌缩
                 // 视频与下方文字统一内边距（由卡片外层 .padding(6) 提供），避免满宽视频与内缩文字「错位白边」
                 SegmentInlinePlayer(
@@ -381,6 +381,11 @@ struct StoryboardCard: View {
                             .padding(4)
                         }
                     }
+                    .overlay(alignment: .bottomLeading) {
+                        // 配音角标从正文搬进画面左下角：浅底压在明暗不可控的视频帧上会糊，故用与 #序号 同族的深底
+                        dubBadge(for: segment)
+                            .padding(4)
+                    }
 
                 VStack(alignment: .leading, spacing: 5) {
                     // 类型标签
@@ -403,9 +408,6 @@ struct StoryboardCard: View {
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .lineSpacing(2)
                         .help(segment.text)
-
-                    // 配音变体标 + 换变体（P5）
-                    dubBadge(for: segment)
 
                     // 紧凑时间调整
                     StoryboardTimeRow(segment: segment, viewModel: segmentLibraryVM)
@@ -458,16 +460,16 @@ struct StoryboardCard: View {
                 .font(DesignTokens.Typography.micro)
                 .foregroundStyle(.orange)
                 .padding(.horizontal, 6).padding(.vertical, 2)
-                .background(Capsule().fill(Color.orange.opacity(0.15)))
+                .background(Capsule().fill(Color.black.opacity(0.55)))
         } else {
             let variants = segment.effectiveDubVariants
             if variants.isEmpty {
                 // 尚无任何已生成的改写版 → 仅原声，无可选
                 Label("原声", systemImage: "waveform")
                     .font(DesignTokens.Typography.micro)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(.white)
                     .padding(.horizontal, 6).padding(.vertical, 2)
-                    .background(Capsule().fill(Color.gray.opacity(0.12)))
+                    .background(Capsule().fill(Color.black.opacity(0.55)))
             } else {
                 // 非锁定：永远是下拉，默认「原声」，可切到任一克隆改写版
                 let chosen = chosenDub        // nil = 原声
@@ -488,12 +490,12 @@ struct StoryboardCard: View {
                         }
                     }
                 } label: {
-                    Label(chosen == nil ? "原声" : "改写\(variantLetter(chosen!.textVariantIndex))",
+                    Label(chosen == nil ? "原声" : "改写\(variantLetter(chosen!.textVariantIndex)) 配音",
                           systemImage: "waveform")
                         .font(DesignTokens.Typography.micro)
-                        .foregroundStyle(chosen == nil ? Color.secondary : Color.green)
+                        .foregroundStyle(chosen == nil ? Color.white : Color.green)
                         .padding(.horizontal, 6).padding(.vertical, 2)
-                        .background(Capsule().fill(chosen == nil ? Color.gray.opacity(0.12) : Color.green.opacity(0.15)))
+                        .background(Capsule().fill(Color.black.opacity(0.55)))
                 }
                 .menuStyle(.borderlessButton)
                 .fixedSize()
