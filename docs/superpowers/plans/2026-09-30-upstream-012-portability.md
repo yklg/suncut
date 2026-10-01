@@ -473,10 +473,39 @@ SL-12 现单 4 颗：`backfillSegmentFrames`、`cleanExistingTranscripts`、`ens
 | # | 功能 | 缺的那一口 | 判据 | 测试层 | 零断言面 | MCP 契约 |
 |---|---|---|---|---|---|---|
 | 1.1 | 边界直输时间码 | `FrameTime.swift:25-37` 只有格式化**无解析器**；View 是单帧号框 `SegmentLibraryView.swift:1799-1825`；越界**静默 clamp**（`SegmentLibraryViewModel.swift:423,439`） | `分:秒:帧` 三段各自可点直改；帧段按真实 fps 封顶（30fps 只能输 0~29）；回车生效 / Esc 取消；越界**拦下并说明可用范围**，不得静默改值 | Core 新 `TimecodeParser`：P4 三点法、P11 tie-break、P12 越界不得当合法值 | 三段点击手感、Esc、文案 | ⚠️ `adjust_segment_boundary` 现在也是 clamp 语义，界面改拒绝而 MCP 仍 clamp 会分叉 ⇒ 见 Q5 |
-| 1.3 | ⌘Z 宽限 5s→5min | `PendingDeletionCenter.swift:21` 一颗常量 | 4 分 59 秒可放回、5 分 01 秒不可放回 | 无 | 浮条停留时长 | 无 |
+| 1.3 | ⌘Z 宽限 5s→5min | `PendingDeletionCenter.swift:21` 一颗常量 ⚠️ **此格漏了同一颗常量还驱动浮条时长、且提示是单槽位 ⇒ 见下方落地记录，判据已升级** | 4 分 59 秒可放回、5 分 01 秒不可放回 | 无（落地后改为 Core 可测，14 条） | 浮条停留时长 | 无 |
 | 1.4 | 悬停角标 | 配音标识在文字下方（`SchemeDetailView.swift:408,453-500`） | 视频区 `bottomLeading` 显示「改写A 配音」/「原声」 | 无 | 位置与可读性 | 无 |
 | 1.5 | 方案变体多选 | `SchemeListView.swift:605` 单选、`:616-618` 只删单条 | 多选后批量删（走 `PendingDeletionCenter` 可撤销） | 复用既有 | 框选手感 | 无 |
 | 1.6 | 方向键移卡 | Views 内唯一按键 `SegmentLibraryView.swift:1090` | ←→ 移光标、回车进详情 | 无 | 键盘走一遍 | 无 |
+
+#### 批 1 落地记录
+
+**1.3 已落（2026-10-01，提交 `83ba40b`，10 文件 973+/99−）—— 判据按本表执行会得"装饰性的 5 分钟"，已升级**
+
+上表把这一条写成"`PendingDeletionCenter.swift:21` 一颗常量"，漏了同一颗常量还驱动着浮条时长，
+而提示是**单槽位**（任何 `show()` 覆盖上一条）⇒ 光把 5 改成 300，中途任何一条提示都会把「撤销」顶掉，
+用户到点前屏上没有可点之物。`architecture-first-fix` 审查后选定 **A 统一撤销事务抽象**：
+
+- 新增纯状态机 `Sources/MixCutCore/UndoGraceMachine.swift`（`idle/armed/undone/expired/flushed`）。
+  核心判言是**「浮条可见 ⟺ armed」在类型上同成立** ⇒ 审查记的竞态①（切项目后残留可点撤销）在状态机层面消失，不靠调用点纪律。
+- `PendingDeletionCenter` 成为 ticket 唯一持有者与唯一可见性来源；`Toast` 拆成两个槽位：
+  上方专用常驻撤销条 `UndoSlotView`（带倒计时与具名按钮），下方 `NoticeSlotView`（非交互提示，`show()` 不再收 `actionTitle`/`action`）。
+- 两种 ticket：`.deletion`（300 秒，欠一次 commit）/ `.batchOverwrite`（5 秒，只欠 undo）；
+  批量字号、批量遮挡两处从 `ToastCenter.show(actionTitle:)` 搬进 `scheduleUndoOnly`。
+- 顶掉旧条时**先了结再登记**（顺序反了会把上一条的 commit 丢掉），文案交代「上一条…已确认删除」。
+- ⌘Q 补真删：`MixCutApp.init()` 成功开库路径注册 `willTerminateNotification` → `flushNow()`。
+  **强杀与崩溃救不了**，这条边界写在代码注释与 `CLAUDE.md` §撤销浮条与延迟删除，不当秘密。
+
+测试层从上表的「无」改为 **Core 可测**：`Tests/MixCutCoreTests/UndoGraceMachineTests.swift` 14 条（UG-01~14），
+含反向对照（armed 内点击必须真撤销，否则 UG-04 恒真）。守卫 `scripts/check_undo_guards.sh` 8 条（UG-G01~08），
+自检 `scripts/selftest_undo_guards.sh` 8 颗变异 M1~M8 全部变红、基线全绿。守卫族实测 **138 PASS / 0 FAIL**
+（= 批 0 的 130 + 撤销这族 8；读数取自已跑的那次运行，非本次重算）。
+
+验收读数：**已过三条** —— ① 撤销条上屏带「已删除分镜 · 3:52 ｜ 撤销删除」（真像素，整屏两帧差图定位后回裁）；
+② **切项目当场消失**（P0，用户屏前读数「立刻没了」）；③ ⌘Q 钩子补真删（`ZSEGMENT 20 → 18`，期间日志无重载、300 秒未到点 ⇒ 唯一 commit 时机是退出）。
+**仍欠三条**：倒计时两帧对照（只抓到 `3:52` 一个读数，"在走"是推算不是对照）、「上一条已确认删除」文案、
+「撤销批量遮挡」那枚像素（四次抓取未赶上，实现按同组件落地）。`swift test` 未跑，交回用户。
+零断言面从上表的「浮条停留时长」扩大为「浮条停留时长 + 两槽位同屏的可读性」。
 
 ### 批 2（全零 schema）
 
