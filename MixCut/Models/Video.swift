@@ -127,56 +127,64 @@ final class Video: Identifiable {
     /// 解码 ASR 字级时间戳
     ///
     /// ⚠️ 性能：ASR blob 可达 20KB+，逐句字幕 / 边界对齐等路径会反复访问；做惰性解码缓存。
+    /// ⚠️ 短路条件必须带 `key == asrWordsData`（Segment.swift `DecodedCache` 约束 #4）：
+    /// 只判 `value` 有没值，命中那次求值就完全不碰被跟踪字段，SwiftUI 的 Observation 依赖登记不上。
+    /// 代价是每次 get 多一次 20KB 的字节比较（约微秒级），相对省掉的整段 JSON 解码是零头。
     var asrWords: [ASRWord] {
         get {
-            if let cached = asrWordsCache.value { return cached }
-            guard let data = asrWordsData else {
-                asrWordsCache.value = []
-                return []
-            }
-            let decoded = (try? JSONCoding.decoder.decode([ASRWord].self, from: data)) ?? []
+            if let cached = asrWordsCache.value, asrWordsCache.key == asrWordsData { return cached }
+            let decoded = (try? JSONCoding.decoder.decode([ASRWord].self,
+                                                          from: asrWordsData ?? Data())) ?? []
             asrWordsCache.value = decoded
+            asrWordsCache.key = asrWordsData
             return decoded
         }
         set {
             asrWordsData = try? JSONCoding.encoder.encode(newValue)
             asrWordsCache.value = newValue
+            asrWordsCache.key = asrWordsData
         }
     }
 
     /// 解码 Whisper 原生句子
+    ///
+    /// ⚠️ 同上：短路条件带 `key`（约束 #4）。
     var asrSentences: [ASRSentence] {
         get {
-            if let cached = asrSentencesCache.value { return cached }
-            guard let data = asrSentencesData else {
-                asrSentencesCache.value = []
-                return []
-            }
-            let decoded = (try? JSONCoding.decoder.decode([ASRSentence].self, from: data)) ?? []
+            if let cached = asrSentencesCache.value, asrSentencesCache.key == asrSentencesData { return cached }
+            let decoded = (try? JSONCoding.decoder.decode([ASRSentence].self,
+                                                          from: asrSentencesData ?? Data())) ?? []
             asrSentencesCache.value = decoded
+            asrSentencesCache.key = asrSentencesData
             return decoded
         }
         set {
             asrSentencesData = try? JSONCoding.encoder.encode(newValue)
             asrSentencesCache.value = newValue
+            asrSentencesCache.key = asrSentencesData
         }
     }
 
     /// 选定的 TTS 音色 id（≤3）
+    ///
+    /// ⚠️ 同上：短路条件带 `key`（约束 #4）。这一处是**活的**消费面：
+    /// `SegmentVariantInspector` 在 body 里读 `segment.video?.selectedVoiceIds`，
+    /// 音色换完而变体池不跟着换，就是标签那次同一个病。
     var selectedVoiceIds: [String] {
         get {
-            if let cached = selectedVoiceIdsCache.value { return cached }
-            guard let data = selectedVoiceIdsData else {
-                selectedVoiceIdsCache.value = []
-                return []
+            if let cached = selectedVoiceIdsCache.value, selectedVoiceIdsCache.key == selectedVoiceIdsData {
+                return cached
             }
-            let decoded = (try? JSONCoding.decoder.decode([String].self, from: data)) ?? []
+            let decoded = (try? JSONCoding.decoder.decode([String].self,
+                                                          from: selectedVoiceIdsData ?? Data())) ?? []
             selectedVoiceIdsCache.value = decoded
+            selectedVoiceIdsCache.key = selectedVoiceIdsData
             return decoded
         }
         set {
             selectedVoiceIdsData = try? JSONCoding.encoder.encode(newValue)
             selectedVoiceIdsCache.value = newValue
+            selectedVoiceIdsCache.key = selectedVoiceIdsData
         }
     }
 

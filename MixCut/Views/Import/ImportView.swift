@@ -589,7 +589,8 @@ struct ImportedVideoCard: View {
     // MARK: - 右侧面板（台词，可滚动）
     private var rightPanel: some View {
         VStack(alignment: .leading, spacing: 0) {
-            // 标题
+            // ⚠️ lineLimit(1)：与素材库卡片台词头部行同一类缺陷的保险。这一处面板宽是写死的
+            // （`panelWidth`），今天不塌；只加 lineLimit、不加 fixedSize —— 后者会把行顶出被裁的容器。
             HStack(spacing: 5) {
                 Image(systemName: "text.quote")
                     .font(DesignTokens.Typography.microRegular)
@@ -597,11 +598,13 @@ struct ImportedVideoCard: View {
                 Text("台词")
                     .font(DesignTokens.Typography.microEmphasis)
                     .foregroundStyle(.secondary)
+                    .lineLimit(1)
 
                 if let transcript = video.transcript, !transcript.isEmpty {
                     Text("\(transcript.count)字")
                         .font(DesignTokens.Typography.microMono)
                         .foregroundStyle(.secondary.opacity(0.6))
+                        .lineLimit(1)
                 }
 
                 Spacer()

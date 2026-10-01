@@ -261,6 +261,7 @@ struct SegmentVariantInspector: View {
                 Text("改写版 \(Character(UnicodeScalar(65 + t)!))")
                     .font(.caption.weight(.bold))
                     .foregroundStyle(.white)
+                    .lineLimit(1)          // 胶囊里的短标签，压成竖排会整个坏掉
                     .padding(.horizontal, 8).padding(.vertical, 3)
                     .background(Color.accentColor)
                     .clipShape(Capsule())
@@ -348,12 +349,15 @@ struct SegmentVariantInspector: View {
     }
 
     /// 字数提示（基准=原分镜台词）：仅在比原台词「多很多」红字、「少很多」橙字；其余灰字不打扰。
+    /// ⚠️ 短计数加 lineLimit(1)（同一行里右边那句长文案是贪心的，会把 "N字" 挤成竖排单字）；
+    /// 那两句长警示**故意不加** —— 它们是解释性正文，截断等于把"为什么要精简"整句吞掉。
     @ViewBuilder
     private func charHint(count: Int) -> some View {
         let many = isTooMany(count)
         let few = isTooFew(count)
         HStack(spacing: 3) {
             Text("\(count)字").font(.caption2.monospacedDigit())
+                .lineLimit(1)
                 .foregroundStyle(many ? AnyShapeStyle(Color.red)
                                  : few ? AnyShapeStyle(Color.orange)
                                  : AnyShapeStyle(.tertiary))
@@ -366,6 +370,7 @@ struct SegmentVariantInspector: View {
                         .font(.caption2).foregroundStyle(.orange)
                 } else {
                     Text("/ 原\(origCharCount)字").font(.caption2).foregroundStyle(.tertiary)
+                        .lineLimit(1)
                 }
             }
         }

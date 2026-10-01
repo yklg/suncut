@@ -42,7 +42,15 @@ struct SegmentDubControls: View {
                         }
                     }
                 }
-                .help("直接烧录=不处理背景直接烧新字幕；模糊虚化=把字幕区域糊掉再烧（不管有没有旧字幕都可用）；纯色遮挡=深色条盖住该区域再烧")
+                // ⚠️ tooltip 必须自己说清"在哪一步才看得见"。以前只解释三种模式是什么，
+                // 结果用户选完在界面上找不到任何变化，把它当成坏掉的开关报上来 ——
+                // 因为这个设置真的**只在配音渲染的导出里**生效，普通混剪导出既不烧字幕也不遮挡。
+                .help("""
+                      在哪一步生效：所有走配音渲染的导出（方案配音导出、多选→批量导出）。
+                      普通混剪导出、单分镜批量导出不处理字幕区。
+                      直接烧录=不处理背景直接烧新字幕；模糊虚化=把字幕区域糊掉再烧（不管有没有旧字幕都可用）；纯色遮挡=深色条盖住该区域再烧。
+                      卡片上的静止帧就是按这个效果预览的；点播放之后画面是原素材，只剩描边手柄。
+                      """)
 
                 if treatment.needsMask {
                     Button(action: onApplyMaskToAll) {
@@ -79,39 +87,9 @@ struct SegmentDubControls: View {
                 .buttonStyle(.plain)
                 .help("调整这个分镜的字幕烧录字号。需要统一时，可在弹层里应用到本视频所有分镜。")
                 .popover(isPresented: $showFontSizePopover, arrowEdge: .bottom) {
-                    VStack(alignment: .leading, spacing: DesignTokens.Spacing.compact) {
-                        Text("字幕字号")
-                            .font(DesignTokens.Typography.labelEmphasis)
-                        Text("只影响这一个分镜")
-                            .font(DesignTokens.Typography.micro)
-                            .foregroundStyle(.secondary)
-                        HStack(spacing: DesignTokens.Spacing.compact) {
-                            Text("小").font(DesignTokens.Typography.micro).foregroundStyle(.tertiary)
-                            Slider(value: $fontRatio,
-                                   in: SubtitleFontSize.minRatio...SubtitleFontSize.maxRatio)
-                                .frame(width: 180)
-                            Text("大").font(DesignTokens.Typography.micro).foregroundStyle(.tertiary)
-                            Text(String(format: "%.1f%%", SubtitleFontSize.clamp(fontRatio) * 100))
-                                .font(DesignTokens.Typography.caption)
-                                .monospacedDigit()
-                                .frame(width: 42, alignment: .trailing)
-                        }
-                        Text("拖动时上方画面里的示例字幕会实时变化，可与原视频字幕比大小。")
-                            .font(DesignTokens.Typography.micro)
-                            .foregroundStyle(.tertiary)
-                            .frame(maxWidth: 300, alignment: .leading)
-
-                        Divider()
-
-                        Button {
-                            onApplyFontSizeToAll()
-                            showFontSizePopover = false
-                        } label: {
-                            Label("应用到本视频所有分镜", systemImage: "square.on.square")
-                        }
-                        .controlSize(.small)
-                    }
-                    .padding(DesignTokens.Spacing.comfortable)
+                    SubtitleFontSizePopover(fontRatio: $fontRatio,
+                                            isPresented: $showFontSizePopover,
+                                            onApplyToAll: onApplyFontSizeToAll)
                 }
             }
         }
@@ -128,5 +106,51 @@ struct SegmentDubControls: View {
             .background(Capsule().fill(on ? Color.accentColor : Color.secondary.opacity(0.1)))
             .contentShape(Capsule())
             .onTapGesture { treatment = t }
+    }
+}
+
+/// 字幕字号弹层：滑条 + 「应用到本视频所有分镜」。
+///
+/// ⚠️ 卡片与列表行共用这一份。里面那句作用域说明（"只影响这一个分镜"）和"应用到本视频"
+/// 的语义只准有一处定义 —— 抄第二份就会出现"卡上写的作用域与行上写的不一样"。
+struct SubtitleFontSizePopover: View {
+    @Binding var fontRatio: Double
+    @Binding var isPresented: Bool
+    let onApplyToAll: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: DesignTokens.Spacing.compact) {
+            Text("字幕字号")
+                .font(DesignTokens.Typography.labelEmphasis)
+            Text("只影响这一个分镜")
+                .font(DesignTokens.Typography.micro)
+                .foregroundStyle(.secondary)
+            HStack(spacing: DesignTokens.Spacing.compact) {
+                Text("小").font(DesignTokens.Typography.micro).foregroundStyle(.tertiary)
+                Slider(value: $fontRatio,
+                       in: SubtitleFontSize.minRatio...SubtitleFontSize.maxRatio)
+                    .frame(width: 180)
+                Text("大").font(DesignTokens.Typography.micro).foregroundStyle(.tertiary)
+                Text(String(format: "%.1f%%", SubtitleFontSize.clamp(fontRatio) * 100))
+                    .font(DesignTokens.Typography.caption)
+                    .monospacedDigit()
+                    .frame(width: 42, alignment: .trailing)
+            }
+            Text("拖动时上方画面里的示例字幕会实时变化，可与原视频字幕比大小。")
+                .font(DesignTokens.Typography.micro)
+                .foregroundStyle(.tertiary)
+                .frame(maxWidth: 300, alignment: .leading)
+
+            Divider()
+
+            Button {
+                onApplyToAll()
+                isPresented = false
+            } label: {
+                Label("应用到本视频所有分镜", systemImage: "square.on.square")
+            }
+            .controlSize(.small)
+        }
+        .padding(DesignTokens.Spacing.comfortable)
     }
 }

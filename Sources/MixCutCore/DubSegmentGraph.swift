@@ -74,18 +74,23 @@ public enum DubSegmentGraphBuilder {
         )
 
         // 2) 遮挡旧字幕 → [masked]
+        // ⚠️ 半径 / 颜色 / alpha 一律从 `SubtitleMaskMode.renderSpec` 取，**这里不许再写字面量**：
+        // 卡片预览读的是同一张表，把值写回这里就等于"导出糊成这样、屏幕上却是另一样"的两份真相。
         let mx = maskPixel.x, my = maskPixel.y, mw = maskPixel.width, mh = maskPixel.height
-        switch mode {
-        case .none:
+        let spec = mode.renderSpec
+        switch spec {
+        case .passthrough:
             parts.append("[base]null[masked]")
-        case .blur:
+        case .blur(_, let power):
+            // ⚠️ 必须钳位：遮挡条可以拖到 38px 高，而 boxblur 的半径受**色度平面**限制
+            // （r ≤ min(裁面宽,高)/4），超了 ffmpeg 直接 init 失败、导出 rc=234。
+            // 默认带高 230px 时钳位不动（20 < 57），所以现有导出的滤镜串逐字节不变。
+            let r = spec.clampedRadius(cropWidth: mw, cropHeight: mh)
             parts.append("[base]split=2[mb0][mb1]")
-            parts.append("[mb1]crop=\(mw):\(mh):\(mx):\(my),boxblur=20:1[mbb]")
+            parts.append("[mb1]crop=\(mw):\(mh):\(mx):\(my),boxblur=\(r):\(power)[mbb]")
             parts.append("[mb0][mbb]overlay=\(mx):\(my)[masked]")
-        case .solid:
-            parts.append("[base]drawbox=x=\(mx):y=\(my):w=\(mw):h=\(mh):color=0x1A1A1A@1.0:t=fill[masked]")
-        case .dim:
-            parts.append("[base]drawbox=x=\(mx):y=\(my):w=\(mw):h=\(mh):color=0x000000@0.5:t=fill[masked]")
+        case .fill(let hex, let alpha):
+            parts.append("[base]drawbox=x=\(mx):y=\(my):w=\(mw):h=\(mh):color=0x\(hex)@\(alpha):t=fill[masked]")
         }
 
         // 3) 逐句叠新字幕 PNG → [capped]（每句一个 overlay + enable=between；无字幕则透传 [masked]）

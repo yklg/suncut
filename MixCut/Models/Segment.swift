@@ -146,10 +146,15 @@ final class Segment: Identifiable {
     var subtitleFontRatio: Double = SubtitleFontSize.defaultRatio
 
     /// 遮挡矩形（桥接四个归一化 Double）
+    ///
+    /// ⚠️ 高度下限读**本分镜自己的** `subtitleFontRatio`：拖拽、MCP 写 mask、"应用到本视频所有分镜"、
+    /// 撤销四条写路径全走这个 setter，闸口只设这一处就都盖住了。不这么做的后果不是崩溃而是自我欺骗 ——
+    /// 带能拖到 38px，而该档字号烧出来的字幕块有 ~119px，于是"开了纯色遮挡"的卡片导出后原字幕还在。
     var maskRect: SubtitleMaskRect {
         get { SubtitleMaskRect(x: maskX, y: maskY, width: maskWidth, height: maskHeight) }
         set {
-            let c = newValue.clamped()
+            let c = newValue.clamped(
+                minHeight: SubtitleMaskRect.minimumHeight(fontRatio: subtitleFontRatio))
             maskX = c.x; maskY = c.y; maskWidth = c.width; maskHeight = c.height
         }
     }
@@ -160,25 +165,52 @@ final class Segment: Identifiable {
         set { maskStyleRaw = newValue.rawValue }
     }
 
+    /// 「字幕处理」这一档（直接烧录/模糊虚化/纯色遮挡），桥接 `hasHardSubtitle` + `maskStyle`。
+    ///
+    /// ⚠️ 这条映射以前裸写在网格卡的 view 里（`SegmentDubControls` 的 binding），
+    /// 列表行现在也要能改同一档 ⇒ 写第二份就会分叉（一处改了另一处显示旧值）。
+    /// 收在这里与 `maskStyle`/`maskRect` 同一层：它们本来就是同一组桥接属性。
+    /// 读法与导出侧 `SubtitleMaskMode.from(hasHardSubtitle:maskStyleRaw:)` 用的是同一对字段。
+    var subtitleTreatment: SubtitleTreatment {
+        get { SubtitleTreatment.from(hasHardSubtitle: hasHardSubtitle, maskStyle: maskStyle) }
+        set {
+            hasHardSubtitle = newValue.needsMask
+            if let style = newValue.maskStyle { maskStyle = style }
+        }
+    }
+
+    /// 设定本分镜的烧录字号：夹到合法区间 + 记为新分镜的默认值（老素材/新素材不割裂）。
+    /// 不保存 —— 保存时机归调用方（卡片改一次存一次，拖滑条时另有去抖）。
+    func setSubtitleFontRatio(_ ratio: Double) {
+        let v = SubtitleFontSize.clamp(ratio)
+        subtitleFontRatio = v
+        SubtitleFontSize.rememberPreferred(v)
+    }
+
     /// 语义类型（支持多个）
     ///
     /// ⚠️ 性能：该属性在列表/筛选/搜索路径上被高频访问（每敲一个搜索字符会遍历全部分镜），
     /// 原实现每次 get 都新建 `JSONDecoder` 并全量解码。这里用 `DecodedCache` 惰性缓存，
     /// 仅在 setter 里失效；缓存盒是引用类型，回填不会触发 SwiftData 属性变更通知。
+    ///
+    /// ⚠️ 短路条件**必须带上 `key == semanticTypesData`**（约束 #4）：只判 `value` 有没值，
+    /// 会让命中那次求值完全不碰被跟踪的 `semanticTypesData`，Observation 依赖登记不上，
+    /// 于是「在卡片菜单里改标签 → 标签行不动」。键化同时让绕开 setter 的写入下次 get 自愈。
     var semanticTypes: [SemanticType] {
         get {
-            if let cached = semanticTypesCache.value { return cached }
-            guard let data = semanticTypesData else {
-                semanticTypesCache.value = []
-                return []
+            if let cached = semanticTypesCache.value, semanticTypesCache.key == semanticTypesData {
+                return cached
             }
-            let decoded = (try? JSONCoding.decoder.decode([SemanticType].self, from: data)) ?? []
+            let decoded = (try? JSONCoding.decoder.decode([SemanticType].self,
+                                                          from: semanticTypesData ?? Data())) ?? []
             semanticTypesCache.value = decoded
+            semanticTypesCache.key = semanticTypesData
             return decoded
         }
         set {
             semanticTypesData = try? JSONCoding.encoder.encode(newValue)
             semanticTypesCache.value = newValue
+            semanticTypesCache.key = semanticTypesData
         }
     }
 
@@ -324,20 +356,22 @@ final class Segment: Identifiable {
     /// 关键词
     ///
     /// ⚠️ 性能：同 `semanticTypes`，搜索时会对全部分镜访问此属性，故做惰性解码缓存。
+    /// ⚠️ 短路条件同样必须带 `key`（约束 #4）。今天没有任何 view body 读它（只有
+    /// `SegmentLibraryViewModel.applyFilter` 的搜索分支），所以这条是**消除同形隐患**，
+    /// 不是修某个已上报的症状 —— 谁哪天在卡片上画关键词，就会立刻踩到标签那次同样的坑。
     var keywords: [String] {
         get {
-            if let cached = keywordsCache.value { return cached }
-            guard let data = keywordsData else {
-                keywordsCache.value = []
-                return []
-            }
-            let decoded = (try? JSONCoding.decoder.decode([String].self, from: data)) ?? []
+            if let cached = keywordsCache.value, keywordsCache.key == keywordsData { return cached }
+            let decoded = (try? JSONCoding.decoder.decode([String].self,
+                                                          from: keywordsData ?? Data())) ?? []
             keywordsCache.value = decoded
+            keywordsCache.key = keywordsData
             return decoded
         }
         set {
             keywordsData = try? JSONCoding.encoder.encode(newValue)
             keywordsCache.value = newValue
+            keywordsCache.key = keywordsData
         }
     }
 }
@@ -370,17 +404,42 @@ extension Segment {
 /// SwiftData / Observation 会跟踪属性**赋值**，若在计算属性的 getter 里回填一个被跟踪的属性，
 /// 会在视图 body 求值期间触发变更通知，导致「Modifying state during view update」乃至重绘循环。
 /// 盒子引用本身始终不变、只改内部 `value`，因此回填是完全静默的。
-/// ⚠️ 使用约束（改代码前必读）
 ///
-/// 缓存**只在对应计算属性的 setter 里失效**。因此以下前提必须一直成立，否则会读到过期数据
-/// 且不会有任何报错：
-/// 1. **禁止绕过 setter 直接写底层 `*Data` 字段**（如 `semanticTypesData = ...`）。
-///    要改值一律走 `segment.semanticTypes = ...`。
-/// 2. **禁止从另一个 ModelContext 写这些字段**。当前全 App 共用 `container.mainContext`，
-///    若将来引入后台上下文 / CloudKit 同步 / 批量迁移去写它们，必须在此补跨上下文失效逻辑。
-/// 3. 新增带缓存的字段时，务必同时提供显式失效入口
-///    （参考 `Segment.invalidateReplacedExistsCache()`）。
+/// ⚠️ **泛型元数绝对不许改**（`DecodedCache<T>` 就是 `<T>`，一个不多一个不少）。
+/// `SchemaGuard.descriptorLines` 会把每个属性的 `|type=…|transient=…` 写进 schema 指纹行，
+/// `classifySchemaChange` 见到"消失行"就判 `.destructive`，而那条分支的处理是**拒绝打开用户的库**。
+/// 换类型名 / 加一个泛型参数 ⇒ 老用户下次启动进不去。要加字段就往盒里加属性（如 `key`），
+/// 属性名与个数变化不碰类型名，指纹逐字不变。
 final class DecodedCache<T> {
     var value: T?
+    /// 缓存键：底层 `*Data` 字段的**当前值**。见下方约束 #4 —— 短路条件必须带上它。
+    /// `replacedExistsCache` 不用这个字段（它的键是路径，已在元组里）。
+    var key: Data?
     init() {}
 }
+
+/// ⚠️ 使用约束（改代码前必读）
+///
+/// 以下前提必须一直成立，否则要么读到过期数据、要么视图根本不刷新，且**都不会有任何报错**：
+///
+/// 1. **禁止绕过 setter 直接写底层 `*Data` 字段**（如 `semanticTypesData = ...`）。
+///    要改值一律走 `segment.semanticTypes = ...`。
+///    确实绕不过的场合是存在的：`MixCutApp.fixMissingSemanticTypes` 就是用裸 SQLite 写
+///    `ZSEMANTICTYPESDATA` 的（跑在 UI 之前）。约束 #4 的键化正是为了让这类写入**下次 get 自愈**。
+/// 2. **禁止从另一个 ModelContext 写这些字段**。缓存盒是**每个实例一份**，别的 context 里的
+///    另一个实例写的值不会让本实例的键失效。当前 `container.mainContext` 是唯一的读写面；
+///    `MixCutApp` 里那几处 `ModelContext(container)` 只跑一次性迁移、不碰这些字段。
+///    将来引入后台上下文 / CloudKit 同步去写它们，必须在此补跨上下文失效逻辑。
+/// 3. 新增带缓存的字段时，务必同时提供显式失效入口
+///    （参考 `Segment.invalidateReplacedExistsCache()`）；**用了 `key` 的盒，失效时值与键成对清**——
+///    只清 `value` 会留下"键还在、值没了"的半空盒。`replacedExistsCache` 不走 `key`
+///    （它的键是路径，已经在 `(path, exists)` 元组里），所以那里只清 `value` 是对的。
+/// 4. **带缓存的 getter，其短路条件必须读一次底层被跟踪字段，并让返回值依赖它**
+///    （写法：`if let cached = box.value, box.key == backingData { return cached }`）。
+///    写成 `if let cached = box.value { return cached }` 会让本次求值**完全不碰** `*Data` ⇒
+///    SwiftUI 的 Observation 依赖登记不上 ⇒ 改了值卡片不重绘。这不是理论风险：
+///    `SegmentLibraryViewModel.recomputeAllDerived()` 会无条件遍历全库读 `semanticTypes`，
+///    卡片首帧之前每个分镜的盒都已经被焐热，所以这条通道是**必然断**、不是偶发。
+///    （2026-10「标签改了不显示」复盘的根因。）
+///    丢弃式的 `_ = backingData` 不算满足本条：它不承重，下一个人会当死码清掉。
+///    守卫见 `Tests/MixCutCoreTests/SegmentRenderFreshnessTests.swift` 的 G2。

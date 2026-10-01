@@ -309,7 +309,9 @@ actor DubExportService {
             let canvasW = max(120, maskPixel.width)      // 字幕画布宽=遮挡区宽（下限 120px 防御逐字竖排）
             // 用**该分镜自己的**字号比例（以前读的是全局设置，界面调了导出却不跟随）
             let fontSize = max(12, Double(outW) * SubtitleFontSize.clamp(spec.subtitleFontRatio))
-            let withBackdrop = (mode != .solid)
+            // 底衬规则进了表（`SubtitleMaskMode.burnsCaptionBackdrop`），这里不再自己写 `!= .solid` ——
+            // 它是 mode 的第三个消费者，散着写就又是两份真相。
+            let withBackdrop = mode.burnsCaptionBackdrop
             for (li, line) in spec.captionLines.enumerated() {
                 let burnText = CaptionRenderer.stripPunctuation(line.text)
                 guard !burnText.isEmpty else { continue }

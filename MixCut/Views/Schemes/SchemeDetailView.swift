@@ -388,14 +388,16 @@ struct StoryboardCard: View {
                     }
 
                 VStack(alignment: .leading, spacing: 5) {
-                    // 类型标签
-                    HStack(spacing: 3) {
+                    // 类型标签 —— 与素材库卡片/列表行同一条纪律：用 FlowLayout 换行，
+                    // 不用裸 HStack（窄容器里 HStack 会把中文标签压成一字一行的竖排）
+                    FlowLayout(spacing: 3) {
                         ForEach(segment.semanticTypes.prefix(2), id: \.self) { type in
                             SemanticTypeTag(type: type)
                         }
                         if segment.semanticTypes.count > 2 {
                             Text("+\(segment.semanticTypes.count - 2)")
                                 .font(DesignTokens.Typography.micro)
+                                .lineLimit(1)
                                 .foregroundStyle(.secondary)
                         }
                     }

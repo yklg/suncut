@@ -69,15 +69,20 @@ struct SegmentCardCompact: View {
     }
 
     /// 语义类型标签行（semanticTypes 只解码一次，避免同一卡片 body 内 3 次 JSON 解码）
+    ///
+    /// ⚠️ 用 `FlowLayout` 而不是裸 `HStack`：窄容器里 HStack 压的是柔性 Text，中文会变成一字一行的竖排
+    /// （素材库列表行就是这么坏的，见 `SegmentLibraryView` 的标签行注释）。这里只放 2 颗标签，
+    /// 今天量不出问题，但契约要一致 —— 否则守卫只能靠"我记得每一处"。
     private var semanticTags: some View {
         let types = segment.semanticTypes
-        return HStack(spacing: 3) {
+        return FlowLayout(spacing: 3) {
             ForEach(Array(types.prefix(2)), id: \.self) { type in
                 SemanticTypeTag(type: type)
             }
             if types.count > 2 {
                 Text("+\(types.count - 2)")
                     .font(DesignTokens.Typography.microRegular)
+                    .lineLimit(1)
                     .foregroundStyle(.secondary)
             }
         }

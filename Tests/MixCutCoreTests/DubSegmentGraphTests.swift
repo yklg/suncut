@@ -33,8 +33,65 @@ struct DubSegmentGraphTests {
         let g = blurDubbed()
         #expect(g.filterComplex.contains("split=2"))
         #expect(g.filterComplex.contains("crop=1080:230:0:1536"))
-        #expect(g.filterComplex.contains("boxblur=20"))
+        // ⚠️ 钉全串而不是 "boxblur=20" —— 松断言放得过 boxblur=200，等于没守
+        #expect(g.filterComplex.contains("boxblur=20:1[mbb]"))
         #expect(g.filterComplex.contains("overlay=0:1536[masked]"))
+    }
+
+    @Test("滤镜串里的样式值只能来自 renderSpec（绕过表写字面量必须变红）")
+    func filterStringsDeriveFromSpec() {
+        // 这三条把「表 → 串」的对应关系钉死：改表会红，绕开表手写也会红。
+        // 预览层读的是同一张表，所以这条同时也是"屏幕上的样子 = 导出的样子"的唯一凭据。
+        guard case .blur(let radius, let power) = SubtitleMaskMode.blur.renderSpec else {
+            Issue.record("blur 的 renderSpec 不再是 .blur ⇒ 下面的等价断言是空断言"); return
+        }
+        #expect("boxblur=\(radius):\(power)[mbb]" == "boxblur=20:1[mbb]")
+        #expect(blurDubbed().filterComplex.contains("boxblur=\(radius):\(power)[mbb]"))
+
+        for mode in [SubtitleMaskMode.solid, .dim] {
+            guard case .fill(let hex, let alpha) = mode.renderSpec else {
+                Issue.record("\(mode) 的 renderSpec 不是 .fill ⇒ 断言空过"); continue
+            }
+            let g = DubSegmentGraphBuilder.build(
+                mode: mode, startFrame: 0, endFrame: 60, fps: 30,
+                outputWidth: 1080, outputHeight: 1920,
+                maskPixel: PixelRect(x: 0, y: 1536, width: 1080, height: 230),
+                captions: [], keepOriginalAudio: false, dubAudioInputIndex: 1,
+                freezePadFrames: 0, trailingSilence: 0)
+            #expect(g.filterComplex.contains("color=0x\(hex)@\(alpha):t=fill[masked]"),
+                    "\(mode)：串里的颜色不是从表里取的")
+        }
+    }
+
+    @Test("糊半径按裁面色度平面短边钳位（阈值来自包内 ffmpeg 实测）")
+    func blurRadiusClampedToCrop() {
+        // 实测表（2026-10-01，SunCut.app/Contents/Resources/bin/ffmpeg）：
+        // 裁面高 38 ⇒ 最大 9（10 直接 init 失败）；40 ⇒ 10；78 ⇒ 19；80 ⇒ 20。
+        // 约束来自 yuv420 的色度平面（半尺寸），不是 luma —— 所以是 /4 不是 /2。
+        let base = SubtitleMaskRenderSpec.blur(radiusPixels: 20, power: 1)
+        #expect(base.clampedRadius(cropWidth: 1080, cropHeight: 38) == 9)
+        #expect(base.clampedRadius(cropWidth: 1080, cropHeight: 40) == 10)
+        #expect(base.clampedRadius(cropWidth: 1080, cropHeight: 78) == 19)
+        #expect(base.clampedRadius(cropWidth: 1080, cropHeight: 80) == 20)
+        #expect(base.clampedRadius(cropWidth: 1080, cropHeight: 230) == 20, "默认带高不该被动")
+        // 窄带也要受宽约束：横长条反过来按宽算
+        #expect(base.clampedRadius(cropWidth: 60, cropHeight: 400) == 15)
+
+        func band(_ h: Int) -> String {
+            DubSegmentGraphBuilder.build(
+                mode: .blur, startFrame: 0, endFrame: 60, fps: 30,
+                outputWidth: 1080, outputHeight: 1920,
+                maskPixel: PixelRect(x: 0, y: 1536, width: 1080, height: h),
+                captions: [], keepOriginalAudio: false, dubAudioInputIndex: 1,
+                freezePadFrames: 0, trailingSilence: 0).filterComplex
+        }
+        // 38px 这一档今天从卡片上拖不出来（带高会被抬到该分镜的字幕块高度），但它仍是活的输入：
+        // 下限落地前已拖矮的存量行、以及窄成片导出（480 宽时同一个下限换算过来只有 36px）都走到这里，
+        // 不钳位就是"配音导出 rc=234"硬失败。
+        #expect(band(38).contains("boxblur=9:1[mbb]"))
+        #expect(!band(38).contains("boxblur=20"))
+        // 既有锚值不许动：默认 230px 带高的串与钳位引入前逐字相同
+        #expect(band(230).contains("boxblur=20:1[mbb]"))
     }
 
     @Test("精确切片 + 9:16 标准化")

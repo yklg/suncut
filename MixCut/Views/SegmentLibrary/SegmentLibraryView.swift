@@ -1,4 +1,5 @@
 import SwiftUI
+import SwiftData
 import AVKit
 import AppKit
 import UniformTypeIdentifiers
@@ -423,14 +424,20 @@ struct SegmentLibraryView: View {
             }
 
             // 统计 + 重置
+            // ⚠️ lineLimit(1) 挂在拼接后的整条上，不挂在右半边 —— Text 修饰符对 `A + B`
+            // 是否逐段生效没有保证，套在 Group 上才是确定的。这里只加 lineLimit、
+            // **不加 fixedSize**：这一行今天没塌，加 fixedSize 反而可能把它顶出工具栏。
             HStack(spacing: DesignTokens.Spacing.compact) {
-                Text("\(viewModel.filteredSegments.count)")
-                    .font(.system(size: 12, weight: .semibold, design: .rounded))
-                    .foregroundStyle(.primary)
-                +
-                Text(" / \(viewModel.segments.count) 个分镜")
-                    .font(DesignTokens.Typography.label)
-                    .foregroundStyle(.secondary)
+                Group {
+                    Text("\(viewModel.filteredSegments.count)")
+                        .font(.system(size: 12, weight: .semibold, design: .rounded))
+                        .foregroundStyle(.primary)
+                    +
+                    Text(" / \(viewModel.segments.count) 个分镜")
+                        .font(DesignTokens.Typography.label)
+                        .foregroundStyle(.secondary)
+                }
+                .lineLimit(1)
 
                 Spacer()
 
@@ -679,6 +686,34 @@ private struct SegmentLeftHeightKey: PreferenceKey {
     }
 }
 
+/// 把「可拖的遮挡框 + 可调高的底部手柄」挂到一个 9:16 画布上。
+///
+/// ⚠️ 网格卡与列表行**共用这一份挂载**：以前它只写在卡片里，我把效果预览放进三处共用的播放器之后，
+/// 列表行就变成"看得见带子、却改不了位置和高度"——作用面比控制面宽，正是用户报的第 3 个 bug 的同一形状。
+/// 抄第二份到行里，将来改下限规则/保存时机就会两处漂移，所以收成一条扩展方法。
+///
+/// 前提：调用方给的是**固定 9:16 画布**（`maskRect` 的归一化空间就是它）。卡片 200×200·16/9，
+/// 行 160×160·16/9 —— 两侧都必须写死高度，不能让播放器按缩略图自身比例长，否则横屏素材上
+/// 行内的带子位置与导出（按 pad 后的 9:16 算）会分叉。
+fileprivate extension View {
+    func subtitleMaskHandle(on segment: Segment, save: @escaping () -> Void) -> some View {
+        overlay {
+            if segment.hasHardSubtitle {
+                SubtitleMaskOverlay(
+                    rect: Binding(
+                        get: { segment.maskRect },
+                        set: { segment.maskRect = $0 }      // 仅写内存，拖拽期间不保存
+                    ),
+                    // 下限跟着**这个分镜自己的**字号：带再矮就盖不住它要挡的那行字了
+                    minBandHeight: SubtitleMaskRect
+                        .minimumHeight(fontRatio: segment.subtitleFontRatio),
+                    onCommit: save                          // 松手才保存一次
+                )
+            }
+        }
+    }
+}
+
 /// SegmentCard 关键性能优化：
 /// - 实现 Equatable，让 SwiftUI 在 reconcile 时跳过未变化的卡片 body 评估
 /// - isChecked / isSelectionMode / sequenceNumber 通过 props 接收，**不直接访问 viewModel**
@@ -705,25 +740,21 @@ struct SegmentCard: View, Equatable {
 
     // Equatable：SwiftUI 看到这俩相等就跳过 body 评估
     // viewModel 引用不参与比较（Bindable 让其变化通过 @State observation 触发，跟 Equatable 跳过逻辑互不冲突）
+    //
+    // ⚠️ **这里只准比较父级每次重建的值类型 props。**
+    // `Segment` 是 class，同一个 ModelContext 里对象唯一 ⇒ `lhs.segment === rhs.segment` 恒成立，
+    // 于是任何 `lhs.segment.<字段> == rhs.segment.<字段>` 都是拿一次读数和它自己比 —— 恒真、不承重。
+    // 它长得极像一道防线，所以曾经骗过我们一次：:724 那条「字号必须参与比较」的注释说漏掉它会让
+    // EquatableView 跳过重绘，实际加不加都一样，字号滑条一直是靠 Observation 刷新的。
+    // 卡片内容的刷新纪律在模型层：body 只准读被跟踪的访问器，带缓存的计算属性必须先读底层字段
+    // （见 Segment.swift `DecodedCache` 约束 #4）。守卫 = SegmentRenderFreshnessTests 的 G1。
+    // 唯一豁免 `.id`：它防的是"这张卡被重绑到另一行"，不是恒真。
     static func == (lhs: SegmentCard, rhs: SegmentCard) -> Bool {
         lhs.segment.id == rhs.segment.id
             && lhs.isChecked == rhs.isChecked
             && lhs.isSelectionMode == rhs.isSelectionMode
             && lhs.isSelected == rhs.isSelected
             && lhs.sequenceNumber == rhs.sequenceNumber
-            && lhs.segment.text == rhs.segment.text
-            && lhs.segment.isVoiceLocked == rhs.segment.isVoiceLocked
-            && lhs.segment.hasHardSubtitle == rhs.segment.hasHardSubtitle
-            && lhs.segment.maskStyleRaw == rhs.segment.maskStyleRaw
-            && lhs.segment.maskX == rhs.segment.maskX
-            && lhs.segment.maskY == rhs.segment.maskY
-            && lhs.segment.maskWidth == rhs.segment.maskWidth
-            && lhs.segment.maskHeight == rhs.segment.maskHeight
-            && lhs.segment.video?.status == rhs.segment.video?.status   // 自建分镜处理态变化需重绘占位卡
-            && lhs.segment.thumbnailPath == rhs.segment.thumbnailPath   // 调开始边界后缩略图换路径需重绘
-            // ⚠️ 字号必须参与比较：卡片里的字号滑条和「所见即所得」字幕预览都只依赖这一个字段，
-            // 漏掉它的话 EquatableView 会判定"没变"而跳过重绘 —— 滑条动了，画面上的字幕纹丝不动。
-            && lhs.segment.subtitleFontRatio == rhs.segment.subtitleFontRatio
     }
 
     var body: some View {
@@ -734,6 +765,12 @@ struct SegmentCard: View, Equatable {
     private var fullCard: some View {
         HStack(alignment: .top, spacing: 0) {
             // 左侧：视频 + 标签 + 时间调整
+            // ⚠️ 200pt 是**写死的**，它和侧栏 220（ContentView.swift:59）、配音变体池 340
+            // （SegmentVariantInspector.swift:107）三处相加，在窗口 minWidth 900（ContentView.swift:137）
+            // 之下只给右面板留下约 100pt（2026-10-01 真机截图量得，卡片宽 ≈300）。
+            // 台词头部行的三档降级就是照这个数选的档；⌘B 收起侧栏能拿回 220pt。
+            // 想缩这个 200 之前先读 `SubtitleSizePreviewOverlay(frameWidth:)` 那一处 —— 所见即所得的
+            // 字幕预览与遮挡层几何是按 200 宽算的，改宽度得连换算一起改。
             leftPanel
                 .frame(width: 200)
                 .background(
@@ -942,17 +979,7 @@ struct SegmentCard: View, Equatable {
                         .help("在原画面与 AI 替换画面之间切换")
                     }
                 }
-                .overlay {
-                    if segment.hasHardSubtitle {
-                        SubtitleMaskOverlay(
-                            rect: Binding(
-                                get: { segment.maskRect },
-                                set: { segment.maskRect = $0 }      // 仅写内存，拖拽期间不保存
-                            ),
-                            onCommit: { try? modelContext.save() }   // 松手才保存一次
-                        )
-                    }
-                }
+                .subtitleMaskHandle(on: segment) { try? modelContext.save() }
                 // 字幕字号所见即所得：示例字幕按全局比例叠在真实画面上，居中于遮挡区、
                 // 跟随遮挡框移动，可与原字幕比大小与位置
                 .overlay {
@@ -961,7 +988,11 @@ struct SegmentCard: View, Equatable {
                             fontRatio: segment.subtitleFontRatio,
                             frameWidth: 200,
                             frameHeight: 200.0 * 16.0 / 9.0,
-                            maskRect: segment.maskRect)
+                            maskRect: segment.maskRect,
+                            burnsBackdrop: SubtitleMaskMode
+                                .from(hasHardSubtitle: segment.hasHardSubtitle,
+                                      maskStyleRaw: segment.maskStyleRaw)
+                                .burnsCaptionBackdrop)
                     }
                 }
 
@@ -981,25 +1012,18 @@ struct SegmentCard: View, Equatable {
                     set: { segment.isVoiceLocked = $0; try? modelContext.save() }
                 ),
                 treatment: Binding(
-                    get: { SubtitleTreatment.from(hasHardSubtitle: segment.hasHardSubtitle, maskStyle: segment.maskStyle) },
-                    set: { newVal in
-                        segment.hasHardSubtitle = newVal.needsMask
-                        if let style = newVal.maskStyle { segment.maskStyle = style }
-                        try? modelContext.save()
-                    }
+                    get: { segment.subtitleTreatment },
+                    set: { segment.subtitleTreatment = $0; try? modelContext.save() }
                 ),
-                onApplyMaskToAll: { applyMaskToAllSegments(of: segment) },
+                onApplyMaskToAll: { Self.applyMaskToAllSegments(of: segment, in: modelContext) },
                 fontRatio: Binding(
                     get: { segment.subtitleFontRatio },
                     set: {
-                        let v = SubtitleFontSize.clamp($0)
-                        segment.subtitleFontRatio = v
-                        // 记住这次的设定，作为之后新建分镜的默认值（老素材/新素材不再割裂）
-                        SubtitleFontSize.rememberPreferred(v)
+                        segment.setSubtitleFontRatio($0)
                         modelContext.safeSave()
                     }
                 ),
-                onApplyFontSizeToAll: { applyFontSizeToAllSegments(of: segment) }
+                onApplyFontSizeToAll: { Self.applyFontSizeToAllSegments(of: segment, in: modelContext) }
             )
 
             // 边界微调 —— hover 或选中时才显示（性能优化：含多 TextField+@FocusState，
@@ -1017,57 +1041,91 @@ struct SegmentCard: View, Equatable {
         .padding(8)
     }
 
+    // MARK: - 右侧台词面板的头部行（窄容器三档降级）
+    //
+    // ⚠️ 这一行四段中文原先**一个 lineLimit 都没有**。素材库窗口里右面板被三处硬宽度挤到
+    // 约 100pt（侧栏 220 + 配音变体池 340 + 卡片左面板 200，见下面 leftPanel 的 `.frame(width: 200)`），
+    // SwiftUI 于是把中文逐字断行、压成"台/词"这样的竖排单字，再被 `rightPanel` 的
+    // `.frame(height: leftHeight).clipped()` 裁掉 —— 看起来就像"台词 16字 手动编辑"撞在一起。
+    // 同类缺陷这文件里已是第三次（:168 与 :339 的注释各记过一次），差别只在这行的可压缩性没声明。
+    //
+    // 三档降级靠 `ViewThatFits` 选档，**关键是前两档必须 fixedSize**：
+    // 只给 `.lineLimit(1)` 的 Text 在水平方向是可变窄的（靠截断接受任何提案宽），
+    // `sizeThatFits` 会永远回报"放得下" ⇒ 第一档永选、后两档成为死码。
+    // 兜底档反过来**不能** fixedSize —— `ViewThatFits` 的语义是"一档都放不下就用最后一个"，
+    // 若最后一个也按理想宽报，它会溢出再被裁掉，丢的是行尾的编辑/重认按钮。
+    private func transcriptHeader(count: Bool, provenance: Bool, compressibleLabels: Bool) -> some View {
+        HStack(spacing: DesignTokens.Spacing.tight) {
+            Image(systemName: "text.quote")
+                .font(DesignTokens.Typography.microRegular)
+                .foregroundStyle(.secondary)
+            transcriptHeaderLabel(Text("台词")
+                .font(DesignTokens.Typography.microEmphasis)
+                .foregroundStyle(.secondary), compressibleLabels)
+            if count {
+                transcriptHeaderLabel(Text("\(segment.text.count)字")
+                    .font(DesignTokens.Typography.microMono)
+                    .foregroundStyle(.tertiary), compressibleLabels)
+            }
+            if provenance {
+                // 台词来源。旧数据那一档显示"旧数据·未记录来源"，用**中性色**：
+                // 它是"没记过"，不是"坏了"——标红会让升级当天的整库看起来全出问题（计划 §6 P2-8）。
+                // 它也是这一行里最长的一段，所以窄窗口下第一个被丢掉。
+                transcriptHeaderLabel(Text(TextProvenance.displayLabel(of: segment.textSource))
+                    .font(DesignTokens.Typography.microMono)
+                    .foregroundStyle(.tertiary), compressibleLabels)
+            }
+            Spacer(minLength: 4)
+            transcriptHeaderButtons
+        }
+    }
+
+    private func transcriptHeaderLabel(_ label: Text, _ compressible: Bool) -> some View {
+        label.lineLimit(1).fixedSize(horizontal: !compressible, vertical: false)
+    }
+
+    @ViewBuilder private var transcriptHeaderButtons: some View {
+        if isEditingText {
+            Button { isEditingText = false } label: {
+                Image(systemName: "xmark.circle.fill").font(DesignTokens.Typography.label)
+            }
+            .buttonStyle(.plain).foregroundStyle(.secondary).accessibilityLabel("取消编辑").help("取消")
+            Button { saveText() } label: {
+                Image(systemName: "checkmark.circle.fill").font(DesignTokens.Typography.label)
+            }
+            .buttonStyle(.plain).foregroundStyle(.green).accessibilityLabel("保存台词").help("保存（⌘↩）")
+        } else if isHovering || isSelected {
+            Button {
+                draftText = segment.text
+                isEditingText = true
+                textEditorFocused = true
+            } label: {
+                Image(systemName: "square.and.pencil").font(DesignTokens.Typography.caption)
+            }
+            .buttonStyle(.plain).foregroundStyle(.secondary).accessibilityLabel("编辑台词").help("编辑台词")
+            Button {
+                Task { await viewModel.reextractTranscript(segment, context: modelContext) }
+            } label: {
+                if viewModel.busyASRSegmentIDs.contains(segment.id) {
+                    ProgressView().controlSize(.mini)
+                } else {
+                    Image(systemName: "arrow.clockwise").font(DesignTokens.Typography.caption)
+                }
+            }
+            .buttonStyle(.borderless)
+            .accessibilityLabel("重新识别台词")
+            .disabled(viewModel.busyASRSegmentIDs.contains(segment.id))
+            .help("重认这一段的台词：用哪台引擎由「设置 › 台词重听引擎」与决策表定；没认到字时原台词一字不动")
+        }
+    }
+
     // MARK: - 右侧台词面板
     private var rightPanel: some View {
         VStack(alignment: .leading, spacing: 0) {
-            HStack(spacing: DesignTokens.Spacing.tight) {
-                Image(systemName: "text.quote")
-                    .font(DesignTokens.Typography.microRegular)
-                    .foregroundStyle(.secondary)
-                Text("台词")
-                    .font(DesignTokens.Typography.microEmphasis)
-                    .foregroundStyle(.secondary)
-                Text("\(segment.text.count)字")
-                    .font(DesignTokens.Typography.microMono)
-                    .foregroundStyle(.tertiary)
-                // 台词来源。旧数据那一档显示"旧数据·未记录来源"，用**中性色**：
-                // 它是"没记过"，不是"坏了"——标红会让升级当天的整库看起来全出问题（计划 §6 P2-8）。
-                Text(TextProvenance.displayLabel(of: segment.textSource))
-                    .font(DesignTokens.Typography.microMono)
-                    .foregroundStyle(.tertiary)
-                Spacer()
-                if isEditingText {
-                    Button { isEditingText = false } label: {
-                        Image(systemName: "xmark.circle.fill").font(DesignTokens.Typography.label)
-                    }
-                    .buttonStyle(.plain).foregroundStyle(.secondary).accessibilityLabel("取消编辑").help("取消")
-                    Button { saveText() } label: {
-                        Image(systemName: "checkmark.circle.fill").font(DesignTokens.Typography.label)
-                    }
-                    .buttonStyle(.plain).foregroundStyle(.green).accessibilityLabel("保存台词").help("保存（⌘↩）")
-                } else if isHovering || isSelected {
-                    Button {
-                        draftText = segment.text
-                        isEditingText = true
-                        textEditorFocused = true
-                    } label: {
-                        Image(systemName: "square.and.pencil").font(DesignTokens.Typography.caption)
-                    }
-                    .buttonStyle(.plain).foregroundStyle(.secondary).accessibilityLabel("编辑台词").help("编辑台词")
-                    Button {
-                        Task { await viewModel.reextractTranscript(segment, context: modelContext) }
-                    } label: {
-                        if viewModel.busyASRSegmentIDs.contains(segment.id) {
-                            ProgressView().controlSize(.mini)
-                        } else {
-                            Image(systemName: "arrow.clockwise").font(DesignTokens.Typography.caption)
-                        }
-                    }
-                    .buttonStyle(.borderless)
-                    .accessibilityLabel("重新识别台词")
-                    .disabled(viewModel.busyASRSegmentIDs.contains(segment.id))
-                    .help("重认这一段的台词：用哪台引擎由「设置 › 台词重听引擎」与决策表定；没认到字时原台词一字不动")
-                }
+            ViewThatFits(in: .horizontal) {
+                transcriptHeader(count: true, provenance: true, compressibleLabels: false)
+                transcriptHeader(count: true, provenance: false, compressibleLabels: false)
+                transcriptHeader(count: false, provenance: false, compressibleLabels: true)
             }
             .padding(.horizontal, 8)
             .padding(.top, 8)
@@ -1134,7 +1192,10 @@ struct SegmentCard: View, Equatable {
 
     /// 把当前分镜的字幕字号应用到**同一视频**的所有分镜（不跨视频）。
     /// 与「遮挡区应用到所有分镜」同一套模式：覆盖前存快照、完成后给可撤销的 Toast。
-    private func applyFontSizeToAllSegments(of source: Segment) {
+    ///
+    /// 做成 `static` 是为了让网格卡与列表行共用同一份批量逻辑 —— 这两个入口改的是同一批字段，
+    /// 各写一份就会出现"卡上撤销得回来、行上撤销不回来"这类分叉。
+    fileprivate static func applyFontSizeToAllSegments(of source: Segment, in context: ModelContext) {
         guard let video = source.video else { return }
         let ratio = SubtitleFontSize.clamp(source.subtitleFontRatio)
         let targets = video.segments.filter { $0.id != source.id }
@@ -1144,7 +1205,7 @@ struct SegmentCard: View, Equatable {
         }
         let snapshot: [(seg: Segment, ratio: Double)] = targets.map { ($0, $0.subtitleFontRatio) }
         for seg in targets { seg.subtitleFontRatio = ratio }
-        modelContext.safeSave()
+        context.safeSave()
 
         PendingDeletionCenter.shared.scheduleUndoOnly(
             message: "已把字幕字号应用到本视频 \(targets.count) 个分镜",
@@ -1157,7 +1218,7 @@ struct SegmentCard: View, Equatable {
                 item.seg.subtitleFontRatio = item.ratio
                 restored += 1
             }
-            modelContext.safeSave()
+            context.safeSave()
             ToastCenter.shared.show(restored == snapshot.count
                                     ? "已还原字幕字号"
                                     : "已还原 \(restored) 个分镜的字幕字号（其余已被删除）",
@@ -1170,7 +1231,8 @@ struct SegmentCard: View, Equatable {
     /// 这是个**批量覆盖**操作：会盖掉其他分镜可能已经逐个微调好的遮挡框。
     /// 以前点完界面毫无变化（当前卡片本来就是这个值），用户根本不知道有没有生效，
     /// 也没有后悔药。现在：① 覆盖前先存快照；② 完成后 Toast 说明影响范围；③ 提供撤销。
-    private func applyMaskToAllSegments(of source: Segment) {
+    /// ⚠️ `static` 的理由同上：网格卡与列表行共用这一份批量逻辑与同一份撤销账。
+    fileprivate static func applyMaskToAllSegments(of source: Segment, in context: ModelContext) {
         guard let video = source.video else { return }
         let rect = source.maskRect
         let style = source.maskStyle
@@ -1191,7 +1253,7 @@ struct SegmentCard: View, Equatable {
             seg.maskRect = rect
             seg.maskStyle = style
         }
-        try? modelContext.save()
+        try? context.save()
 
         PendingDeletionCenter.shared.scheduleUndoOnly(
             message: "已把遮挡设置应用到 \(targets.count) 个分镜",
@@ -1210,7 +1272,7 @@ struct SegmentCard: View, Equatable {
                 item.seg.maskStyle = item.style
                 restored += 1
             }
-            try? modelContext.save()
+            try? context.save()
             ToastCenter.shared.show(restored == snapshot.count
                                     ? "已还原遮挡设置"
                                     : "已还原 \(restored) 个分镜的遮挡设置（其余已被删除）",
@@ -1231,6 +1293,9 @@ private struct SubtitleSizePreviewOverlay: View {
     let frameWidth: CGFloat
     let frameHeight: CGFloat
     let maskRect: SubtitleMaskRect
+    /// 示例字幕要不要自带底衬 —— 由 `SubtitleMaskMode.burnsCaptionBackdrop` 给，
+    /// 与导出侧读同一条规则（`solid` 已经铺了一条实色带，再叠底衬就是糊上加糊）。
+    let burnsBackdrop: Bool
 
     var body: some View {
         let fontPt = frameWidth * SubtitleFontSize.clamp(fontRatio)
@@ -1242,8 +1307,11 @@ private struct SubtitleSizePreviewOverlay: View {
             .foregroundStyle(.white)
             .padding(.horizontal, fontPt * 0.35)
             .padding(.vertical, fontPt * 0.18)
-            .background(Color.black.opacity(0.5),
-                        in: RoundedRectangle(cornerRadius: fontPt * 0.25))
+            .background {
+                if burnsBackdrop {
+                    RoundedRectangle(cornerRadius: fontPt * 0.25).fill(Color.black.opacity(0.5))
+                }
+            }
             .shadow(color: .black.opacity(0.7), radius: 2, y: 1)
             .position(x: cx, y: cy)   // 落在遮挡区正中
             .allowsHitTesting(false)
@@ -1421,7 +1489,67 @@ struct SegmentInlinePlayer: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(Color.black)   // 横屏视频 fit 进 9:16 的留边填黑（否则透出卡片半透明底=「透明边」）
+        // 遮挡效果预览。挂在**外层 Group** 上而不是里面的 Image 上：Image 经 `.aspectRatio(.fit)`
+        // 之后只是中间那条带，而 `maskRect` 的归一化空间是**已 pad 的 9:16 画布**
+        // （ffmpeg 侧同序：先 scale+pad 成画布，再套 mask）。
+        .overlay { maskTreatmentPreview }
         .clipped()
+    }
+
+    /// 静止帧上的遮挡效果预览。
+    ///
+    /// ⚠️ 值全部来自 `SubtitleMaskMode.renderSpec` —— 与 `DubSegmentGraph` 读的是**同一张表**，
+    /// 所以"屏幕上看到的"与"导出来的"由构造对齐，不靠人记得两边同改。
+    /// 模式也走 `SubtitleMaskMode.from(...)` 同一个表达式（导出侧 `DubExportService` 用的是它），
+    /// 于是存量 `maskStyleRaw == "dim"` 的行这里会画压暗、与导出一致，哪怕卡片上的胶囊
+    /// 因为 `SubtitleTreatment` 只有三档而把它显示成「模糊虚化」。
+    ///
+    /// 只挂在 `thumbnailView` 上是有意的：播放中播的是活动画面，SwiftUI 取不到 `AVPlayerLayer`
+    /// 的帧，糊不了 ⇒ 播放态退回只有描边手柄。**静止态才有效果预览。**
+    @ViewBuilder private var maskTreatmentPreview: some View {
+        let mode = SubtitleMaskMode.from(hasHardSubtitle: segment.hasHardSubtitle,
+                                         maskStyleRaw: segment.maskStyleRaw)
+        if mode != .none,
+           let thumbPath = segment.effectivePicture.thumbnailPath,
+           let image = ThumbnailCache.shared.image(for: thumbPath) {
+            GeometryReader { geo in
+                let px = segment.maskRect.pixelRect(width: geo.size.width, height: geo.size.height)
+                switch mode.renderSpec {
+                case .passthrough:
+                    EmptyView()
+                case .blur:
+                    // 与 ffmpeg 的 crop=w:h:x:y → boxblur → overlay=x:y 同形：先平移再开窗裁，
+                    // 最后把窗口搬回原位。半径按画布宽折算（表里存的是导出像素）。
+                    Image(nsImage: image)
+                        .resizable()
+                        .aspectRatio(contentMode: .fit)
+                        .frame(width: geo.size.width, height: geo.size.height, alignment: .topLeading)
+                        .blur(radius: mode.previewBlurRadius(displayWidth: geo.size.width,
+                                                             displayCropHeight: px.height))
+                        .offset(x: -px.x, y: -px.y)
+                        .frame(width: px.width, height: px.height, alignment: .topLeading)
+                        .clipped()
+                        .offset(x: px.x, y: px.y)
+                case .fill(let hex, let alpha):
+                    Rectangle()
+                        .fill(maskFillColor(hex: hex, alpha: alpha))
+                        .frame(width: px.width, height: px.height)
+                        .offset(x: px.x, y: px.y)
+                }
+            }
+        }
+    }
+
+    /// 表里的 hex 是 ffmpeg `drawbox` 的取值口径，这里翻成 SwiftUI 的 Color。
+    /// 解析失败退回黑底同 alpha —— 但那是**看得见**的错，不会静默画成另一种颜色。
+    private func maskFillColor(hex: String, alpha: Double) -> Color {
+        guard let packed = UInt32(hex, radix: 16), hex.count == 6 else {
+            return Color.black.opacity(alpha)
+        }
+        return Color(red: Double((packed >> 16) & 0xFF) / 255.0,
+                     green: Double((packed >> 8) & 0xFF) / 255.0,
+                     blue: Double(packed & 0xFF) / 255.0,
+                     opacity: alpha)
     }
 
     private func play(from requestedStart: Double, to requestedEnd: Double) {
@@ -1563,8 +1691,12 @@ struct SegmentRow: View, Equatable {
     let isSelected: Bool
     let sequenceNumber: Int
     @Bindable var viewModel: SegmentLibraryViewModel
+    @Environment(\.modelContext) private var modelContext
     @State private var isHovering = false
 
+    // ⚠️ 只比值类型 props —— 理由同 SegmentCard.== 上面那段：`segment` 是 class，
+    // `lhs.segment.<字段> == rhs.segment.<字段>` 恒真、不承重，写在这里只会让人以为行内容已被守住。
+    // 行内标签/质量分的刷新走 Observation，纪律见 Segment.swift `DecodedCache` 约束 #4。
     static func == (lhs: SegmentRow, rhs: SegmentRow) -> Bool {
         lhs.segment.id == rhs.segment.id
             && lhs.isChecked == rhs.isChecked
@@ -1584,7 +1716,11 @@ struct SegmentRow: View, Equatable {
             }
 
             SegmentInlinePlayer(segment: segment, viewModel: viewModel)
-                .frame(width: 160)
+                // ⚠️ 高度必须写死成 9:16（与卡片同一规则）。只给宽度的话播放器会按缩略图自身比例长，
+                // 横屏素材上行内会矮一截 ⇒ `maskRect` 的归一化空间与导出（pad 后的 9:16）分叉，
+                // 于是"行里拖到刚好盖住、导出却没盖住"。
+                .frame(width: 160, height: 160.0 * 16.0 / 9.0)
+                .subtitleMaskHandle(on: segment) { try? modelContext.save() }
                 .overlay(alignment: .topLeading) {
                     if sequenceNumber > 0 {
                         Text("#\(sequenceNumber)")
@@ -1599,15 +1735,22 @@ struct SegmentRow: View, Equatable {
                 }
 
             VStack(alignment: .leading, spacing: 6) {
-                // 标签行
-                HStack(spacing: DesignTokens.Spacing.tight) {
+                // 标签行 —— 必须换行、不许压扁。
+                // 这一行原先是裸 HStack：列表列实测 339pt（侧栏右沿 220pt、列表分界 559pt 两处纯色边界量得），
+                // 减去 `.padding(10)`×2 + 播放器 `.frame(width: 160)` + `Spacing.normal` 12 ⇒ 文字列只剩 147pt，
+                // 而 3 颗语义标签 + 位置 + 质量分按理想宽加齐 ≈250pt。HStack 装不下时压的是**柔性 Text**
+                // （不是 Spacer），中文被压到一字一行 ⇒ 看起来像"标签被遮挡"。
+                // 同一个形状在 `ImportView.swift` 的标签区（注释里记着"原本是 HStack…竖排单字"）和网格卡
+                // 的 `FlowLayout` 各修过一次，这是第三处。修法照抄已验证的那份配方。
+                FlowLayout(spacing: DesignTokens.Spacing.tight) {
                     ForEach(segment.semanticTypes.prefix(3), id: \.self) { type in
                         SemanticTypeTag(type: type)
                     }
                     PositionTypeTag(type: segment.positionType)
-                    Spacer()
                     QualityBadge(score: segment.qualityScore)
                 }
+
+                SegmentDubCompactControls(segment: segment)
 
                 Text(segment.text)
                     .font(DesignTokens.Typography.caption)
@@ -1620,6 +1763,12 @@ struct SegmentRow: View, Equatable {
                         .transition(.opacity)
                 }
             }
+            // ⚠️ 这一行是"整行铺满列表列"的**唯一**承担者，别当死码删掉。
+            // 旧版靠标签行里那颗 `Spacer()` 顺带把行撑满（它同时兼任"把质量分推到最右"），
+            // 我把标签行换成 FlowLayout 时删了那颗 Spacer ⇒ 行退化成按内容收宽，
+            // 只有选中时（出现宽的边界微调行）才铺满 —— 真机读数："选中才会铺满"。
+            // 现在把"铺满"写成显式声明，不再让 Spacer 兼职。
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
         .padding(10)
         .background {
@@ -1657,6 +1806,90 @@ struct SegmentRow: View, Equatable {
     }
 }
 
+// MARK: - 列表行的紧凑配音入口
+
+/// 列表行里的两颗胶囊：字幕处理（Menu 三档）+ 字幕字号（弹层）。
+///
+/// ⚠️ 为什么不直接把网格卡那块 `SegmentDubControls` 搬进来：行内文字列实测只有 147pt
+/// （列表列 339pt − `.padding(10)`×2 − 播放器 160pt − `Spacing.normal` 12），
+/// 而三颗胶囊按理想宽需要 ≈184pt ⇒ 搬进来就会在行内复现"中文被压成竖排"那同一类塌陷。
+/// 这里改成单颗胶囊 + Menu：宽度可控，且与"行=快扫、卡=精修"的分工一致。
+///
+/// 写盘走的是与卡片**同一套**模型桥接（`Segment.subtitleTreatment` / `setSubtitleFontRatio`）
+/// 与同一对批量函数（`SegmentCard.apply*ToAllSegments`），所以两处改的是同一份真相、
+/// 撤销账也只有一份。
+private struct SegmentDubCompactControls: View {
+    let segment: Segment
+    @Environment(\.modelContext) private var modelContext
+    @State private var showFontPopover = false
+
+    private var treatment: SubtitleTreatment { segment.subtitleTreatment }
+    private var isLocked: Bool { segment.isVoiceLocked }
+
+    var body: some View {
+        // 与标签行同一条纪律：用 FlowLayout 换行，不用裸 HStack。
+        // 两颗胶囊按理想宽 ≈153pt > 文字列 147pt，裸 HStack 会压字或溢出到右侧面板上。
+        FlowLayout(spacing: DesignTokens.Spacing.tight) {
+            Menu {
+                ForEach(SubtitleTreatment.allCases) { t in
+                    Button {
+                        segment.subtitleTreatment = t
+                        try? modelContext.save()
+                    } label: {
+                        if t == treatment {
+                            Label(t.displayName, systemImage: "checkmark")
+                        } else {
+                            Text(t.displayName)
+                        }
+                    }
+                }
+                if treatment.needsMask {
+                    Divider()
+                    Button("遮挡区应用到所有分镜") {
+                        SegmentCard.applyMaskToAllSegments(of: segment, in: modelContext)
+                    }
+                }
+            } label: {
+                pill("字幕处理：\(treatment.displayName)")
+            }
+            .menuStyle(.borderlessButton)
+            .fixedSize()
+            .disabled(isLocked)
+            .help(isLocked
+                  ? "这一档已「保留原声」，不参与改写/配音，字幕处理对它无意义；要改请先在网格卡取消保留原声。"
+                  : "在哪一步生效：所有走配音渲染的导出（方案配音导出、多选→批量导出）。普通混剪导出、单分镜批量导出不处理字幕区。")
+
+            Button { showFontPopover = true } label: {
+                pill(String(format: "字号 %.1f%%", SubtitleFontSize.clamp(segment.subtitleFontRatio) * 100))
+            }
+            .buttonStyle(.plain)
+            .fixedSize()
+            .disabled(isLocked)
+            .popover(isPresented: $showFontPopover, arrowEdge: .bottom) {
+                SubtitleFontSizePopover(
+                    fontRatio: Binding(
+                        get: { segment.subtitleFontRatio },
+                        set: { segment.setSubtitleFontRatio($0); modelContext.safeSave() }
+                    ),
+                    isPresented: $showFontPopover,
+                    onApplyToAll: {
+                        SegmentCard.applyFontSizeToAllSegments(of: segment, in: modelContext)
+                    })
+            }
+        }
+    }
+
+    private func pill(_ text: String) -> some View {
+        Text(text)
+            .font(DesignTokens.Typography.microRegular)
+            .lineLimit(1)
+            .foregroundStyle(.secondary)
+            .padding(.horizontal, 7)
+            .padding(.vertical, 3)
+            .background(.quaternary, in: RoundedRectangle(cornerRadius: 5, style: .continuous))
+    }
+}
+
 // MARK: - 质量分徽章
 
 struct QualityBadge: View {
@@ -1670,6 +1903,8 @@ struct QualityBadge: View {
                 .font(.system(size: 10, weight: .semibold, design: .rounded))
         }
         .foregroundStyle(badgeColor)
+        // 与 SemanticTypeTag 同一条纪律：窄容器里宁可截断，不许压成竖排（见那里的 ⚠️ 注释）
+        .lineLimit(1)
         .padding(.horizontal, 5)
         .padding(.vertical, 2)
         .background(badgeColor.opacity(0.1))
@@ -1692,6 +1927,10 @@ struct SemanticTypeTag: View {
     var body: some View {
         Text(type.rawValue)
             .font(DesignTokens.Typography.micro)
+            // ⚠️ 标签自己声明"绝不换行"：宿主给窄了就截断，而不是压成一字一行的竖排。
+            // 光靠宿主用 FlowLayout 守不住 —— 这三个标签组件被网格卡/列表行/抽屉/方案详情共用，
+            // 少一处声明就复发一次（列表行就是第三处）。
+            .lineLimit(1)
             .padding(.horizontal, 7)
             .padding(.vertical, 3)
             .background(Self.color(for: type).opacity(0.12))
@@ -1725,6 +1964,8 @@ struct PositionTypeTag: View {
         Text(type.rawValue)
             .font(DesignTokens.Typography.micro)
             .foregroundStyle(.secondary)
+            // 同 SemanticTypeTag：窄容器里宁可截断，不许压成竖排
+            .lineLimit(1)
             .padding(.horizontal, 5)
             .padding(.vertical, 2)
             .background(.secondary.opacity(DesignTokens.Palette.Alpha.subtle))

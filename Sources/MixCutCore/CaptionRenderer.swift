@@ -19,6 +19,35 @@ public struct CaptionImage: Equatable, Sendable {
 public enum CaptionRenderer {
     public enum RenderError: Error { case contextCreationFailed, pngEncodingFailed, unsupportedPlatform }
 
+    // MARK: - 单行字幕块的几何（遮挡带最小高度读这里，见 `SubtitleMaskRect.minimumHeight`）
+
+    /// 垂直留白的绝对下限：字号再小也留这么多，保证贴字底衬胶囊上下不被裁切。
+    static let minVerticalPadding: CGFloat = 18
+    /// 垂直留白随字号放大的比例。
+    static let verticalPaddingFactor: CGFloat = 0.20
+
+    static func verticalPadding(fontSize: CGFloat) -> CGFloat {
+        max(minVerticalPadding, fontSize * verticalPaddingFactor)
+    }
+
+    /// 苹方半粗**一行**文字的行高系数。
+    ///
+    /// 1.40 是**实测反推**出来的，不是从字体文档抄的（2026-10-01，本机）：
+    /// 用 `render()` 量 fs=32 ⇒ 整块 81px、59.4 ⇒ 119px、72 ⇒ 136px、91.8 ⇒ 165px，
+    /// 各减去 `2 × verticalPadding` 后除以字号，落在 1.389~1.406（`ceil` 的抖动），取上限 1.40。
+    ///
+    /// ⚠️ 取上限是有方向的：这个系数只用来算**遮挡带的最小高度**，偏高 1px 只会让带略高一点，
+    /// 偏低则会让带盖不住字幕 —— 而"盖不住"正是这条改动要消灭的东西。
+    /// 它不参与 PNG 渲染（那边量的是真实 bounds），改字体或留白常量时由
+    /// `SubtitleMaskRectTests.captionFloorTracksRenderedCaption` 把关系钉住。
+    static let singleLineHeightFactor: Double = 1.40
+
+    /// **一行**台词在画面上占的整块高度（含上下留白），单位与 fontSize 一致。
+    /// 不做真实换行 ⇒ 这是"一行字幕"的高度；台词折行时实际比它高。
+    static func singleLineBlockHeight(fontSize: CGFloat) -> CGFloat {
+        ceil(fontSize * CGFloat(singleLineHeightFactor)) + verticalPadding(fontSize: fontSize) * 2
+    }
+
     /// 烧录字幕预处理：把中英文标点替换为空格并合并多余空白（短视频字幕风格，
     /// 既符合观感也利于换行）。全角/半角标点、全角空格统一处理。
     public static func stripPunctuation(_ text: String) -> String {
@@ -68,7 +97,7 @@ public enum CaptionRenderer {
         #if canImport(AppKit)
         let sidePadding: CGFloat = 28
         // 垂直留白随字号放大，保证贴字底衬胶囊上下不被裁切
-        let vPadding: CGFloat = max(18, fontSize * 0.20)
+        let vPadding = verticalPadding(fontSize: fontSize)
         let maxTextWidth = max(1, CGFloat(canvasWidth) - sidePadding * 2)
 
         let font = NSFont(name: "PingFangSC-Semibold", size: fontSize)
