@@ -20,7 +20,7 @@
 - 新增 App target 文件必须登记进 `MixCut.xcodeproj/project.pbxproj`（用 ruby `xcodeproj` gem，见 Task 4 的登记脚本）。
 - 编译一律 `xcodebuild -project MixCut.xcodeproj -scheme MixCut -configuration Debug build`；纯逻辑用 `swift test`。
 - 编译成功后自动 `pkill -x MixCut; sleep 1; open <DerivedData>/Build/Products/Debug/MixCut.app` 重启应用；UI 改动必须截图自查。
-- DerivedData: `/Users/menggang/Library/Developer/Xcode/DerivedData/MixCut-byytuggmhodpumcmwnwrtzwkmavr/`
+- DerivedData: `<DerivedData>/`
 
 ---
 
@@ -69,7 +69,7 @@ struct GlobalBGMMixGraphTests {
 
 - [ ] **Step 2: 跑测试确认失败**
 
-Run: `cd /Users/menggang/www/Mixed_cut && swift test --filter GlobalBGMMixGraphTests`
+Run: `cd <仓库根> && swift test --filter GlobalBGMMixGraphTests`
 Expected: 编译失败 "cannot find 'GlobalBGMMixGraphBuilder'"
 
 - [ ] **Step 3: 写实现**
@@ -409,7 +409,7 @@ final class BGMLibraryStore {
 - [ ] **Step 3: 登记新文件进 xcodeproj 并编译**
 
 ```bash
-cd /Users/menggang/www/Mixed_cut && ruby -e '
+cd <仓库根> && ruby -e '
 require "xcodeproj"
 proj = Xcodeproj::Project.open("MixCut.xcodeproj")
 target = proj.targets.find { |t| t.name == "MixCut" }
@@ -687,7 +687,7 @@ struct BGMLibraryView: View {
 - [ ] **Step 3: 登记 + 编译 + 重启 + 截图自查**
 
 ```bash
-cd /Users/menggang/www/Mixed_cut && ruby -e '
+cd <仓库根> && ruby -e '
 require "xcodeproj"
 proj = Xcodeproj::Project.open("MixCut.xcodeproj")
 target = proj.targets.find { |t| t.name == "MixCut" }
@@ -701,19 +701,19 @@ proj.save
 '
 xcodebuild -project MixCut.xcodeproj -scheme MixCut -configuration Debug build 2>&1 | tail -3
 pkill -x MixCut; sleep 1
-open /Users/menggang/Library/Developer/Xcode/DerivedData/MixCut-byytuggmhodpumcmwnwrtzwkmavr/Build/Products/Debug/MixCut.app
+open <DerivedData>/Build/Products/Debug/SunCut.app
 ```
 
 截图验证（生成一条测试音频放进库目录模拟已有数据，检查列表/时长/空态）：
 
 ```bash
 # 造 8 秒正弦波测试 mp3 直接放入 BGM 目录（模拟已上传）
-FF=$(ls /Users/menggang/Library/Developer/Xcode/DerivedData/MixCut-byytuggmhodpumcmwnwrtzwkmavr/Build/Products/Debug/MixCut.app/Contents/Resources/bin/ffmpeg 2>/dev/null || which ffmpeg)
+FF=$(ls <DerivedData>/Build/Products/Debug/SunCut.app/Contents/Resources/bin/ffmpeg 2>/dev/null || which ffmpeg)
 "$FF" -y -f lavfi -i "sine=frequency=440:duration=8" -c:a libmp3lame \
   "$HOME/Library/Application Support/MixCut/BGM/测试BGM.mp3"
 sleep 2
 WID=$(osascript -e 'tell app "System Events" to get id of window 1 of process "MixCut"' 2>/dev/null)
-screencapture -l "$WID" /private/tmp/claude-501/-Users-menggang-www-Mixed-cut/26a8a2ee-ec9d-48f0-9748-efe9d50ef8c6/scratchpad/bgm_library.png
+screencapture -l "$WID" .scratch/bgm_library.png
 ```
 
 用 Read 工具查看截图，确认：侧边栏出现「BGM 库」、列表显示「测试BGM.mp3 / 0:08」、上传按钮在位。不对就修。
@@ -1071,10 +1071,10 @@ Task 体内、`isExporting = true` 之后加 `exportFailures = []`（顺带修�
 ```bash
 xcodebuild -project MixCut.xcodeproj -scheme MixCut -configuration Debug build 2>&1 | tail -3
 pkill -x MixCut; sleep 1
-open /Users/menggang/Library/Developer/Xcode/DerivedData/MixCut-byytuggmhodpumcmwnwrtzwkmavr/Build/Products/Debug/MixCut.app
+open <DerivedData>/Build/Products/Debug/SunCut.app
 sleep 2
 WID=$(osascript -e 'tell app "System Events" to get id of window 1 of process "MixCut"' 2>/dev/null)
-screencapture -l "$WID" /private/tmp/claude-501/-Users-menggang-www-Mixed-cut/26a8a2ee-ec9d-48f0-9748-efe9d50ef8c6/scratchpad/export_bgm.png
+screencapture -l "$WID" .scratch/export_bgm.png
 ```
 
 用 Read 查看截图确认：导出设置出现「背景音乐」下拉、默认「保留原 BGM」。（下拉选中态与滑杆需要点击交互，列入用户必测清单。）
@@ -1105,12 +1105,12 @@ swift test 2>&1 | tail -5        # MixCutCore 全绿
 - [ ] **Step 3: bump 版本 + Release universal + DMG（守双系统铁律）**
 
 ```bash
-cd /Users/menggang/www/Mixed_cut
+cd <仓库根>
 echo "0.9.2" > VERSION
 # pbxproj 两处 MARKETING_VERSION 同步改为 0.9.2（sed 或 Edit）
 xcodebuild -project MixCut.xcodeproj -scheme MixCut -configuration Release \
   -destination 'generic/platform=macOS' ARCHS="arm64 x86_64" ONLY_ACTIVE_ARCH=NO build 2>&1 | tail -3
-APP=/Users/menggang/Library/Developer/Xcode/DerivedData/MixCut-byytuggmhodpumcmwnwrtzwkmavr/Build/Products/Release/MixCut.app
+APP=<DerivedData>/Build/Products/Release/SunCut.app
 lipo -archs "$APP/Contents/MacOS/MixCut"        # 必须 x86_64 arm64
 V=$(cat VERSION)
 TEMP=$(mktemp -d) && cp -R "$APP" "$TEMP/" && ln -s /Applications "$TEMP/Applications"

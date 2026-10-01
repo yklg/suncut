@@ -708,7 +708,7 @@ Expected: 全绿（含 P1/P2 + 本期 AlignmentPlan/QwenVoice/DubStaleness 三�
 
 - [ ] **Step 8: 启动验证 SwiftData 迁移无崩**
 
-Run: `pkill -x MixCut; sleep 1; open ~/Library/Developer/Xcode/DerivedData/MixCut-byytuggmhodpumcmwnwrtzwkmavr/Build/Products/Debug/MixCut.app; sleep 4; pgrep -x MixCut >/dev/null && echo "存活：迁移成功" || echo "崩溃：检查 schema"`
+Run: `pkill -x MixCut; sleep 1; open <DerivedData>/Build/Products/Debug/MixCut.app; sleep 4; pgrep -x MixCut >/dev/null && echo "存活：迁移成功" || echo "崩溃：检查 schema"`
 Expected: `存活：迁移成功`（新增带默认值字段是加性迁移，旧库应平滑升级）
 
 - [ ] **Step 9: Commit**（⚠️ 跳过，不 commit）

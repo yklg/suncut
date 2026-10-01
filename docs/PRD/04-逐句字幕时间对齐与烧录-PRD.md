@@ -23,7 +23,7 @@
 
 入口：分镜素材库 → 某条分镜的**变体检视器（SegmentVariantInspector）** → 该变体若已生成配音，出现「**逐句字幕**」按钮（图标 `captions.bubble`）→ 点开下图弹窗。
 
-![逐句字幕时间编辑器](https://raw.githubusercontent.com/RoshanGH/mixed_cut/main/docs/screenshots/caption-editor-annotated.png)
+![逐句字幕时间编辑器](../screenshots/caption-editor-annotated.png)
 
 ### 编号 → 控件 → 功能
 

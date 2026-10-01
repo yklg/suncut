@@ -16,7 +16,7 @@
 
 1. **不自动 git 提交**：各 Task 末尾检查点是**编译/测试验证**，不含 git 提交；提交时机由用户定。在 feature 分支上做（当前分支 `feature/shot-level-prompt-edit`，可继续或新开）。
 2. **自己先测**：改 UI 后必须 编译 → `pkill -x MixCut; open <app>` → 截图/自测；不可自测的列人工验收项。
-3. **MixCutCore 测试**：`cd /Users/menggang/www/Mixed_cut && swift test --filter <Suite>`（秒级，无需 Xcode）。
+3. **MixCutCore 测试**：`cd <仓库根> && swift test --filter <Suite>`（秒级，无需 Xcode）。
 4. **app 编译**：`xcodebuild -project MixCut.xcodeproj -scheme MixCut -configuration Debug build`。
 5. **Schema 变更**：新增两个带默认值的布尔，additive；库当前已清空，风险为零；仍建议改前 `cp ~/Library/Application\ Support/MixCut/MixCut.store{,.bak}`（如库不存在则跳过）。
 6. **勿破坏既有功能**：变体池的生成/试听/重生成/删除/锁定提示；方案详情单槽下拉（`selectedSegmentDubId`）；单分镜批量导出命名。

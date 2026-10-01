@@ -94,7 +94,7 @@
 
 ## Phase 1：纯算法核心（MixCutCore / Swift Testing / TDD）
 
-> 无外部依赖，可 `swift test` 秒级验证，先行完成。运行：`cd /Users/menggang/www/Mixed_cut && swift test --filter <TestType>`
+> 无外部依赖，可 `swift test` 秒级验证，先行完成。运行：`cd <仓库根> && swift test --filter <TestType>`
 
 ### Task 1: ShotSegmentationEngine（分镜头切分）
 

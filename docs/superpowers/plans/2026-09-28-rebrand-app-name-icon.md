@@ -117,3 +117,31 @@ brew 那条请先核实来源再保留。
 - `scripts/test_project_guards.sh` —— 「旧品牌字样整棵源码树归零」的形状可直接搬来当 Suncut 的收口判据。
   注意它带 `PBX_PATH` 覆盖口，专门用来在「改动前」的快照上自证会红（防恒绿）。
 
+## 9. 落地记录与勘误（2026-10-01 按实测回写；本文与现状不符处以本节为准）
+
+**已落地，但与本文原写法不同**
+
+- 阶段 2/3 的真源是 `Sources/MixCutCore/Brand.swift`，**手写而非生成物** —— §1 设想的「生成器产出 `Brand.swift`」
+  没走通，因为 §8A 那颗守卫把生成器无条件拦死了。值已翻：`shortName=suncut`、`dataDirectoryName=Suncut`、
+  `storeFileName=Suncut.store`、`displayName=SunCut`、`abbrev=SC`；旧路径另立 `legacy*` 一组，只给一次性迁移读。
+- **bundle id 实录 `com.suncut.app`**，不是 §4 的占位 `com.local.suncut`。pbxproj 两处
+  `PRODUCT_BUNDLE_IDENTIFIER` 与 `PRODUCT_NAME = SunCut` 已一致。
+- 阶段 4 图标：AppIcon 10 张已换。**本文漏了一处** —— `docs/screenshots/logo.png` 是 README 顶部图，
+  换图标时它仍是旧「MC」立体标，2026-10-01 才从新 AppIcon 重生成 256×256。
+
+**阶段 1 未做，且这是有意保留的真名（别当残留清掉）**
+
+`Package.swift` 仍 `name: "MixCut"`、target 仍 `MixCutCore`；工程文件仍叫 `MixCut.xcodeproj`，
+target `name = MixCut` / `productName = MixCut`，只有 `productReference` 是 `SunCut.app`（`project.pbxproj:748-763`）。
+⇒ 文档里凡出现 `MixCutCore`、`open MixCut.xcodeproj`、`-scheme MixCut` 都是**当前真名**，
+改成 Suncut 就是文档说假话（README 已就此写了一句提醒）。这正是 §8B 估的「36 处手工路径改写」那一档成本，没付。
+
+**判据现状（一条已失效，必须点名）**
+
+- §0 落点表「发版 → `release_gitee.sh:26,73,79`」一行已随文件消失：该脚本 2026-10-01 删除（渠道改成只走 GitHub，
+  且 `CLAUDE.md` 早已判它「会强制上传 1.6GB DMG 到 Gitee，必然失败」）。阶段 5 的后半随之作废。
+- §6「MCP `tools/list` 为 **23**（用修好的 `mcp_smoke_test.sh` 跑）」**未落地**：`scripts/mcp_smoke_test.sh:22`
+  至今仍是 `assert len(tools) == 9`，从没修过。这条要么按实测工具数改对、要么删掉 —— 挂着就是一条永不响的假防线。
+- §3.4 的逐名判据已由 `scripts/check_project_integrity.sh` 承担；`scripts/test_project_guards.sh` 的 TC-05
+  改成从 `Brand.swift` 现场读 `bundleID` 推期望值（不写死字面量），换品牌时判据自动跟着换口径。
+

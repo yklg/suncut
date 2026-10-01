@@ -197,7 +197,7 @@ Expected: BUILD SUCCEEDED。
 
 ```bash
 pkill -x MixCut; sleep 1
-open /Users/menggang/Library/Developer/Xcode/DerivedData/MixCut-byytuggmhodpumcmwnwrtzwkmavr/Build/Products/Debug/MixCut.app
+open <DerivedData>/Build/Products/Debug/SunCut.app
 sleep 3
 ```
 
@@ -259,7 +259,7 @@ func createProject() {
 ```bash
 xcodebuild -project MixCut.xcodeproj -scheme MixCut -configuration Debug build 2>&1 | tail -20
 pkill -x MixCut; sleep 1
-open /Users/menggang/Library/Developer/Xcode/DerivedData/MixCut-byytuggmhodpumcmwnwrtzwkmavr/Build/Products/Debug/MixCut.app
+open <DerivedData>/Build/Products/Debug/SunCut.app
 ```
 
 新建一个项目 → 切换到「方案」板块 → 检查策略列表里**有"自定义组合"**这一项（即便样式还没渲染好）。
@@ -1462,7 +1462,7 @@ Expected: BUILD SUCCEEDED。
 
 ```bash
 pkill -x MixCut; sleep 1
-open /Users/menggang/Library/Developer/Xcode/DerivedData/MixCut-byytuggmhodpumcmwnwrtzwkmavr/Build/Products/Debug/MixCut.app
+open <DerivedData>/Build/Products/Debug/SunCut.app
 ```
 
 打开一个有 AI 方案的项目，进入方案详情，确认：
@@ -1796,7 +1796,7 @@ Expected: BUILD SUCCEEDED。常见错误（按 grep 结果调整即可）：
 
 ```bash
 pkill -x MixCut; sleep 1
-open /Users/menggang/Library/Developer/Xcode/DerivedData/MixCut-byytuggmhodpumcmwnwrtzwkmavr/Build/Products/Debug/MixCut.app
+open <DerivedData>/Build/Products/Debug/SunCut.app
 ```
 
 进入分镜素材库 → 开启多选 → 选 3 个分镜 → 点「组合为方案」→ 看到调整顺序 Sheet → 点「生成方案」→ 等 1-3 秒 → 自动跳到「方案」板块，并选中新生成的自定义方案。
@@ -1902,7 +1902,7 @@ HStack(spacing: 6) {
 ```bash
 xcodebuild -project MixCut.xcodeproj -scheme MixCut -configuration Debug build 2>&1 | tail -15
 pkill -x MixCut; sleep 1
-open /Users/menggang/Library/Developer/Xcode/DerivedData/MixCut-byytuggmhodpumcmwnwrtzwkmavr/Build/Products/Debug/MixCut.app
+open <DerivedData>/Build/Products/Debug/SunCut.app
 ```
 
 验证：
@@ -1947,7 +1947,7 @@ Button("删除策略", role: .destructive, action: { /* ... */ })
 ```bash
 xcodebuild -project MixCut.xcodeproj -scheme MixCut -configuration Debug build 2>&1 | tail -10
 pkill -x MixCut; sleep 1
-open /Users/menggang/Library/Developer/Xcode/DerivedData/MixCut-byytuggmhodpumcmwnwrtzwkmavr/Build/Products/Debug/MixCut.app
+open <DerivedData>/Build/Products/Debug/SunCut.app
 ```
 
 右键自定义组合策略 → 重命名 / 删除菜单项应该是灰色禁用。
@@ -2040,7 +2040,7 @@ Expected: BUILD SUCCEEDED。
 - [ ] **Step 2: 打包 DMG**
 
 ```bash
-TEMP=$(mktemp -d) && cp -R /Users/menggang/Library/Developer/Xcode/DerivedData/MixCut-byytuggmhodpumcmwnwrtzwkmavr/Build/Products/Release/MixCut.app "$TEMP/" && ln -s /Applications "$TEMP/Applications"
+TEMP=$(mktemp -d) && cp -R <DerivedData>/Build/Products/Release/SunCut.app "$TEMP/" && ln -s /Applications "$TEMP/Applications"
 rm -f ~/Desktop/MixCut.dmg && hdiutil create -volname MixCut -srcfolder "$TEMP" -ov -format UDZO ~/Desktop/MixCut.dmg
 rm -rf "$TEMP"
 ls -lh ~/Desktop/MixCut.dmg

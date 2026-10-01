@@ -739,7 +739,7 @@ Expected: `4`
 ```bash
 #!/bin/bash
 set -e
-FF=/Users/menggang/www/Mixed_cut/MixCut/Resources/bin/ffmpeg
+FF=<仓库根>/MixCut/Resources/bin/ffmpeg
 cd /tmp
 "$FF" -hide_banner -loglevel error -y -f lavfi -i "testsrc=size=720x1280:rate=30:duration=3" \
   -f lavfi -i "sine=frequency=440:duration=3" -c:v libx264 -c:a aac -shortest src.mp4
@@ -1037,7 +1037,7 @@ git commit -m "feat(dubbing): P4 DubExportService 两阶段配音导出编排"
 2. 临时在调试入口（或在一个一次性 `#if DEBUG` 触发点）构造 `DubExportInput.from(scheme:variant:)` 并调用 `DubExportService().export(input:outputPath: ~/Desktop/dub_test.mp4)`。
 3. 用内置 ffprobe 校验输出：
    ```bash
-   FP=/Users/menggang/www/Mixed_cut/MixCut/Resources/bin/ffprobe
+   FP=<仓库根>/MixCut/Resources/bin/ffprobe
    "$FP" -v error -select_streams v -show_entries stream=codec_name,width,height -of default=nk=1 ~/Desktop/dub_test.mp4
    "$FP" -v error -show_entries format=duration -of csv=p=0 ~/Desktop/dub_test.mp4
    ```

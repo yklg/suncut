@@ -55,7 +55,7 @@
 
 - [ ] **Step 2: 跑测试确认失败**
 
-Run: `cd /Users/menggang/.config/superpowers/worktrees/Mixed_cut/new-task && swift test --filter NarrativeStructureEngineTests`
+Run: `cd <superpowers 工作树副本> && swift test --filter NarrativeStructureEngineTests`
 Expected: 编译失败(`NarrativeSlot` 无 `minDuration` 参数)
 
 - [ ] **Step 3: 改模型**

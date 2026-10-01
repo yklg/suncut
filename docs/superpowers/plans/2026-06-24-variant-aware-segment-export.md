@@ -757,7 +757,7 @@ Expected: `** BUILD SUCCEEDED **`。
 - [ ] **Step 5：编译成功后按项目规则重启 App + 打包 DMG**
 
 ```bash
-DD=/Users/menggang/Library/Developer/Xcode/DerivedData/MixCut-byytuggmhodpumcmwnwrtzwkmavr
+DD=<DerivedData>
 pkill -x MixCut; sleep 1; open "$DD/Build/Products/Debug/MixCut.app"
 ```
 

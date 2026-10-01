@@ -106,6 +106,12 @@ v2 写"我不跑"是把系统性缺陷降格成个人纪律 —— 而仓库里�
 - `UpdateChecker.swift` 的 `UserDefaults` 键 `dismissedUpdateVersion`：删文件后成孤儿，**不清理**（清了要碰迁移逻辑，属范围外）。
 - `README.md:11-17,57-58,123,163,195-197`、`CLAUDE.md:203`、`release_gitee.sh`、`docs/PRD/04-*.md:26`：
   纯文本、不影响运行时，与改名计划重叠（→ §5 P1 一并治根因）。
+  **（2026-10-01 已单独收口，本格作废）** 实际做完的是：README 门面重写 + 顶部 `logo.png` 从新 AppIcon 重生成 +
+  `demo-video.jpg` 删除、`CLAUDE.md` 发版段改 GitHub-only 并删历史 Gitee release id 表、`release_gitee.sh` 与
+  `bundle_deps.sh` 两颗脚本删除、`docs/PRD/04:26` 图片改仓内相对路径、13 份历史计划里 34 处原作者机器路径换成
+  `<仓库根>` / `<DerivedData>` 占位。全仓严格残留停在 **9 处**，逐处都是有意保留：`LICENSE:3`、`README.md:187`、
+  `CLAUDE.md:254`（MIT 两行版权的规范说明）、`scripts/test_project_guards.sh:26`（判据自身含 pattern）、
+  以及本文 `:45/:142/:143/:235/:283` 五处 token reprint（账本，删了就说不清谁被清过）。
 
 ## 3. 施工顺序（含回退链）
 

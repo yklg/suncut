@@ -197,7 +197,7 @@ AI 提示词模板存放在 `MixCut/Resources/Prompts/`，通过 `PromptLoader` 
 
 ### 分发方式（v0.7.1 起，现行）：DMG 走百度网盘，release 只放下载页链接
 
-DMG 内置 Whisper 大模型约 **1.6GB**，GitHub 附件慢、Gitee 附件硬上限 100MB，两边都不适合放包。
+DMG 内置 Whisper 大模型约 **1.6GB**，挂 GitHub Release 附件传得慢，所以不放附件（见下方链路：正文只指向下载页）。
 现行分发链路是 **固定下载页 + versions.json + 用户提供的网盘分享链接**：
 
 - **下载页**：http://47.119.175.47/mixcut/ （nginx `location ^~ /mixcut/` → `/www/wwwroot/dlpage/`）
@@ -209,29 +209,25 @@ DMG 内置 Whisper 大模型约 **1.6GB**，GitHub 附件慢、Gitee 附件硬�
 
 | 谁 | 做什么 |
 |---|---|
-| 我（Claude） | 只负责：bump 版本 → 打带版本号的 DMG → 提交/推送/打 tag → 发 GitHub + Gitee release（**正文指向下载页，不传附件**） |
+| 我（Claude） | 只负责：bump 版本 → 打带版本号的 DMG → 提交/推送/打 tag → 发 GitHub release（**正文指向下载页，不传附件**） |
 | 用户 | 把桌面上的 DMG 传到**百度网盘**，把分享链接（含提取码）发给我 |
 | 我（拿到链接后） | 把链接 prepend 进服务器的 `versions.json` |
 
 > **绝对不要自作主张把 DMG 上传到服务器 `/dl/`**。那是早期方案的遗留兜底路径，现行流程里包由用户放网盘。
-> **不要用 `./release_gitee.sh`** —— 它会强制上传 1.6GB DMG 到 Gitee，必然失败。
 
 **发版标准动作全序列**：
 1. bump 版本号（VERSION + pbxproj 两处 MARKETING_VERSION）→ clean Release universal 构建 → 打 `SunCut-v<版本>.dmg`
 2. 四项强制校验：主程序 `lipo -archs` == `x86_64 arm64`、5 个内置二进制均双架构、DMG 内 `CFBundleShortVersionString` == 目标版本、DMG 内含 `Licenses/`
-3. `git commit` → `git tag vX.Y.Z` → `git push origin main && git push gitee main` → `git push origin vX.Y.Z && git push gitee vX.Y.Z`
+3. `git commit` → `git tag vX.Y.Z` → `git push origin main` → `git push origin vX.Y.Z`
 4. `gh release create vX.Y.Z --title … --notes-file …`（**不传 DMG**，正文「下载」段指向下载页）
-5. Gitee `POST https://gitee.com/api/v5/repos/jinxiushanhehao/mixed_cut/releases`
-   （jq 组 body，字段 access_token/tag_name/name/body/prerelease/target_commitish=main）
-6. **等用户给百度网盘链接** → 更新服务器 `versions.json`
+5. **等用户给百度网盘链接** → 更新服务器 `versions.json`
 
-**凭据**：`GITEE_TOKEN` 与服务器 `CN_SSH_*` 都在项目根 `.env`（gitignored，绝不提交/外传）。
+**凭据**：服务器 `CN_SSH_*` 在项目根 `.env`（gitignored，绝不提交/外传）。
 服务器登录用**密码**不是 key，且密码含特殊字符：
 - 绝不能 `source .env`（`#` 会截断密码）；要 `grep -E '^CN_SSH_PASSWORD=' .env | sed -E 's/^CN_SSH_PASSWORD=//; s/^"(.*)"$/\1/'`
 - ssh/scp 必须带 `-o PreferredAuthentications=password -o PubkeyAuthentication=no` + `sshpass`
 
-**历史 Gitee release id**：v0.7.1=736815 / v0.8.0=739784 / v0.8.1=744314 / v0.9.0=750028 / v0.9.1=754773 / v0.9.2=759430 / v0.10.0=765252 / v0.11.0=767788
-（正文改动用 `PATCH …/releases/{id}`，GitHub 用 `gh release edit vX.Y.Z --notes-file`）
+（改已发版本的正文用 `gh release edit vX.Y.Z --notes-file`，不需要 release id。）
 
 ## 关键开发规则（必须遵守）
 

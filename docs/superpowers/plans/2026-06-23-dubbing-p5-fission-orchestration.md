@@ -19,7 +19,7 @@
 - **K（每分镜改写版本数）固定 = 2**,本期不做可配。
 - **TTS 按需**:改写只预生成文本;音频仅在 试听/格生成/导出补齐 时合成。
 - **不破坏现有功能**:分镜库多选/批量导出/批量删除/`Equatable` 性能优化/双击编辑台词/切项目联动(`.task(id:)`);普通导出走原 `ExportService` 不动;方案生成现有流程不回归。
-- **每次编译后**按 CLAUDE.md:`xcodebuild ... Debug build` 成功后 `pkill -x MixCut; sleep 1; open <DerivedData>/Build/Products/Debug/MixCut.app`(由执行者在 UI 任务末尾做)。DerivedData:`/Users/menggang/Library/Developer/Xcode/DerivedData/MixCut-byytuggmhodpumcmwnwrtzwkmavr/`。
+- **每次编译后**按 CLAUDE.md:`xcodebuild ... Debug build` 成功后 `pkill -x MixCut; sleep 1; open <DerivedData>/Build/Products/Debug/MixCut.app`(由执行者在 UI 任务末尾做)。DerivedData:`<DerivedData>/`。
 
 ---
 
@@ -818,7 +818,7 @@ if let video = viewModel.groupedSegments.first?.video {
 
 登记 `DubSettingsBar.swift`(App 文件,3–4 处)。
 Run: `xcodebuild -project MixCut.xcodeproj -scheme MixCut -configuration Debug build 2>&1 | tail -6` → `** BUILD SUCCEEDED **`
-重启应用:`pkill -x MixCut; sleep 1; open /Users/menggang/Library/Developer/Xcode/DerivedData/MixCut-byytuggmhodpumcmwnwrtzwkmavr/Build/Products/Debug/MixCut.app`
+重启应用:`pkill -x MixCut; sleep 1; open <DerivedData>/Build/Products/Debug/SunCut.app`
 **人工**:进分镜素材库,确认顶部出现「配音设置」栏、10 个音色卡可横滑、可选最多 3、满 3 其余变灰、折叠/展开正常。截图留证。`grep -c "DubSettingsBar.swift" MixCut.xcodeproj/project.pbxproj` = 3/4。
 
 - [ ] **Step 4: 提交**

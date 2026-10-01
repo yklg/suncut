@@ -571,7 +571,7 @@ Expected: `** BUILD SUCCEEDED **`
 - [ ] **Step 3: 验证运行时能加载到模板**
 
 编译后产物里确认 bundle 含该文件：
-Run: `find /Users/menggang/Library/Developer/Xcode/DerivedData/MixCut-byytuggmhodpumcmwnwrtzwkmavr/Build/Products/Debug/MixCut.app -name "script_rewrite_prompt.md"`
+Run: `find <DerivedData>/Build/Products/Debug/SunCut.app -name "script_rewrite_prompt.md"`
 Expected: 输出该文件路径（非空）
 
 - [ ] **Step 4: Commit**

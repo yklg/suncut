@@ -59,4 +59,4 @@ MixCut 是 macOS 原生 SwiftUI + SwiftData 的 AI 视频混剪 App（信息流�
 4. 全部做完，给我一份「已自测项 + 待我人工验证项」清单，并说明组合上限/采样策略取了什么值。
 5. 全程不提交 git、不发版，等我验收。
 
-DerivedData：`/Users/menggang/Library/Developer/Xcode/DerivedData/MixCut-byytuggmhodpumcmwnwrtzwkmavr/`
+DerivedData：`<DerivedData>/`

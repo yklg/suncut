@@ -1492,7 +1492,7 @@ TabView 里 `generalSettings` 之后加：
 ```bash
 xcodebuild -project MixCut.xcodeproj -scheme MixCut -configuration Debug build 2>&1 | tail -3
 pkill -x MixCut; sleep 1
-open /Users/menggang/Library/Developer/Xcode/DerivedData/MixCut-byytuggmhodpumcmwnwrtzwkmavr/Build/Products/Debug/MixCut.app
+open <DerivedData>/Build/Products/Debug/SunCut.app
 ```
 
 打开设置窗口（⌘,）切到 Agent tab，`screencapture -l <window-id>` 截图确认布局正常、命令行可复制。

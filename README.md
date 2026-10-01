@@ -1,44 +1,29 @@
 <div align="center">
 
-<img src="docs/screenshots/logo.png" width="128" alt="MixCut" />
+<img src="docs/screenshots/logo.png" width="128" alt="SunCut" />
 
-# MixCut
+# SunCut
 
 **AI 广告视频混剪工具 · macOS 原生 · 开箱即用**
 
 一堆投放素材丢进去，AI 自动切分镜、排列组合、改写口播、克隆原声、烧录字幕，一键批量出几十条差异化广告。
 
-[![Release](https://img.shields.io/github/v/release/RoshanGH/mixed_cut?label=%E6%9C%80%E6%96%B0%E7%89%88%E6%9C%AC&color=6E56CF)](https://github.com/RoshanGH/mixed_cut/releases)
-[![Downloads](https://img.shields.io/github/downloads/RoshanGH/mixed_cut/total?label=%E4%B8%8B%E8%BD%BD%E9%87%8F&color=2EA043)](https://github.com/RoshanGH/mixed_cut/releases)
-[![Platform](https://img.shields.io/badge/macOS-14.0%2B%20Universal-000000?logo=apple)](https://github.com/RoshanGH/mixed_cut/releases)
-[![Stars](https://img.shields.io/github/stars/RoshanGH/mixed_cut?style=flat&color=E3B341)](https://github.com/RoshanGH/mixed_cut/stargazers)
-[![License](https://img.shields.io/github/license/RoshanGH/mixed_cut?color=blue)](./LICENSE)
+[![Platform](https://img.shields.io/badge/macOS-14.0%2B%20Universal-000000?logo=apple)](#-快速开始)
+[![License](https://img.shields.io/badge/license-MIT-blue)](./LICENSE)
 
-[**⬇️ 下载**](#-下载) · [**✨ 功能**](#-功能亮点) · [**🚀 快速开始**](#-快速开始) · [**🛠 开发者**](#-开发者--技术架构) · [Gitee 镜像（国内）](https://gitee.com/jinxiushanhehao/mixed_cut/releases)
+[**✨ 功能**](#-功能亮点) · [**🚀 快速开始**](#-快速开始) · [**🛠 开发者**](#-开发者--技术架构)
 
 </div>
 
 <div align="center">
-  <img src="docs/screenshots/library.png" width="880" alt="MixCut 分镜素材库" />
-</div>
-
-<div align="center">
-
-### 📺 完整演示视频
-
-<a href="https://www.bilibili.com/video/BV1Uz5i6pE6q/" target="_blank">
-  <img src="docs/screenshots/demo-video.jpg" width="720" alt="观看 MixCut 完整演示视频（哔哩哔哩）" />
-</a>
-
-**[▶ 点击观看完整演示 →](https://www.bilibili.com/video/BV1Uz5i6pE6q/)** · 约 45 分钟 · 哔哩哔哩
-
+  <img src="docs/screenshots/library.png" width="880" alt="SunCut 分镜素材库" />
 </div>
 
 ---
 
 ## 这是什么
 
-**MixCut 是一款面向广告投放团队的 macOS 桌面应用。** 你把广告素材视频导进来，它用本地信号提取 + 云端 AI 语义决策，把视频拆成一个个带类型标注的分镜，再帮你：
+**SunCut 是一款面向广告投放团队的 macOS 桌面应用。** 你把广告素材视频导进来，它用本地信号提取 + 云端 AI 语义决策，把视频拆成一个个带类型标注的分镜，再帮你：
 
 - 🎬 **智能混剪** —— AI 出策略 → 按策略排列分镜组合 → 一键批量导出多条差异化广告
 - 🗣️ **AI 配音 / 口播替换** —— 一键改写台词 → 克隆原视频说话人音色 → 合成配音 → 保留原 BGM → 烧录新字幕
@@ -50,14 +35,14 @@
 
 ---
 
-## 📥 下载
+## 📥 获取
 
-| 平台 | 链接 | 说明 |
-|------|------|------|
-| **GitHub** | [**下载最新版 →**](https://github.com/RoshanGH/mixed_cut/releases/latest) | 全球，附带 DMG |
-| **Gitee（国内）** | [**下载最新版 →**](https://gitee.com/jinxiushanhehao/mixed_cut/releases) | 国内下载更快 |
+本项目目前没有公开发布渠道（仓库未发 Releases）。两种拿法：
 
-下载 `.dmg` → 拖进 **Applications** → 首次启动如提示「无法打开」，**右键 → 打开** 即可。无需安装 Homebrew / FFmpeg / Whisper 等任何东西。
+- **自行构建** —— 见下方 [🛠 开发者 & 技术架构](#-开发者--技术架构)，产物是 `SunCut.app`。
+- **索取安装包** —— 在 [Issues](https://github.com/yklg/suncut/issues) 里说明你的机器是 Apple Silicon 还是 Intel。
+
+拿到 `.dmg` 后拖进 **Applications**，首次启动如提示「无法打开」，**右键 → 打开** 即可。无需安装 Homebrew / FFmpeg / Whisper 等任何东西。
 
 ---
 
@@ -102,7 +87,7 @@
 
 ### ⌨️ 顺手的体验
 
-键盘快捷键（`⌘N` 新建 / `⌘1~5` 切工作区 / `⌘B` 侧边栏 / `⌘/` 快捷键面板）· 应用启动恢复上次项目 · 应用内更新检查 · Toast / Skeleton / 错误横幅完整反馈体系 · 强制浅色外观。
+键盘快捷键（`⌘N` 新建 / `⌘1~5` 切工作区 / `⌘B` 侧边栏 / `⌘/` 快捷键面板）· 应用启动恢复上次项目 · Toast / Skeleton / 错误横幅完整反馈体系 · 强制浅色外观。
 
 ---
 
@@ -120,7 +105,7 @@
 
 ## 🚀 快速开始
 
-1. 从 [Releases](https://github.com/RoshanGH/mixed_cut/releases/latest) 下载 DMG，拖进 **Applications**（首次启动右键 → 打开）。
+1. 构建或索取 `SunCut.app`（见上方 [📥 获取](#-获取)），拖进 **Applications**（首次启动右键 → 打开）。
 2. 打开 **设置 → AI 配置**，填入 API Key：
 
 | 提供商 | 说明 |
@@ -140,7 +125,7 @@
 
 ## 🛠 开发者 & 技术架构
 
-MixCut 是纯 **SwiftUI + SwiftData** 原生应用，无第三方 SPM 依赖。设计上把「精确信号提取」和「语义决策」分开——所有视觉/音频信号由本地 FFmpeg / Whisper 精确提取成结构化数据，再交给 AI 做语义决策，**不把视频喂给 AI**。
+SunCut 是纯 **SwiftUI + SwiftData** 原生应用，无第三方 SPM 依赖。设计上把「精确信号提取」和「语义决策」分开——所有视觉/音频信号由本地 FFmpeg / Whisper 精确提取成结构化数据，再交给 AI 做语义决策，**不把视频喂给 AI**。
 
 **技术看点**
 
@@ -154,14 +139,14 @@ SwiftUI Views  →  @Observable ViewModels (MainActor)  →  Service Layer (acto
                                                             ├─ SceneDetection / ASR(+paraformer) / AIAnalysis
                                                             ├─ ScriptRewrite / SchemeGen / Export·DubExport
                                                             └─ TTS(克隆/合成) / VocalSeparation(demucs) / Boundary
-MixCutCore（纯逻辑·可单测）  ·  SwiftData（8 个 @Model）  ·  内置 FFmpeg / whisper.cpp / demucs
+MixCutCore（纯逻辑·可单测）  ·  SwiftData（10 个 @Model）  ·  内置 FFmpeg / whisper.cpp / demucs
 ```
 
 **本地构建**
 
 ```bash
-git clone https://github.com/RoshanGH/mixed_cut.git
-cd mixed_cut
+git clone https://github.com/yklg/suncut.git
+cd suncut
 
 # 生成内置 universal 二进制到 Resources/bin/（静态自包含 arm64+x86_64）
 ./scripts/build_universal_binaries.sh
@@ -170,9 +155,9 @@ python3 bundle_deps.py          # 校验四个二进制均为 universal
 open MixCut.xcodeproj           # 用 Xcode 打开（SwiftData 宏依赖 Xcode 编译器）
 ```
 
-> 要求 Xcode 15.0+ / Swift 5.10+。更详细的架构、数据模型与开发规范见 [`CLAUDE.md`](./CLAUDE.md) 与 [`PRODUCT_SPEC.md`](./PRODUCT_SPEC.md)。
+> 工程文件名与 scheme 目前仍叫 `MixCut`，只有产物名是 `SunCut.app`——按上面的命令构建即可，别把 `-scheme` 改成 Suncut。
 >
-> 🪟 Windows 版（C# + WPF + .NET 8）：[RoshanGH/mixcut-windows](https://github.com/RoshanGH/mixcut-windows)
+> 要求 Xcode 15.0+ / Swift 5.10+。更详细的架构、数据模型与开发规范见 [`CLAUDE.md`](./CLAUDE.md) 与 [`PRODUCT_SPEC.md`](./PRODUCT_SPEC.md)。
 
 ---
 
@@ -192,12 +177,13 @@ open MixCut.xcodeproj           # 用 Xcode 打开（SwiftData 宏依赖 Xcode �
 
 ## 📮 联系 & 反馈
 
-- **开发者**：MengGang · [@RoshanGH](https://github.com/RoshanGH)
-- **手机 / 微信**：13462890087
-- **问题反馈**：[GitHub Issues](https://github.com/RoshanGH/mixed_cut/issues)
+- **维护者**：一路凯歌HNaa
+- **问题反馈**：[GitHub Issues](https://github.com/yklg/suncut/issues)
 
-如果 MixCut 对你有帮助，欢迎点个 ⭐ Star 支持一下！
+如果 SunCut 对你有帮助，欢迎点个 ⭐ Star 支持一下！
 
 ## License
 
-[MIT License](./LICENSE) © MengGang
+[MIT License](./LICENSE) · © 2026 一路凯歌HNaa · © 2026 MengGang（原始版本作者；MIT 要求的版权声明原样保留）
+
+内置的 FFmpeg / ffprobe 是 GPL-3 构建。第三方组件的许可通告与对应源码见 [`Licenses/`](./Licenses/)，其中 [`NOTICE-内置组件许可.txt`](./Licenses/NOTICE-内置组件许可.txt) 逐项登记了二进制来源、configure 参数与源码位置。

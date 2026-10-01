@@ -11,7 +11,7 @@
 ## Global Constraints
 
 - 必须用 Xcode 编译（SwiftData 宏依赖）：`xcodebuild -project MixCut.xcodeproj -scheme MixCut -configuration Debug build`。
-- 编译成功后自动重启：`pkill -x MixCut; sleep 1; open /Users/menggang/Library/Developer/Xcode/DerivedData/MixCut-byytuggmhodpumcmwnwrtzwkmavr/Build/Products/Debug/MixCut.app`。
+- 编译成功后自动重启：`pkill -x MixCut; sleep 1; open <DerivedData>/Build/Products/Debug/SunCut.app`。
 - 任何视频/缩略图/遮挡预览视图严格 **9:16 竖屏**（width:height = 9:16）。
 - 改 SwiftData 模型前**必须先备份库**：`cp ~/Library/Application\ Support/MixCut/MixCut.store ~/Library/Application\ Support/MixCut/MixCut.store.bak`。
 - 新增字段一律带默认值（lightweight 迁移要求）；不可变优先（`let`）、value 类型优先、actor 管共享状态。
@@ -323,7 +323,7 @@ Expected: `** BUILD SUCCEEDED **`
 
 Run:
 ```bash
-pkill -x MixCut; sleep 1; open /Users/menggang/Library/Developer/Xcode/DerivedData/MixCut-byytuggmhodpumcmwnwrtzwkmavr/Build/Products/Debug/MixCut.app
+pkill -x MixCut; sleep 1; open <DerivedData>/Build/Products/Debug/SunCut.app
 ```
 人工核对：应用正常启动、原有项目/视频/分镜数据完整可见（lightweight 迁移成功，未清库）。若数据丢失立即从 `MixCut.store.bak` 恢复并排查。
 
@@ -465,7 +465,7 @@ Expected: `** BUILD SUCCEEDED **`
 
 Run:
 ```bash
-pkill -x MixCut; sleep 1; open /Users/menggang/Library/Developer/Xcode/DerivedData/MixCut-byytuggmhodpumcmwnwrtzwkmavr/Build/Products/Debug/MixCut.app
+pkill -x MixCut; sleep 1; open <DerivedData>/Build/Products/Debug/SunCut.app
 ```
 人工核对：应用正常启动、原有数据完整（新增两个空表的迁移不应清库）。
 
@@ -733,7 +733,7 @@ Expected: `** BUILD SUCCEEDED **`
 
 Run:
 ```bash
-pkill -x MixCut; sleep 1; open /Users/menggang/Library/Developer/Xcode/DerivedData/MixCut-byytuggmhodpumcmwnwrtzwkmavr/Build/Products/Debug/MixCut.app
+pkill -x MixCut; sleep 1; open <DerivedData>/Build/Products/Debug/SunCut.app
 ```
 进入「分镜素材库」，逐项肉眼验证（截图留证）：
 1. 每张分镜卡出现「保留原声」「硬字幕遮挡」两个开关。

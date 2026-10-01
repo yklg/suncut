@@ -17,7 +17,7 @@
 2. 改 UI 后必须 编译 → `pkill -x MixCut; open <app>` → 截图/自测。
 3. Schema 变更（删 `sourceSegmentID`、加 4 字段）前 `cp ~/Library/Application\ Support/MixCut/MixCut.store{,.bak}`；若 SwiftData 轻量迁移不兼容 → 删 `MixCut.store*`（用户已同意"老数据不要了"），app 会重建。
 4. 勿破坏分镜卡既有能力（双击编辑台词/选中复制/在 Finder 显示/删除/多选）、切换项目联动。
-5. app 编译：`xcodebuild -project MixCut.xcodeproj -scheme MixCut -configuration Debug build`；DerivedData：`/Users/menggang/Library/Developer/Xcode/DerivedData/MixCut-byytuggmhodpumcmwnwrtzwkmavr/`。
+5. app 编译：`xcodebuild -project MixCut.xcodeproj -scheme MixCut -configuration Debug build`；DerivedData：`<DerivedData>/`。
 
 **这是返工**：涉及删已实现代码。不确定某段作用时先读 `git blame`，别误删相邻功能。
 
