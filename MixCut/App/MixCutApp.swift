@@ -795,6 +795,11 @@ struct MixCutApp: App {
 
     /// 一次性迁移：把 segment thumbnail 从「中间帧」重新生成为「首帧」
     /// 修复历史 bug: ImportViewModel 早期版本用 (start+end)/2 作为缩略图时间点，与用户「分镜首帧」直觉不符
+    ///
+    /// 账本看不到这颗的成败（异步），所以清单里它是唯一**不进任何前序**的一次性步骤。
+    /// 记账口径因此要说死：**跑完一趟并落库成功就记账**，个别 ffmpeg 失败只报数不重跑 ——
+    /// 让它每次启动重跑整批缩略图，代价是每次冷启动多打 N 个 ffmpeg 进程，而收益只是重试那几个注定失败的作业。
+    /// 这个口径成立的前提是下面那条"失败不丢原图"，两条要一起读。
     @MainActor
     static func regenerateSegmentThumbnailsToFirstFrame(container: ModelContainer) async {
         let fixKey = "didRegenerateSegmentThumbnailsToFirstFrame_v1"
@@ -802,7 +807,12 @@ struct MixCutApp: App {
 
         let context = container.mainContext
         let descriptor = FetchDescriptor<Segment>()
-        guard let segments = try? context.fetch(descriptor), !segments.isEmpty else {
+        guard let segments = try? context.fetch(descriptor) else {
+            // 以前这条和"确实没有分镜"共用一个分支：读表失败也写成功键 ⇒ 整批迁移被一次读失败永久作废。
+            MixLog.error(" 缩略图重生：读 Segment 失败，本次不记成功键（下次启动重试）")
+            return
+        }
+        guard !segments.isEmpty else {
             UserDefaults.standard.set(true, forKey: fixKey)
             return
         }
@@ -821,9 +831,10 @@ struct MixCutApp: App {
         for segment in segments {
             guard let video = segment.video,
                   FileManager.default.fileExists(atPath: video.localPath) else { continue }
-            if let oldPath = segment.thumbnailPath {
-                try? FileManager.default.removeItem(atPath: oldPath)
-            }
+            // 不在这里删旧图：输出名就是同一个 seg_<uuid>.jpg（`ImportViewModel.swift:1027` 也用这个名），
+            // 而 `generateThumbnail` 自带 `-y`（`FFmpegRunner.swift:664`）会原地覆盖。
+            // 以前先删后生，于是任何一次 ffmpeg 失败都把这个分镜的缩略图**删没了却补不上**，
+            // 而 `segment.thumbnailPath` 仍指着那个不存在的文件 —— 界面因此是空白而不是旧图。
             let firstFrameTime = max(0, segment.startTime + 0.1)
             let outputPath = thumbDir.appendingPathComponent("seg_\(segment.id.uuidString).jpg").path
             jobs.append(Job(
@@ -870,10 +881,16 @@ struct MixCutApp: App {
                 successCount += 1
             }
         }
-        try? context.save()
+        guard context.safeSave() else {
+            // 落库失败不记账：这批新缩略图的路径还没写进 Segment，下次启动重来一趟。
+            // 与上面"个别 ffmpeg 失败照样记账"是有意分开的 —— 那种情况旧图还在原处，不算丢。
+            MixLog.error(" 缩略图重生：路径落库失败，本次不记成功键（下次启动重试）")
+            return
+        }
         ThumbnailCache.shared.clear()
 
-        MixLog.info(" 完成重生 \(successCount)/\(jobs.count) 个分镜缩略图")
+        MixLog.info(" 完成重生 \(successCount)/\(jobs.count) 个分镜缩略图"
+            + (successCount == jobs.count ? "" : " —— 失败的那些仍用旧图，本次已记账不再重试"))
         UserDefaults.standard.set(true, forKey: fixKey)
     }
 

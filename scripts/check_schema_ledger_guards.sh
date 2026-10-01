@@ -187,8 +187,9 @@ else:
 # 这不是认可现状，是把 §3.9 挖出的缺陷形状（存盘失败仍记成功 ⇒ 迁移永不重试）
 # 钉成**只许减不许增**的基线。2026-10-01：首落 7 颗 → 同日收掉 6 颗
 # （purgeLegacyQwenDubs、purgeLongRefClones、resetSchemeDubSelectionToOriginal、
-#   backfillSegmentFrames、cleanExistingTranscripts、ensureCustomGroupStrategy），当前上限 **1 颗**
-# （只剩 regenerateSegmentThumbnailsToFirstFrame —— 它是异步的，要先拆成"排上队/跑完了"两颗才能收）。
+#   backfillSegmentFrames、cleanExistingTranscripts、ensureCustomGroupStrategy、
+#   regenerateSegmentThumbnailsToFirstFrame），上限归 **0** ⇒ 这条从此是"零容忍"：
+#   任何一处 `try? ….save()` 紧跟成功键都当场变红。
 # 修掉一颗就把 EXPECT_SWALLOW 往下调一颗，调低了才算销账；
 # 新写一颗（又一个 `try? save()` + `set(true, …)`）当场变红。
 lines = app_sw.split("\n")
@@ -205,7 +206,7 @@ for (s, name), (e, _) in zip(starts, starts[1:]):
     if re.search(r"try\?\s+[\w.]+\??\.save\(\)", body) and "set(true, forKey:" in body:
         swallow_book.append(name)
 
-EXPECT_SWALLOW = 1
+EXPECT_SWALLOW = 0
 if len(swallow_book) > EXPECT_SWALLOW:
     bad("SL-12 棘轮涨了：又有步骤吞错存盘后写成功键",
         f"{len(swallow_book)} 颗 > 上限 {EXPECT_SWALLOW}，现单 {swallow_book}")

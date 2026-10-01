@@ -432,6 +432,35 @@ SL-12 现单 4 颗：`backfillSegmentFrames`、`cleanExistingTranscripts`、`ens
 要收口得先拆成"排上队"与"跑完了"两颗（`LaunchStepLedger` 现有一刻一判的模型装不下半完成态）。
 这是设计动作，不与本轮同形，留到下一次单独做。
 
+### 3.15 SL-12 归零：异步那颗的两处真缺陷（2026-10-01 早）
+
+最后一颗 `regenerateSegmentThumbnailsToFirstFrame` 不是同形替换能了事的，查实际行为后是两处缺陷：
+
+1. **先删后生 = 自己造丢图窗口**。旧图路径与新输出名是**同一个文件**（`seg_<uuid>.jpg`，
+   `ImportViewModel.swift:1027` 建的就是这个名），而 `generateThumbnail` 本来带 `-y` 原地覆盖
+   （`FFmpegRunner.swift:664`）。所以那次 `removeItem(oldPath)` 没有任何收益：只要一个分镜的 ffmpeg 失败，
+   它的缩略图就被**删没了又补不上**，而 `segment.thumbnailPath` 仍指着那个不存在的文件 ⇒ 界面是空白而不是旧图。
+   预删除已整段去掉。
+2. **读表失败也记账**。`guard let segments = try? fetch, !segments.isEmpty` 把"确实没分镜"和"读不到分镜"
+   合进同一分支，于是一次读失败就把整批迁移永久作废。现在拆开：读失败不记账、下次重试；真的没有分镜才记账。
+
+**记账口径没改成"个别失败就重跑"，这是有意的**，理由写在函数头：这颗异步、账本看不到它，
+若部分失败就不记账，代价是每次冷启动重打 N 个 ffmpeg 进程，收益只是重试那几个注定失败的作业。
+口径能成立的前提正是第 1 条——旧图还在原处，失败只降外观、不丢数据。落库失败仍然不记账。
+日志因此带上下计数：`完成重生 x/y —— 失败的那些仍用旧图，本次已记账不再重试`。
+
+**棘轮归零**：`EXPECT_SWALLOW` 从 1 下调到 **0**，SL-12 从此是零容忍。
+归零档也补了红证：往 `.scratch` 副本加一处真吞错记账（`try? container.mainContext.save()` + 成功键）
+⇒ `FAIL SL-12 … 1 颗 > 上限 0`，变异落地由 `assert` 先证；真树 `0/0` 全绿。
+
+**读数**：`xcodebuild Debug` BUILD SUCCEEDED；`swift test` 377 绿；守卫族 8 颗 exit 全 0、PASS 130、FAIL 0。
+
+**这轮的证据边界，说清楚不藏着**：本机这把 `didRegenerateSegmentThumbnailsToFirstFrame_v1` 键**早已记着**，
+⇒ 这次改动对本机未来的行为是零影响（它不会再跑），真正受益的是还没跑过或跑到一半的用户。
+要在本机实跑这条新分支就得摘那把键，代价是下次用真 app 重生成一次全部分镜缩略图（几十个并行 ffmpeg，
+几秒、只花 CPU），而收益只到"正常完成会重新记账"这一条 happy path —— "失败不丢原图"要靠弄坏 ffmpeg 才造得出。
+所以本轮按**代码级证据**记，不摘键；批 3 真动 schema 那轮若要碰缩略图路径，再一起验。
+
 ## 4. 批 1~5 逐条判据
 
 
