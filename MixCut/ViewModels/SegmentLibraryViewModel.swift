@@ -470,7 +470,7 @@ final class SegmentLibraryViewModel {
         }
     }
 
-    /// 删除分镜（延迟删除 + 撤销浮条：先隐藏，5 秒内可撤销，不撤才真删）
+    /// 删除分镜（延迟删除 + 常驻撤销条：先隐藏，`PendingDeletionCenter.graceSeconds`（现 5 分钟）内可撤销，不撤才真删）
     func deleteSegment(_ segment: Segment) {
         guard modelContext != nil else { return }
         let id = segment.id

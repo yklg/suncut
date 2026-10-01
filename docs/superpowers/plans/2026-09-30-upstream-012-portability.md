@@ -473,7 +473,7 @@ SL-12 现单 4 颗：`backfillSegmentFrames`、`cleanExistingTranscripts`、`ens
 | # | 功能 | 缺的那一口 | 判据 | 测试层 | 零断言面 | MCP 契约 |
 |---|---|---|---|---|---|---|
 | 1.1 | 边界直输时间码 | `FrameTime.swift:25-37` 只有格式化**无解析器**；View 是单帧号框 `SegmentLibraryView.swift:1799-1825`；越界**静默 clamp**（`SegmentLibraryViewModel.swift:423,439`） | `分:秒:帧` 三段各自可点直改；帧段按真实 fps 封顶（30fps 只能输 0~29）；回车生效 / Esc 取消；越界**拦下并说明可用范围**，不得静默改值 | Core 新 `TimecodeParser`：P4 三点法、P11 tie-break、P12 越界不得当合法值 | 三段点击手感、Esc、文案 | ⚠️ `adjust_segment_boundary` 现在也是 clamp 语义，界面改拒绝而 MCP 仍 clamp 会分叉 ⇒ 见 Q5 |
-| 1.3 | ⌘Z 宽限 5s→5min | `PendingDeletionCenter.swift:21` 一颗常量 ⚠️ **此格漏了同一颗常量还驱动浮条时长、且提示是单槽位 ⇒ 见下方落地记录，判据已升级** | 4 分 59 秒可放回、5 分 01 秒不可放回 | 无（落地后改为 Core 可测，14 条） | 浮条停留时长 | 无 |
+| 1.3 | ⌘Z 宽限 5s→5min | `PendingDeletionCenter.swift:21` 一颗常量 ⚠️ **此格漏了同一颗常量还驱动浮条时长、且提示是单槽位 ⇒ 见下方落地记录，判据已升级** | 4 分 59 秒可放回、5 分 01 秒不可放回 | 无（落地后改为 Core 可测，17 条用例） | 浮条停留时长 | 无 |
 | 1.4 | 悬停角标 | 配音标识在文字下方（`SchemeDetailView.swift:408,453-500`）⚠️ 这格漏了两口：浅底搬到画面上会糊、`bottomLeading` 隔壁那颗时长角标占的就是 `bottomTrailing` ⇒ 见下方落地记录 | 视频区 `bottomLeading` 显示「改写A 配音」/「原声」 | 无（纯界面，无下沉点） | 位置与可读性；另加「画面上点得开下拉」一条 | 无 |
 | 1.5 | 方案变体多选 | `SchemeListView.swift:605` 单选、`:616-618` 只删单条 | 多选后批量删（走 `PendingDeletionCenter` 可撤销） | 复用既有 | 框选手感 | 无 |
 | 1.6 | 方向键移卡 | Views 内唯一按键 `SegmentLibraryView.swift:1090` | ←→ 移光标、回车进详情 | 无 | 键盘走一遍 | 无 |
@@ -496,15 +496,34 @@ SL-12 现单 4 颗：`backfillSegmentFrames`、`cleanExistingTranscripts`、`ens
 - ⌘Q 补真删：`MixCutApp.init()` 成功开库路径注册 `willTerminateNotification` → `flushNow()`。
   **强杀与崩溃救不了**，这条边界写在代码注释与 `CLAUDE.md` §撤销浮条与延迟删除，不当秘密。
 
-测试层从上表的「无」改为 **Core 可测**：`Tests/MixCutCoreTests/UndoGraceMachineTests.swift` 14 条（UG-01~14），
+测试层从上表的「无」改为 **Core 可测**：`Tests/MixCutCoreTests/UndoGraceMachineTests.swift`
+**14 个编号 / 17 条可执行用例**（UG-01~14，另 UG-04b、UG-07b、UG-08b 三条反向与正向对照），
 含反向对照（armed 内点击必须真撤销，否则 UG-04 恒真）。守卫 `scripts/check_undo_guards.sh` 8 条（UG-G01~08），
 自检 `scripts/selftest_undo_guards.sh` 8 颗变异 M1~M8 全部变红、基线全绿。守卫族实测 **138 PASS / 0 FAIL**
 （= 批 0 的 130 + 撤销这族 8；读数取自已跑的那次运行，非本次重算）。
+**`swift test` 已于 2026-10-01 14:3x 跑过：`Test run with 394 tests passed`、0 失败**，
+`UndoGraceMachine · 撤销宽限事务判据` 套件 17 条全绿 —— 394 = 批 0 基线 377 + 这 17 条，正好对平
+（先前写「14 条」是数了编号没数用例，已更正）。
 
-验收读数：**已过三条** —— ① 撤销条上屏带「已删除分镜 · 3:52 ｜ 撤销删除」（真像素，整屏两帧差图定位后回裁）；
+验收读数：**已过五条** —— ① 撤销条上屏带「已删除分镜 · 3:52 ｜ 撤销删除」（真像素，整屏两帧差图定位后回裁）；
 ② **切项目当场消失**（P0，用户屏前读数「立刻没了」）；③ ⌘Q 钩子补真删（`ZSEGMENT 20 → 18`，期间日志无重载、300 秒未到点 ⇒ 唯一 commit 时机是退出）。
-**仍欠三条**：倒计时两帧对照（只抓到 `3:52` 一个读数，"在走"是推算不是对照）、「上一条已确认删除」文案、
-「撤销批量遮挡」那枚像素（四次抓取未赶上，实现按同组件落地）。`swift test` 未跑，交回用户。
+④ **倒计时真在走**（2026-10-01 15:15:50 读到 `4:59`、15:16:41 读到 `4:09`：真实间隔 51 秒、数字走 50 秒，
+差的 1 秒是显示按 `rounded(.up)` 取整；同一条屏撑过 51 秒，旧的 5 秒设计做不到）；
+⑤ **「上一条已确认删除」交代**（15:27 连删两条、第二刀落在第一刀 20 秒后，条上读到
+「已删除分镜（上一条「已删除分镜」已确认删除） · 5:00 ｜ 撤销删除」，与 UG-08 断言逐字一致）。
+数据侧同时收口：克隆库 `ZSEGMENT` 31 → **28**，减的 3 条 = 前两枚各自到点真删 + 第三枚被顶掉时即刻真删，
+第四枚当时仍在宽限期内未落 —— 与"顶掉先了结、到点也了结"的次序自洽。
+**仍欠一条**：「撤销批量遮挡」那枚像素（四次抓取未赶上，实现按同组件落地）。`swift test` 那条已销账，见上一段。
+
+**取证过程中钉下来的两条边界**（判据原文没有，写死在这里免得下轮重踩）：
+
+1. **撤销条覆盖六处删除，不覆盖「方案内移除分镜」**：走条子的是 `ImportViewModel:774`、`SchemeViewModel:380`（删策略）
+   与 `:404`（删方案）、`ProjectViewModel:119`（删项目）、`SegmentLibraryViewModel:483`（删分镜）与 `:512`（批量删分镜）；
+   而 `SchemeViewModel.removeSegment()`（`:460-479`，方案详情里那张卡片的垃圾桶）是 `context.delete` + `safeSave()`
+   **当场落死**，只挂 `⌘Z` 的 action 名，压根不登记 ticket ⇒ 那一页删完**屏上不会有条子**，不是回归。
+2. **任何 `load*` 都会先 `flushNow()`**：`loadSegments(for:)`、`loadSchemes(for:)`、`fetchProjects()`、
+   `ProjectViewModel.selectedProject.didSet` 全都收条子 ⇒ **取证期间一换页/一换项目，宽限期当场结束**，
+   两帧对照必须在同一页内取。上一轮 14:54 那两张拍不到条子，就是这个原因（不是没生效）。
 零断言面从上表的「浮条停留时长」扩大为「浮条停留时长 + 两槽位同屏的可读性」。
 
 **1.4 已落（2026-10-01，`SchemeDetailView.swift` 单文件 11+/9−）—— 上表「缺的那一口」只写了落点，漏了两口**
