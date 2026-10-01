@@ -1,6 +1,10 @@
 import SwiftUI
 
-/// 全局 Toast 状态管理（@Observable 单例）
+/// 全局 Toast 状态管理（@Observable 单例）—— **只管瞬时提示**。
+///
+/// 撤销浮条不在这里：它的事务生命周期归 `PendingDeletionCenter`（判据是 `UndoGraceMachine` 的
+/// `armed`），经由 `UndoSlot` 上屏。以前两者抢同一个 `current`，任何一条 2.2 秒的普通提示
+/// 都会把正在倒计时的撤销条顶掉，5 分钟的宽限期就成了装饰。
 @Observable
 @MainActor
 final class ToastCenter {
@@ -12,16 +16,14 @@ final class ToastCenter {
 
     private init() {}
 
-    func show(_ text: String, icon: String = "checkmark.circle.fill", style: InlineBanner.Style = .success, duration: Double = 2.2,
-              actionTitle: String? = nil, action: (@MainActor () -> Void)? = nil) {
+    func show(_ text: String, icon: String = "checkmark.circle.fill",
+              style: InlineBanner.Style = .success, duration: Double = 2.2) {
         dismissTask?.cancel()
         withAnimation(.spring(response: 0.32, dampingFraction: 0.78)) {
-            current = ToastPayload(id: UUID(), text: text, icon: icon, style: style, actionTitle: actionTitle, action: action)
+            current = ToastPayload(id: UUID(), text: text, icon: icon, style: style)
         }
-        // 带操作按钮的 Toast 给更长的停留时间，方便用户来得及点「撤销」
-        let effectiveDuration = actionTitle != nil ? max(duration, 4.0) : duration
         dismissTask = Task { @MainActor [weak self] in
-            try? await Task.sleep(nanoseconds: UInt64(effectiveDuration * 1_000_000_000))
+            try? await Task.sleep(nanoseconds: UInt64(duration * 1_000_000_000))
             guard !Task.isCancelled else { return }
             withAnimation(DesignTokens.Motion.transition) {
                 self?.current = nil
@@ -29,7 +31,7 @@ final class ToastCenter {
         }
     }
 
-    /// 立即清除当前 Toast（如用户点了操作按钮后）
+    /// 立即清除当前 Toast。
     func dismiss() {
         dismissTask?.cancel()
         withAnimation(DesignTokens.Motion.transition) {
@@ -43,61 +45,101 @@ struct ToastPayload: Identifiable, Equatable {
     let text: String
     let icon: String
     let style: InlineBanner.Style
-    /// 可选操作按钮标题（如「撤销」），为 nil 时不显示按钮
-    let actionTitle: String?
-    /// 点击操作按钮执行的闭包（@MainActor，不参与 Equatable 比较）
-    let action: (@MainActor () -> Void)?
-
-    // 闭包不可比较，按 id 判等即可（id 全局唯一）
-    static func == (lhs: ToastPayload, rhs: ToastPayload) -> Bool {
-        lhs.id == rhs.id
-    }
 }
 
-/// Toast 显示视图（应用根视图叠加）
+/// 应用根视图叠加：第一行撤销槽（常驻，绑事务），第二行普通提示槽（2.2s 自动消失）。
 struct ToastOverlay: View {
     @State private var toastCenter = ToastCenter.shared
+    @State private var undoCenter = PendingDeletionCenter.shared
 
     var body: some View {
-        VStack {
+        VStack(spacing: DesignTokens.Spacing.compact) {
+            if let ticket = undoCenter.visibleTicket {
+                UndoSlotView(ticket: ticket, message: undoCenter.stripMessage,
+                             secondsLeft: undoCenter.secondsLeft)
+            }
             if let payload = toastCenter.current {
-                HStack(spacing: DesignTokens.Spacing.compact) {
-                    Image(systemName: payload.icon)
-                        .font(DesignTokens.Typography.bodyEmphasis)
-                        .foregroundStyle(payload.style.color)
-                    Text(payload.text)
-                        .font(DesignTokens.Typography.labelStrong)
-                        .foregroundStyle(.primary.opacity(0.85))
-
-                    if let actionTitle = payload.actionTitle {
-                        Divider()
-                            .frame(height: 14)
-                        Button {
-                            payload.action?()
-                            toastCenter.dismiss()
-                        } label: {
-                            Text(actionTitle)
-                                .font(DesignTokens.Typography.labelEmphasis)
-                                .foregroundStyle(Color.accentColor)
-                        }
-                        .buttonStyle(.plain)
-                    }
-                }
-                .padding(.horizontal, 14)
-                .padding(.vertical, 8)
-                .background(.regularMaterial)
-                .overlay(
-                    Capsule().stroke(payload.style.color.opacity(0.15), lineWidth: 1)
-                )
-                .clipShape(Capsule())
-                .shadow(color: .black.opacity(0.12), radius: 8, y: 3)
-                // 仅在有操作按钮时允许点击，避免无按钮的提示挡住下层交互
-                .allowsHitTesting(payload.actionTitle != nil)
-                .transition(.move(edge: .top).combined(with: .opacity))
-                .padding(.top, 50)
+                NoticeSlotView(payload: payload)
             }
             Spacer()
                 .allowsHitTesting(false)
         }
+    }
+}
+
+/// 撤销槽：正文 + 具名撤销按钮 + 剩余时间。
+///
+/// 只有 `PendingDeletionCenter` 判定 armed 时才存在，所以按钮点下去必然还在宽限内
+/// （过期瞬间由状态机收回浮条）。`allowsHitTesting` 这里必须为真 —— 它是唯一可点的槽。
+private struct UndoSlotView: View {
+    let ticket: UndoTicket
+    let message: String
+    let secondsLeft: Double
+
+    var body: some View {
+        HStack(spacing: DesignTokens.Spacing.compact) {
+            Image(systemName: "trash.fill")
+                .font(DesignTokens.Typography.bodyEmphasis)
+                .foregroundStyle(InlineBanner.Style.warning.color)
+            Text(message)
+                .font(DesignTokens.Typography.labelStrong)
+                .foregroundStyle(.primary.opacity(0.85))
+            Text("· \(Self.countdown(secondsLeft))")
+                .font(DesignTokens.Typography.labelStrong)
+                .monospacedDigit()
+                .foregroundStyle(.secondary)
+            Divider()
+                .frame(height: 14)
+            Button {
+                PendingDeletionCenter.shared.undoTapped()
+            } label: {
+                Text(ticket.actionTitle)
+                    .font(DesignTokens.Typography.labelEmphasis)
+                    .foregroundStyle(Color.accentColor)
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 8)
+        .background(.regularMaterial)
+        .overlay(
+            Capsule().stroke(InlineBanner.Style.warning.color.opacity(0.15), lineWidth: 1)
+        )
+        .clipShape(Capsule())
+        .shadow(color: .black.opacity(0.12), radius: 8, y: 3)
+        .transition(.move(edge: .top).combined(with: .opacity))
+        .padding(.top, 50)
+    }
+
+    /// mm:ss，向上取整 ⇒ 刚登记显示 5:00，最后一秒显示 0:01 而不是 0:00。
+    static func countdown(_ seconds: Double) -> String {
+        let whole = Int((seconds).rounded(.up))
+        return String(format: "%d:%02d", whole / 60, whole % 60)
+    }
+}
+
+/// 普通提示槽：纯告知，无按钮，因此不参与命中测试（不会挡住下层交互）。
+private struct NoticeSlotView: View {
+    let payload: ToastPayload
+
+    var body: some View {
+        HStack(spacing: DesignTokens.Spacing.compact) {
+            Image(systemName: payload.icon)
+                .font(DesignTokens.Typography.bodyEmphasis)
+                .foregroundStyle(payload.style.color)
+            Text(payload.text)
+                .font(DesignTokens.Typography.labelStrong)
+                .foregroundStyle(.primary.opacity(0.85))
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 8)
+        .background(.regularMaterial)
+        .overlay(
+            Capsule().stroke(payload.style.color.opacity(0.15), lineWidth: 1)
+        )
+        .clipShape(Capsule())
+        .shadow(color: .black.opacity(0.12), radius: 8, y: 3)
+        .allowsHitTesting(false)
+        .transition(.move(edge: .top).combined(with: .opacity))
     }
 }

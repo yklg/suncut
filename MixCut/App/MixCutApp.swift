@@ -127,6 +127,17 @@ struct MixCutApp: App {
             // Agent 接入：内嵌 MCP server（仅 127.0.0.1，可在设置中关闭）
             // —— 这两颗不是 fixup，是运行时接线，故意不进清单：清单作废时界面仍要能用 MCP 排查。
             AgentGateway.shared.configure(container: modelContainer)
+
+            // 退出钩子：宽限期已拉长到 5 分钟，"删完马上退程序"会把**界面已隐藏、库里还没真删**
+            // 的项原样留在盘上，下次启动它又冒出来。正常退出前一律 flushNow() 收口。
+            // 被强杀 / 崩溃救不了 —— 那种情况读作"没来得及删"，是这条机制的已知边界，写在这不当秘密。
+            NotificationCenter.default.addObserver(
+                forName: NSApplication.willTerminateNotification,
+                object: nil,
+                queue: .main
+            ) { _ in
+                MainActor.assumeIsolated { PendingDeletionCenter.shared.flushNow() }
+            }
             #if DEBUG
             DebugSelfTest.runIfRequested(container: modelContainer)
             #endif

@@ -1146,10 +1146,10 @@ struct SegmentCard: View, Equatable {
         for seg in targets { seg.subtitleFontRatio = ratio }
         modelContext.safeSave()
 
-        ToastCenter.shared.show(
-            "已把字幕字号应用到本视频 \(targets.count) 个分镜",
-            icon: "textformat.size", style: .success, duration: 5,
-            actionTitle: "撤销"
+        PendingDeletionCenter.shared.scheduleUndoOnly(
+            message: "已把字幕字号应用到本视频 \(targets.count) 个分镜",
+            actionTitle: "撤销批量字号",
+            seconds: 5
         ) {
             // 宽限期内分镜可能已被删除，写已删对象会崩溃 → 逐项守卫
             var restored = 0
@@ -1193,13 +1193,14 @@ struct SegmentCard: View, Equatable {
         }
         try? modelContext.save()
 
-        ToastCenter.shared.show(
-            "已把遮挡设置应用到 \(targets.count) 个分镜",
-            icon: "square.on.square", style: .success, duration: 5,
-            actionTitle: "撤销"
+        PendingDeletionCenter.shared.scheduleUndoOnly(
+            message: "已把遮挡设置应用到 \(targets.count) 个分镜",
+            actionTitle: "撤销批量遮挡",
+            seconds: 5
         ) {
             // ⚠️ 撤销闭包最长在 5 秒后才执行，这期间用户完全可能删掉其中某个分镜
-            // （删除走 PendingDeletionCenter，宽限期到点后台自动真删）。
+            // （删除走 PendingDeletionCenter，宽限期 5 分钟，到点后台自动真删）。
+            // 两个窗口本来就不等长，所以这里从来不能假设"对象还在"：
             // 对已被 delete 的 SwiftData 对象写属性会直接崩溃（见 CLAUDE.md 删对象崩溃记录），
             // 所以逐项检查对象是否仍在上下文里，失效的跳过。
             var restored = 0

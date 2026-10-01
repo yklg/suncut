@@ -23,6 +23,7 @@
 		81E48EECDE0119AA91B96EA7 /* Brand.swift in Sources */ = {isa = PBXBuildFile; fileRef = E63E055F88B17A6B3E2043F9 /* Brand.swift */; };
 		482B53A3145BDB33561480E9 /* LaunchStepLedger.swift in Sources */ = {isa = PBXBuildFile; fileRef = B6E8F3F81CE43079735661B7 /* LaunchStepLedger.swift */; };
 		764494F9DF3575459D985927 /* SchemaFingerprint.swift in Sources */ = {isa = PBXBuildFile; fileRef = E24D293FC1A067C69B59F9C0 /* SchemaFingerprint.swift */; };
+		9F41C6B07D2538AE1460B7C2 /* UndoGraceMachine.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5D3A9C77BE142F6087CA91D3 /* UndoGraceMachine.swift */; };
 		7A2C4E19B3D84F60A15C9E73 /* ProjectDataReadiness.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2C8F61D4A95B3E70C82D4F16 /* ProjectDataReadiness.swift */; };
 		9C80AEED4587B1320C02A6A6 /* BrandDirectoryMigration.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4169765B52EC8AAF4E1FF1EC /* BrandDirectoryMigration.swift */; };
 		BA2E27944B16BC55D66FE56D /* BrandResidueScanner.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7E8212A6A3C180B93AC5AD93 /* BrandResidueScanner.swift */; };
@@ -215,6 +216,7 @@
 		E63E055F88B17A6B3E2043F9 /* Brand.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = Brand.swift; path = Sources/MixCutCore/Brand.swift; sourceTree = "<group>"; };
 		B6E8F3F81CE43079735661B7 /* LaunchStepLedger.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = LaunchStepLedger.swift; path = Sources/MixCutCore/LaunchStepLedger.swift; sourceTree = "<group>"; };
 		E24D293FC1A067C69B59F9C0 /* SchemaFingerprint.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = SchemaFingerprint.swift; path = Sources/MixCutCore/SchemaFingerprint.swift; sourceTree = "<group>"; };
+		5D3A9C77BE142F6087CA91D3 /* UndoGraceMachine.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = UndoGraceMachine.swift; path = Sources/MixCutCore/UndoGraceMachine.swift; sourceTree = "<group>"; };
 		2C8F61D4A95B3E70C82D4F16 /* ProjectDataReadiness.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = ProjectDataReadiness.swift; path = Sources/MixCutCore/ProjectDataReadiness.swift; sourceTree = "<group>"; };
 		4169765B52EC8AAF4E1FF1EC /* BrandDirectoryMigration.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = BrandDirectoryMigration.swift; path = Sources/MixCutCore/BrandDirectoryMigration.swift; sourceTree = "<group>"; };
 		7E8212A6A3C180B93AC5AD93 /* BrandResidueScanner.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = BrandResidueScanner.swift; path = Sources/MixCutCore/BrandResidueScanner.swift; sourceTree = "<group>"; };
@@ -494,6 +496,7 @@
 				E63E055F88B17A6B3E2043F9 /* Brand.swift */,
 				B6E8F3F81CE43079735661B7 /* LaunchStepLedger.swift */,
 				E24D293FC1A067C69B59F9C0 /* SchemaFingerprint.swift */,
+				5D3A9C77BE142F6087CA91D3 /* UndoGraceMachine.swift */,
 				2C8F61D4A95B3E70C82D4F16 /* ProjectDataReadiness.swift */,
 				4169765B52EC8AAF4E1FF1EC /* BrandDirectoryMigration.swift */,
 				7E8212A6A3C180B93AC5AD93 /* BrandResidueScanner.swift */,
@@ -892,6 +895,7 @@
 				81E48EECDE0119AA91B96EA7 /* Brand.swift in Sources */,
 				482B53A3145BDB33561480E9 /* LaunchStepLedger.swift in Sources */,
 				764494F9DF3575459D985927 /* SchemaFingerprint.swift in Sources */,
+				9F41C6B07D2538AE1460B7C2 /* UndoGraceMachine.swift in Sources */,
 				7A2C4E19B3D84F60A15C9E73 /* ProjectDataReadiness.swift in Sources */,
 				9C80AEED4587B1320C02A6A6 /* BrandDirectoryMigration.swift in Sources */,
 				BA2E27944B16BC55D66FE56D /* BrandResidueScanner.swift in Sources */,

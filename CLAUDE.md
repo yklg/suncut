@@ -440,6 +440,20 @@ cp ~/Library/Application\ Support/Suncut/Suncut.store* .scratch/store-backup-${T
    `orphanGC` 的 `requires` 必须含三颗、有真信号的步骤必须回报 `Bool`、防线文案不得叫用户删库。
    启动顺序与前序约束的**唯一来源**是 `MixCut/App/LaunchSteps.swift` 的清单，别退回平铺调用。
 
+## 撤销浮条与延迟删除
+
+- **撤销条可见性的唯一来源是状态机的 `armed` 相位**（`Sources/MixCutCore/UndoGraceMachine.swift`）。
+  `ToastCenter` 只管瞬时提示，**不许**再携带 `actionTitle` / `action` —— 一旦撤销条退回那条单槽，
+  任意一条 2.2 秒提示就会把正在倒计时的 5 分钟宽限顶成装饰（这就是 1.3 审查判"表面修补"的那个形状）。
+- 两类事务共用一条通道：延迟删除（`schedule`，300 秒，了结时**欠一次真删**）与
+  批量覆盖（`scheduleUndoOnly`，5 秒，改动已落库、到点不欠东西）。
+- `flushNow()` 在切项目 / 数据重载前必须调（现有 4 处），且它**同帧收回浮条**。
+  恢复一律是"放回"而非"重建"，且**永不依赖 SwiftData 内置 UndoManager**（它一挂删除就崩）。
+- 批量撤销的闭包会在删除宽限期之内跑，所以对快照里每个对象先验 `modelContext != nil` 再写 ——
+  对已 delete 的对象写属性直接崩（见下面「数据库保存」同级的崩溃记录）。
+- 机械判据：`LC_ALL=en_US.UTF-8 ./scripts/check_undo_guards.sh`（UG-G01~08），
+  自证 `./scripts/selftest_undo_guards.sh`（8 条判言逐条可被对应违规变红）。
+
 ## 已知问题与改进方向
 
 - **数据库保存**: `try? ….save()` 吞错仍剩 **48 处**（2026-10-01 实数，`grep -rEc` 口径见 SL 守卫脚本头），
