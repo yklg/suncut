@@ -1518,16 +1518,28 @@ struct SegmentInlinePlayer: View {
                 case .passthrough:
                     EmptyView()
                 case .blur:
-                    // 与 ffmpeg 的 crop=w:h:x:y → boxblur → overlay=x:y 同形：先平移再开窗裁，
-                    // 最后把窗口搬回原位。半径按画布宽折算（表里存的是导出像素）。
+                    // 与 ffmpeg 的 crop=w:h:x:y → boxblur → overlay=x:y **同序**：先开窗裁到带、
+                    // 只糊这一小块，再搬回原位。半径按画布宽折算（表里存的是导出像素）。
+                    //
+                    // 裁的时候四周多留 `bleed`，糊完再 `.clipped()` 收回带本身：Gaussian 会向窗口
+                    // 外取像素，不留边则带的上下沿会吃到 SwiftUI 的边缘复制，把边界画糊成一条毛边。
+                    //
+                    // ⚠️ 旧写法是「整块 9:16 画布糊完再裁」—— 代价 ∝ 画布面积，卡片一多滚动就掉帧；
+                    // 现在代价 ∝ 带面积，且和导出一样只吃带内像素。
+                    let r = mode.previewBlurRadius(displayWidth: geo.size.width,
+                                                   displayCropHeight: px.height)
+                    let bleed = r * 2
                     Image(nsImage: image)
                         .resizable()
                         .aspectRatio(contentMode: .fit)
                         .frame(width: geo.size.width, height: geo.size.height, alignment: .topLeading)
-                        .blur(radius: mode.previewBlurRadius(displayWidth: geo.size.width,
-                                                             displayCropHeight: px.height))
-                        .offset(x: -px.x, y: -px.y)
-                        .frame(width: px.width, height: px.height, alignment: .topLeading)
+                        .offset(x: -(px.x - bleed), y: -(px.y - bleed))
+                        .frame(width: px.width + bleed * 2,
+                               height: px.height + bleed * 2,
+                               alignment: .topLeading)
+                        .clipped()
+                        .blur(radius: r)
+                        .frame(width: px.width, height: px.height)
                         .clipped()
                         .offset(x: px.x, y: px.y)
                 case .fill(let hex, let alpha):

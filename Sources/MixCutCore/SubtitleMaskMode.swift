@@ -86,8 +86,10 @@ public extension SubtitleMaskMode {
     /// （两侧同为 9:16 画布）。这里**不**复用 `clampedRadius(cropWidth:cropHeight:)` ——
     /// 那个方法的入参是导出像素，混单位传点会静默算错。
     ///
-    /// ⚠️ 这只是**同一语义的近似呈现，不是同源像素**：ffmpeg 是"裁出带内糊再贴回"，
-    /// SwiftUI 是整图糊再遮罩 ⇒ 带的上下沿会带进约一个半径的带外像素。
+    /// ⚠️ 这只是**同一语义的近似呈现，不是同源像素**：ffmpeg 是"裁出带内 boxblur 再贴回"，
+    /// 预览同序（见 `maskTreatmentPreview`），但核不同 —— `boxblur` 是盒式多重迭代、SwiftUI
+    /// `.blur` 是 Gaussian，且带边界取像素的方式也不同（预览吃真实邻域像素，ffmpeg 吃裁出平面的
+    /// 边缘处理）。所以预览是"糊成一片"这件事的**量级**对齐，不是逐像素对齐。
     /// `fill` 两档才是精确同源（同 hex 同 alpha）。
     func previewBlurRadius(displayWidth: CGFloat, displayCropHeight: CGFloat,
                            canonicalWidth: Int = 1080) -> CGFloat {
