@@ -92,6 +92,20 @@ final class Segment: Identifiable {
     /// 数据质量详情
     var qualityReasoning: String?
 
+    /// 素材来源 raw（SegmentSource.rawValue）。**默认 "" = 未分类**（存量数据迁移契约，
+    /// 见 SegmentSource.unclassified）。读侧一律用计算属性 `source`，禁止直接 parse 本字段。
+    var sourceRaw: String = ""
+
+    /// 素材来源读侧唯一入口：未知/空值回退「未分类」（不猜、不冒充搬运）。
+    var source: SegmentSource {
+        SegmentSource(rawValue: sourceRaw) ?? .unclassified
+    }
+
+    /// 素材来源唯一写入口（与 setText 同纪律：收口到一个方法，便于批量/撤销与未来加日志）。
+    func setSource(_ source: SegmentSource) {
+        sourceRaw = source.rawValue
+    }
+
     var video: Video?
 
     @Relationship(deleteRule: .cascade, inverse: \SchemeSegment.segment)
@@ -239,7 +253,8 @@ final class Segment: Identifiable {
         semanticTypes: [SemanticType],
         positionType: PositionType,
         qualityScore: Double = 8.0,
-        textSource: TranscriptSource = .unknownLegacy
+        textSource: TranscriptSource = .unknownLegacy,
+        source: SegmentSource = .unclassified
     ) {
         self.id = UUID()
         self.segmentIndex = segmentIndex
@@ -252,6 +267,7 @@ final class Segment: Identifiable {
         self.qualityScore = qualityScore
         self.createdAt = Date()
         self.semanticTypes = semanticTypes
+        self.sourceRaw = source.rawValue
         // 新分镜跟随用户最后一次设定的字号（没设过则用出厂默认），
         // 避免"老素材是调好的值、新导入的却回落到默认"这种看起来像 bug 的不一致。
         self.subtitleFontRatio = SubtitleFontSize.preferredRatioForNewSegments

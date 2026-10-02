@@ -714,6 +714,82 @@ struct MixCutApp: App {
         return true
     }
 
+    /// 产品/来源维度的一次性存量回填（产品·来源两级分类）。
+    ///
+    /// 幂等（once 台账 didBackfillProductOwnership_v1，且每步只补空值）：
+    /// 1. 确保恰好一个内置「默认产品」；
+    /// 2. Project.product 为空的归默认产品；
+    /// 3. Video.ownerProject 为空的，按「最早可解析关联的项目」回填
+    ///    （规则本体在 MixCutCore.ProductOwnershipBackfill，有 B1-B5 单测；这里只拍平+写回）；
+    /// 4. 有 AI 替换画面但来源为空的存量分镜标 ai_generated（只填空值，不覆盖用户归类）；
+    /// 5. Video.defaultSourceRaw 异常为空补「搬运」（分镜 sourceRaw 空=未分类是预期，不动）。
+    /// 必须排在 dedupProjectVideoAssociations 之后（LaunchStep.requires 钉着）。
+    @MainActor
+    static func backfillProductOwnership(container: ModelContainer) {
+        let context = container.mainContext
+
+        // 1. 默认产品（哨兵 UUID，全库至多一个内置项）
+        let products = (try? context.fetch(FetchDescriptor<Product>())) ?? []
+        let defaultProduct: Product
+        if let existing = products.first(where: { $0.isBuiltInDefault }) {
+            defaultProduct = existing
+        } else {
+            defaultProduct = Product(id: ProductCatalogDefaults.defaultProductID,
+                                     name: ProductCatalogDefaults.defaultProductName,
+                                     isBuiltInDefault: true)
+            context.insert(defaultProduct)
+            MixLog.info("[Backfill] 创建默认产品")
+        }
+
+        // 2. 项目归属
+        let projects = (try? context.fetch(FetchDescriptor<Project>())) ?? []
+        var assignedProjects = 0
+        for project in projects where project.product == nil {
+            project.product = defaultProduct
+            assignedProjects += 1
+        }
+
+        // 3. 视频 ownerProject：规则走纯函数，App 层不重写
+        let videos = (try? context.fetch(FetchDescriptor<Video>())) ?? []
+        let projectVideos = (try? context.fetch(FetchDescriptor<ProjectVideo>())) ?? []
+        let associations = projectVideos.map {
+            ProjectVideoAssociation(pvID: $0.id,
+                                    projectID: $0.project?.id,
+                                    videoID: $0.video?.id,
+                                    addedAt: $0.addedAt)
+        }
+        let ownerMap = ProductOwnershipBackfill.ownerProjectIDByVideoID(associations)
+        let projectByID = Dictionary(projects.map { ($0.id, $0) },
+                                     uniquingKeysWith: { first, _ in first })
+        var assignedVideos = 0
+        for video in videos where video.ownerProject == nil {
+            if let ownerID = ownerMap[video.id], let owner = projectByID[ownerID] {
+                video.ownerProject = owner
+                assignedVideos += 1
+            }
+            // 无任何可解析关联的视频保持 nil：读侧 Catalog 会回退默认产品，不瞎填。
+        }
+
+        // 4. 存量 AI 分镜标记（只填未分类的空值）
+        let segments = (try? context.fetch(FetchDescriptor<Segment>())) ?? []
+        var aiMarked = 0
+        for segment in segments where segment.sourceRaw.isEmpty && segment.replacedPictureVideoPath != nil {
+            segment.setSource(.aiGenerated)
+            aiMarked += 1
+        }
+
+        // 5. 视频默认来源异常空值兜底（新列理论上由轻量迁移填默认，这里防御）
+        var defaultSourceFixed = 0
+        for video in videos where video.defaultSourceRaw.isEmpty {
+            video.defaultSourceRaw = SegmentSource.curated.rawValue
+            defaultSourceFixed += 1
+        }
+
+        context.safeSave()
+        MixLog.info("[Backfill] 产品归属：项目+\(assignedProjects) 视频+\(assignedVideos) AI标记+\(aiMarked) 默认来源修补+\(defaultSourceFixed)")
+        UserDefaults.standard.set(true, forKey: "didBackfillProductOwnership_v1")
+    }
+
     /// 清理上次未正常完成的中间态视频
     /// 启动时把所有处于 detectingScenes / transcribing / analyzing 的视频
     /// 标记为 failed 或 imported（取决于是否已有分镜数据），避免 UI 永久卡住"分析中"

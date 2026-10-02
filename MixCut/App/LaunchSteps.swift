@@ -64,6 +64,12 @@ enum LaunchPlan {
         LaunchStep(id: "resetStaleAnalyzingStatus", cadence: .everyLaunch, onFailure: .continueWithWarning),
         LaunchStep(id: "ensureCustomGroupStrategy", cadence: .once(key: "didEnsureCustomGroupStrategy_v1"),
                    onFailure: .continueWithWarning),
+        // 产品/来源归属回填。ownerProject 按最早 ProjectVideo 选项目，必须在去重之后跑，
+        // 否则可能回填到将被删掉的重复关联（dedup 是 once，历史成功也算依赖满足）。
+        LaunchStep(id: "backfillProductOwnership",
+                   cadence: .once(key: "didBackfillProductOwnership_v1"),
+                   requires: ["dedupProjectVideoAssociations"],
+                   onFailure: .continueWithWarning),
         // 后台一次性重生缩略图。账本此刻**看不到它的成败**（异步），
         // 所以它不进任何前序；将来要收口就把它改成"排上队"与"跑完了"两颗。
         LaunchStep(id: "regenerateSegmentThumbnails", cadence: .once(key: "didRegenerateSegmentThumbnailsToFirstFrame_v1"),
@@ -98,6 +104,7 @@ enum LaunchPlan {
         "dedupProjectVideoAssociations": { MixCutApp.dedupProjectVideoAssociations(container: $0) },
         "resetStaleAnalyzingStatus": { MixCutApp.resetStaleAnalyzingStatus(container: $0); return true },
         "ensureCustomGroupStrategy": { MixCutApp.ensureCustomGroupStrategy(container: $0) },
+        "backfillProductOwnership": { MixCutApp.backfillProductOwnership(container: $0); return true },
         "regenerateSegmentThumbnails": { container in
             Task { await MixCutApp.regenerateSegmentThumbnailsToFirstFrame(container: container) }
             return true

@@ -24,9 +24,19 @@ struct RangeVideoPlayer: View {
             if isActive, let player {
                 ShotPlayerLayerView(player: player)
                     .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-            } else if let t = thumbnailPath, let img = ThumbnailCache.shared.image(for: t) {
-                Image(nsImage: img).resizable().scaledToFill()
-                    .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+            } else if let t = thumbnailPath {
+                AsyncCachedImage(
+                    path: t,
+                    placeholder: {
+                        Image(systemName: "film")
+                            .font(.title3)
+                            .foregroundStyle(.white.opacity(0.6))
+                    },
+                    imageContent: { img in
+                        Image(nsImage: img).resizable().scaledToFill()
+                    }
+                )
+                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
             } else {
                 Image(systemName: "film").font(.title3).foregroundStyle(.white.opacity(0.6))
             }

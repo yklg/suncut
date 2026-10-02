@@ -44,5 +44,8 @@ CODE_REVIEW_FINDINGS_*.md
 # 其中 .scratch/before-widen-removal/ 是"宽窗删除前"的唯一快照 —— 故意留在盘上、不入库。
 .scratch/
 
+# TRAE agent 的工作产物（计划/评审文档、临时预览），同 .scratch 性质，不入库
+.trae/
+
 # GPL 对应源码 tarball：打包时取回，不进仓库（见 Licenses/NOTICE 第 1 项）
 Licenses/source/

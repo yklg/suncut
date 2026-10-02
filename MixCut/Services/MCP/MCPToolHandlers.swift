@@ -338,7 +338,11 @@ final class MCPToolHandlers {
 
     // MARK: - 写工具
 
-    private struct CreateProjectArgs: Decodable { let name: String }
+    private struct CreateProjectArgs: Decodable {
+        let name: String
+        /// 可选：所属产品名。不存在则创建同名产品；不传则归入内置「默认产品」。
+        let product_name: String?
+    }
 
     private func createProject(_ data: Data) throws -> Outcome {
         let args = try JSONDecoder().decode(CreateProjectArgs.self, from: data)
@@ -346,7 +350,35 @@ final class MCPToolHandlers {
         guard !trimmed.isEmpty else {
             throw ToolFailure(code: .invalidArgument, message: "项目名称不能为空")
         }
+
+        // 产品归属（API 场景：同名直接复用现有产品，不二次确认；不传归默认产品）
+        let product: Product
+        if let productName = args.product_name?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !productName.isEmpty {
+            let descriptor = FetchDescriptor<Product>()
+            let existing = (try? context.fetch(descriptor)) ?? []
+            if let found = existing.first(where: {
+                $0.name.trimmingCharacters(in: .whitespacesAndNewlines) == productName
+            }) {
+                product = found
+            } else {
+                product = Product(name: productName)
+                context.insert(product)
+            }
+        } else {
+            let existing = (try? context.fetch(FetchDescriptor<Product>())) ?? []
+            if let found = existing.first(where: { $0.isBuiltInDefault }) {
+                product = found
+            } else {
+                product = Product(id: ProductCatalogDefaults.defaultProductID,
+                                  name: ProductCatalogDefaults.defaultProductName,
+                                  isBuiltInDefault: true)
+                context.insert(product)
+            }
+        }
+
         let project = Project(name: trimmed)
+        project.product = product
         context.insert(project)
         // 与 UI 的 ProjectViewModel.createProject 保持一致：同步创建「自定义组合」策略容器
         let customGroup = MixStrategy(
@@ -363,7 +395,10 @@ final class MCPToolHandlers {
         context.insert(customGroup)
         context.safeSave()
         Self.notifyUIReload()
-        return success(["id": project.id.uuidString, "name": project.name])
+        return success(["id": project.id.uuidString,
+                        "name": project.name,
+                        "product_id": product.id.uuidString,
+                        "product_name": product.name])
     }
 
     private struct ImportVideosArgs: Decodable {

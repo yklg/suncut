@@ -46,12 +46,20 @@ struct SidebarView: View {
             // 内容列表
             ScrollView {
                 VStack(alignment: .leading, spacing: DesignTokens.Spacing.tight) {
-                    // 项目区域
+                    // 项目区域（按产品分组：产品标题可折叠，项目缩进列其下）
                     sectionHeader("项目")
                         .padding(.top, 4)
 
-                    ForEach(activeProjects) { project in
-                        projectRow(project)
+                    ForEach(projectVM.sidebarGroups, id: \.productID) { group in
+                        productGroupHeader(group)
+                        if projectVM.isExpanded(group.productID) {
+                            ForEach(group.projectIDs, id: \.self) { projectID in
+                                if let project = projectVM.projects.first(where: { $0.id == projectID }) {
+                                    projectRow(project)
+                                        .padding(.leading, 16)
+                                }
+                            }
+                        }
                     }
 
                     newProjectButton
@@ -143,6 +151,37 @@ struct SidebarView: View {
         }
     }
 
+    /// 产品分组标题行：色点 + 产品名 + 项目数 + 折叠箭头
+    @ViewBuilder
+    private func productGroupHeader(_ group: SidebarProductGroup) -> some View {
+        let product = projectVM.product(byID: group.productID)
+        let expanded = projectVM.isExpanded(group.productID)
+        Button {
+            projectVM.toggleCollapsed(group.productID)
+        } label: {
+            HStack(spacing: 7) {
+                ProductDot(product: product, size: 7)
+                Text(product?.name ?? ProductCatalogDefaults.defaultProductName)
+                    .font(.system(size: 11.5, weight: .semibold))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                Spacer()
+                Text("\(group.projectIDs.count)")
+                    .font(.system(size: 10))
+                    .foregroundStyle(.tertiary)
+                Image(systemName: expanded ? "chevron.down" : "chevron.right")
+                    .font(.system(size: 9, weight: .semibold))
+                    .foregroundStyle(.tertiary)
+                    .frame(width: 10)
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 4)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help(product?.name ?? ProductCatalogDefaults.defaultProductName)
+    }
+
     private func sectionHeader(_ title: String) -> some View {
         Text(title)
             .font(DesignTokens.Typography.microEmphasis)
@@ -212,6 +251,18 @@ struct SidebarView: View {
             }
         )
         .contextMenu {
+            // 归属信息（删除/重命名前确认是哪个产品的项目）
+            HStack(spacing: 8) {
+                ProductDot(product: project.product, size: 8)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text("所属产品")
+                        .font(.system(size: 10))
+                        .foregroundStyle(.tertiary)
+                    Text(project.product?.name ?? ProductCatalogDefaults.defaultProductName)
+                        .font(.system(size: 12, weight: .medium))
+                }
+            }
+            Divider()
             Button("重命名") {
                 renameText = project.name
                 renamingProjectID = project.id
@@ -319,6 +370,10 @@ struct SidebarView: View {
 struct NewProjectSheet: View {
     @Bindable var projectVM: ProjectViewModel
     @Environment(\.dismiss) private var dismiss
+    /// 产品行处于「输入新产品名」内联模式
+    @State private var isCreatingProductInline = false
+    /// 重名二次确认（使用已有 / 仍要创建）
+    @State private var duplicateCandidate: Product?
 
     var body: some View {
         VStack(spacing: DesignTokens.Spacing.generous) {
@@ -337,11 +392,92 @@ struct NewProjectSheet: View {
                 TextField("输入项目名称", text: $projectVM.newProjectName)
                     .textFieldStyle(.roundedBorder)
                     .frame(width: 300)
-                    .onSubmit {
-                        guard !projectVM.newProjectName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
-                        projectVM.createProject()
-                        dismiss()
+                    .onSubmit { submit() }
+            }
+
+            // 产品归属行：Menu 选已有产品，或内联当场新建
+            VStack(alignment: .leading, spacing: 6) {
+                Text("所属产品")
+                    .font(DesignTokens.Typography.label)
+                    .foregroundStyle(.secondary)
+                if isCreatingProductInline {
+                    HStack {
+                        TextField("新产品名称", text: $projectVM.newProductName)
+                            .textFieldStyle(.roundedBorder)
+                            .frame(width: 224)
+                        Button("取消") {
+                            projectVM.newProductName = ""
+                            isCreatingProductInline = false
+                        }
+                        .buttonStyle(.borderless)
                     }
+                    .frame(width: 300, alignment: .leading)
+                    if let dup = duplicateCandidate {
+                        HStack(spacing: 6) {
+                            Text("已存在同名产品「\(dup.name)」")
+                                .font(DesignTokens.Typography.microRegular)
+                                .foregroundStyle(.orange)
+                            Button("使用已有") {
+                                projectVM.newProductName = ""
+                                projectVM.newProjectProductID = dup.id
+                                duplicateCandidate = nil
+                                isCreatingProductInline = false
+                            }
+                            .buttonStyle(.borderless)
+                            .font(DesignTokens.Typography.micro)
+                            Text("·")
+                            Button("仍要创建") {
+                                // 用户明确拍板：允许重名（菜单用「名称 · N 个项目」消歧）
+                                duplicateCandidate = nil
+                                submit(forceNewProduct: true)
+                            }
+                            .buttonStyle(.borderless)
+                            .font(DesignTokens.Typography.micro)
+                        }
+                    }
+                } else if let current = projectVM.effectiveNewProjectProduct {
+                    HStack(spacing: 8) {
+                        Menu {
+                            ForEach(projectVM.products) { product in
+                                Button {
+                                    projectVM.newProjectProductID = product.id
+                                } label: {
+                                    Label(product.name,
+                                          systemImage: product.id == current.id ? "checkmark" : "")
+                                }
+                            }
+                        } label: {
+                            HStack(spacing: 6) {
+                                Text(current.name)
+                                    .lineLimit(1)
+                                Text("· \(projectVM.projectCountByProduct[current.id] ?? 0) 个项目")
+                                    .font(DesignTokens.Typography.microRegular)
+                                    .foregroundStyle(.tertiary)
+                                Spacer()
+                                Image(systemName: "chevron.up.chevron.down")
+                                    .font(.system(size: 10))
+                                    .foregroundStyle(.tertiary)
+                            }
+                            .padding(.horizontal, 10).padding(.vertical, 6)
+                            .frame(width: 224)
+                            .background(Color.secondary.opacity(0.08))
+                            .clipShape(RoundedRectangle(cornerRadius: 6))
+                        }
+                        .menuIndicator(.hidden)
+                        .fixedSize()
+
+                        Button {
+                            projectVM.newProductName = ""
+                            duplicateCandidate = nil
+                            isCreatingProductInline = true
+                        } label: {
+                            Label("新产品", systemImage: "plus")
+                        }
+                        .buttonStyle(.borderless)
+                        .font(DesignTokens.Typography.micro)
+                    }
+                    .frame(width: 300, alignment: .leading)
+                }
             }
 
             HStack(spacing: DesignTokens.Spacing.normal) {
@@ -351,10 +487,7 @@ struct NewProjectSheet: View {
                 }
                 .keyboardShortcut(.cancelAction)
 
-                Button {
-                    projectVM.createProject()
-                    dismiss()
-                } label: {
+                Button { submit() } label: {
                     HStack(spacing: DesignTokens.Spacing.tight) {
                         Image(systemName: "plus")
                             .font(DesignTokens.Typography.caption)
@@ -367,5 +500,26 @@ struct NewProjectSheet: View {
             }
         }
         .padding(28)
+        .onAppear {
+            // 首次展示先确保默认产品存在（backfill 已做一层，这是 UI 期兜底），并初始化选中态。
+            projectVM.ensureDefaultProduct()
+            if projectVM.newProjectProductID == nil {
+                projectVM.newProjectProductID = projectVM.effectiveNewProjectProduct?.id
+            }
+        }
+    }
+
+    /// 提交创建；内联新产品名遇重名时先停下让用户拍板，不静默合并。
+    private func submit(forceNewProduct: Bool = false) {
+        guard !projectVM.newProjectName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        if isCreatingProductInline && !forceNewProduct {
+            let trimmed = projectVM.newProductName.trimmingCharacters(in: .whitespacesAndNewlines)
+            if let dup = projectVM.product(named: trimmed), duplicateCandidate == nil {
+                duplicateCandidate = dup
+                return
+            }
+        }
+        projectVM.createProject()
+        dismiss()
     }
 }

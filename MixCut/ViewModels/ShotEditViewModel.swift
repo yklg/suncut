@@ -552,6 +552,8 @@ final class ShotEditViewModel {
             segment.replacedPictureThumbnailPath = thumbURL.path
             segment.replacedPictureFrameCount = result.totalFrames   // = 探测到的实际帧数
             segment.pictureShowsReplaced = true
+            // 成功合成 AI 替换画面 → 分镜来源自动标「AI生产」（仅此成功路径；切回原画面不回退，可手动改）
+            segment.setSource(.aiGenerated)
             // 合成产物已移到最终目录：保存失败会导致"文件在、替换画面却丢了"，必须告知
             modelContext.saveOrWarn("替换画面")
             return true

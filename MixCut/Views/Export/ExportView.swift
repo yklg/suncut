@@ -512,9 +512,15 @@ struct ExportView: View {
             Button("取消", role: .cancel) {}
             Button("导出") { startDubbedExport() }
         } message: {
-            Text(selectedBGMPath == nil
-                 ? "选中 \(count) 个方案，画面不变，按每个分镜的「原声 + 各改写版」全部排列组合，串行逐条生成（一条一条导，避免占满机器）。"
-                 : "选中 \(count) 个方案，将替换背景音乐：去除原 BGM、只留口播，并铺上所选 BGM。首次需要对相关视频做人声分离，耗时较长。")
+            let base = selectedBGMPath == nil
+                ? "选中 \(count) 个方案，画面不变，按每个分镜的「原声 + 各改写版」全部排列组合，串行逐条生成（一条一条导，避免占满机器）。"
+                : "选中 \(count) 个方案，将替换背景音乐：去除原 BGM、只留口播，并铺上所选 BGM。首次需要对相关视频做人声分离，耗时较长。"
+            let curatedCount = curatedSegmentCountInSelection
+            if curatedCount > 0 {
+                Text(base + "\n\n⚠️ 其中 \(curatedCount) 个分镜来自「搬运」素材，投放前请确认已获授权，避免侵权风险。")
+            } else {
+                Text(base)
+            }
         }
 
         if schemeVM.schemes.isEmpty && !isExporting {
@@ -876,6 +882,17 @@ struct ExportView: View {
         selectedSchemes.reduce(0) { acc, scheme in
             acc + min(SchemeComboPlanner.maxCombos, SchemeComboPlanner.feasibleCount(for: scheme))
         }
+    }
+
+    /// 选中方案内「搬运」来源的分镜数（去重；未分类/自拍/AI 不计入版权提醒）
+    private var curatedSegmentCountInSelection: Int {
+        var ids = Set<UUID>()
+        for scheme in selectedSchemes {
+            for ss in scheme.schemeSegments where ss.segment?.source == .curated {
+                if let sid = ss.segment?.id { ids.insert(sid) }
+            }
+        }
+        return ids.count
     }
 
     /// 配音组合导出：每个选中方案按笛卡尔积（每镜 原声 + 各改写版，锁定=1）导出。

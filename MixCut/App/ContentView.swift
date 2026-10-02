@@ -67,6 +67,7 @@ struct ContentView: View {
             // 直接慢 500-1000ms。让 SwiftUI 自然 diff 重用就好。
             VStack(spacing: 0) {
                 if let project = projectVM.selectedProject {
+                    ProjectProductCrumb(project: project, moduleName: selectedNavItem?.rawValue)
                     detailView(for: project)
                 } else {
                     WelcomeView(projectVM: projectVM)
@@ -152,7 +153,8 @@ struct ContentView: View {
     /// 重载持有自身快照数组（不随 SwiftData Observation 自动刷新）的各 VM。
     /// 复用「切换项目」同款 loadXXX(for:) 路径，遵守切换项目铁律。
     private func reloadAfterUndo() {
-        // 1) 项目列表可能因删除/恢复项目而变化
+        // 1) 项目列表可能因删除/恢复项目而变化；产品列表一并刷（MCP create_project 可能新建产品）
+        projectVM.fetchProducts()
         projectVM.fetchProjects()
 
         // 2) 当前选中项目若已被撤销删除（恢复了"删除项目"操作），从最新列表里取消选中

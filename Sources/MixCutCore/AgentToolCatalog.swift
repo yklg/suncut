@@ -90,8 +90,8 @@ public enum AgentToolCatalog {
             annotationsJSON: #"{"readOnlyHint":true}"#),
         MCPToolDefinition(
             name: "create_project",
-            description: "新建项目",
-            inputSchemaJSON: #"{"type":"object","properties":{"name":{"type":"string","description":"项目名称"}},"required":["name"]}"#,
+            description: "新建项目，可指定所属产品（产品是第一层分类，一个产品含多个项目）",
+            inputSchemaJSON: #"{"type":"object","properties":{"name":{"type":"string","description":"项目名称"},"product_name":{"type":"string","description":"可选：所属产品名称；不存在则创建同名产品，已存在同名产品则归入它；不传则归入内置「默认产品」"}},"required":["name"]}"#,
             annotationsJSON: #"{"readOnlyHint":false,"destructiveHint":false}"#),
         MCPToolDefinition(
             name: "import_videos",

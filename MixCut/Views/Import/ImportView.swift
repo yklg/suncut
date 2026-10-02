@@ -17,6 +17,10 @@ struct ImportView: View {
     @State private var showingFilePicker = false
     /// 导入任务句柄，用于「停止导入」取消
     @State private var importTask: Task<Void, Never>?
+    /// 本批导入新视频的默认素材来源（与「上传自建分镜」入口分别记忆，互不污染）
+    @AppStorage("importDefaultSourceRaw") private var batchSourceRaw: String = SegmentSource.curated.rawValue
+
+    private var batchSource: SegmentSource { SegmentSource(persisted: batchSourceRaw) }
 
     var body: some View {
         // 本模块不挂骨架屏：正文实时读 `project.videos`（SwiftData 的 Observation 就是权威源），
@@ -38,6 +42,7 @@ struct ImportView: View {
 
             ScrollView {
                 VStack(spacing: DesignTokens.Spacing.spacious) {
+                    importSourceBar
                     importDropZone
 
                     errorBanner
@@ -69,13 +74,38 @@ struct ImportView: View {
                     return
                 }
                 importTask = Task {
-                    await importVM.importVideos(urls: videoURLs, to: project)
+                    await importVM.importVideos(urls: videoURLs, to: project,
+                                                defaultSource: batchSource)
                     for url in accessedURLs { url.stopAccessingSecurityScopedResource() }
                 }
             case .failure(let error):
                 importVM.errorMessage = "选择文件失败: \(error.localizedDescription)"
             }
         }
+    }
+
+    // MARK: - 批级来源选择
+    /// 拖入/选择文件立即按此来源导入；混批时可导入后在已导入卡片或素材库逐条改。
+    private var importSourceBar: some View {
+        HStack(spacing: DesignTokens.Spacing.normal) {
+            Text("素材来源")
+                .font(DesignTokens.Typography.label)
+                .foregroundStyle(.secondary)
+            Picker("", selection: $batchSourceRaw) {
+                Text("自拍（公司原创拍摄）").tag(SegmentSource.selfShot.rawValue)
+                Text("搬运（他人视频）").tag(SegmentSource.curated.rawValue)
+                Text("AI生产（AI 工具生成）").tag(SegmentSource.aiGenerated.rawValue)
+            }
+            .pickerStyle(.segmented)
+            .frame(maxWidth: 420)
+            .labelsHidden()
+            .disabled(importVM.isProcessing)
+            Spacer()
+            Text("本批新视频按此归类，单条可之后修改")
+                .font(DesignTokens.Typography.microRegular)
+                .foregroundStyle(.tertiary)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     // MARK: - 处理进度
@@ -155,7 +185,8 @@ struct ImportView: View {
                 return false
             }
             importTask = Task {
-                await importVM.importVideos(urls: videoURLs, to: project)
+                await importVM.importVideos(urls: videoURLs, to: project,
+                                            defaultSource: batchSource)
                 for url in securedURLs { url.stopAccessingSecurityScopedResource() }
             }
             return true
@@ -737,24 +768,27 @@ struct ImportedVideoCard: View {
         }
     }
 
-    // MARK: - 缩略图占位
+    // MARK: - 缩略图（命中缓存直出，未命中后台解码后淡入）
     @ViewBuilder
     private var thumbnailOrPlaceholder: some View {
-        if let thumbPath = video.thumbnailPath,
-           let image = ThumbnailCache.shared.image(for: thumbPath) {
-            Image(nsImage: image)
-                .resizable()
-                .aspectRatio(videoAspectRatio, contentMode: .fit)
-        } else {
-            Rectangle()
-                .fill(.quaternary)
-                .aspectRatio(videoAspectRatio, contentMode: .fit)
-                .overlay {
-                    Image(systemName: "film")
-                        .font(.system(size: 24))
-                        .foregroundStyle(.secondary)
-                }
-        }
+        AsyncCachedImage(
+            path: video.thumbnailPath,
+            placeholder: {
+                Rectangle()
+                    .fill(.quaternary)
+                    .aspectRatio(videoAspectRatio, contentMode: .fit)
+                    .overlay {
+                        Image(systemName: "film")
+                            .font(.system(size: 24))
+                            .foregroundStyle(.secondary)
+                    }
+            },
+            imageContent: { image in
+                Image(nsImage: image)
+                    .resizable()
+                    .aspectRatio(videoAspectRatio, contentMode: .fit)
+            }
+        )
     }
 
     private var processingLabel: String {

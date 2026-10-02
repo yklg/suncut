@@ -393,19 +393,22 @@ struct VideoCard: View {
 
     @ViewBuilder
     private var staticThumbnail: some View {
-        if let thumbPath = video.thumbnailPath,
-           let image = ThumbnailCache.shared.image(for: thumbPath) {
-            Image(nsImage: image)
-                .resizable()
-                .aspectRatio(contentMode: .fill)
-        } else {
-            Rectangle()
-                .fill(.quaternary.opacity(0.5))
-                .overlay {
-                    Image(systemName: "film")
-                        .font(.system(size: 24))
-                        .foregroundStyle(.tertiary)
-                }
-        }
+        AsyncCachedImage(
+            path: video.thumbnailPath,
+            placeholder: {
+                Rectangle()
+                    .fill(.quaternary.opacity(0.5))
+                    .overlay {
+                        Image(systemName: "film")
+                            .font(.system(size: 24))
+                            .foregroundStyle(.tertiary)
+                    }
+            },
+            imageContent: { image in
+                Image(nsImage: image)
+                    .resizable()
+                    .aspectRatio(contentMode: .fill)
+            }
+        )
     }
 }

@@ -19,6 +19,8 @@ struct SegmentLibraryView: View {
     /// ⚠️ 这是本视图**私有**的 ImportViewModel，与 ContentView 那个不是同一实例；
     ///    .task 里那句 setModelContext 是给它注上下文的**唯一一处**，删不得（自建分镜上传/拆分都走它）。
     @State private var importVM = ImportViewModel()
+    /// 滚动内容实测宽（背景 GeometryReader 间接测量），驱动网格列数与固定卡宽
+    @State private var libraryWidth: CGFloat = 0
     @Environment(\.modelContext) private var modelContext
 
     var body: some View {
@@ -52,10 +54,33 @@ struct SegmentLibraryView: View {
             ThumbnailCache.shared.prewarm(paths: covers, for: project.id)
             MixLog.info("[Perf] SegmentLibrary: \(Int(Date().timeIntervalSince(t0) * 1000))ms / segs=\(viewModel.segments.count)")
         }
+        .confirmationDialog("这批自建分镜的素材来源是？",
+                            isPresented: $showSelfSegmentSourcePicker,
+                            titleVisibility: .visible) {
+            ForEach([SegmentSource.selfShot, .curated, .aiGenerated], id: \.rawValue) { source in
+                Button {
+                    selfSegmentSourceRaw = source.rawValue
+                    presentSelfSegmentFilePanel(source: source)
+                } label: {
+                    let current = SegmentSource(persisted: selfSegmentSourceRaw) == source
+                    Text(current ? "✓ \(source.displayName)" : source.displayName)
+                }
+            }
+            Button("取消", role: .cancel) {}
+        } message: {
+            Text("自拍=公司原创拍摄；搬运=他人视频；AI生产=外部 AI 工具生成。选择会记住（仅本入口），之后可逐条改。")
+        }
     }
 
-    /// 上传自建分镜：选 mp4/mov → 交给 ImportViewModel 处理（时长校验/ASR/打标），进度回调刷新分镜库
+    /// 上传自建分镜：先选来源（自拍/搬运/AI，独立记忆），再选文件
+    @State private var showSelfSegmentSourcePicker = false
+    @AppStorage("selfSegmentDefaultSourceRaw") private var selfSegmentSourceRaw: String = SegmentSource.curated.rawValue
+
     private func presentSelfSegmentUpload() {
+        showSelfSegmentSourcePicker = true
+    }
+
+    private func presentSelfSegmentFilePanel(source: SegmentSource) {
         let panel = NSOpenPanel()
         panel.allowsMultipleSelection = true
         panel.canChooseDirectories = false
@@ -65,7 +90,7 @@ struct SegmentLibraryView: View {
         guard panel.runModal() == .OK, !panel.urls.isEmpty else { return }
         let urls = panel.urls
         Task { @MainActor in
-            await importVM.importSelfSegments(urls: urls, into: project) {
+            await importVM.importSelfSegments(urls: urls, into: project, source: source) {
                 viewModel.loadSegments(for: project)
             }
         }
@@ -227,6 +252,29 @@ struct SegmentLibraryView: View {
             .controlSize(.small)
             .tint(.red)
             .disabled(viewModel.selectedSegmentIDs.isEmpty)
+
+            // 批量标记素材来源（自拍/搬运/AI/未分类，5 秒撤销）
+            Menu {
+                ForEach([SegmentSource.selfShot, .curated, .aiGenerated, .unclassified],
+                        id: \.rawValue) { source in
+                    Button(source.displayName) {
+                        viewModel.applySourceToSelected(source)
+                    }
+                }
+            } label: {
+                HStack(spacing: DesignTokens.Spacing.tight) {
+                    Image(systemName: "tag")
+                        .font(DesignTokens.Typography.captionEmphasis)
+                    Text("标记来源")
+                        .font(DesignTokens.Typography.labelEmphasis)
+                }
+                .padding(.horizontal, 10)
+                .padding(.vertical, 5)
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.small)
+            .disabled(viewModel.selectedSegmentIDs.isEmpty)
+            .help("把所选分镜统一标记为自拍/搬运/AI/未分类")
 
             Button {
                 showArrangeSheet = true
@@ -402,9 +450,15 @@ struct SegmentLibraryView: View {
                 .help("上传自己剪好的分镜（mp4/mov，单条 ≤ \(Int(ImportViewModel.selfSegmentMaxDuration)) 秒）")
             }
 
+            // 素材来源筛选芯片（自拍/搬运/AI/未分类，与语义类型同排，用分隔点区分）
+            SourceFilterChips(filter: $viewModel.filter,
+                              counts: viewModel.countBySource,
+                              onChange: { viewModel.applyFilter() })
+
             // 语义类型筛选芯片
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 6) {
+                    // 来源组与语义组之间留一个分隔点（首颗语义芯片前）
                     ForEach(SemanticType.allCases) { type in
                         FilterChip(
                             label: type.rawValue,
@@ -465,16 +519,58 @@ struct SegmentLibraryView: View {
         }
     }
 
-    // MARK: - 按视频分组的内容区
+    // MARK: - 按视频分组的内容区（单层懒容器 + 扁平行投影）
+    //
+    // 滚动条不跳的结构前提（WWDC26 Session 321）：ForEach 每个元素必须对应一个身份稳定、
+    // 高度可预测、出现后布局不再变的子视图。旧实现「LazyVStack(section) 内嵌 LazyVGrid」是
+    // 两个懒布局系统互相估算，快速滚动时总高成片修正 → knob 跳。现在由 MixCutCore 的
+    // LibraryRowLayout 把分组拍平成「标题行/卡片行」单层序列，行高固定、id 稳定。
+
+    private var gridColumnCount: Int {
+        guard libraryWidth > 0 else { return 1 }
+        let spacing = DesignTokens.Spacing.normal
+        return max(1, Int((libraryWidth + spacing) / (SegmentLibraryMetrics.gridMinCardWidth + spacing)))
+    }
+
+    private var cardWidth: CGFloat {
+        guard libraryWidth > 0 else { return SegmentLibraryMetrics.gridMinCardWidth }
+        let cols = CGFloat(gridColumnCount)
+        let spacing = DesignTokens.Spacing.normal
+        return floor((libraryWidth - (cols - 1) * spacing) / cols)
+    }
+
+    private var libraryRows: [LibraryRow] {
+        let refs = viewModel.groupedSegments.map {
+            LibraryGroupRef(id: $0.id, segmentIDs: $0.segments.map(\.id))
+        }
+        return LibraryRowLayout.rows(for: refs,
+                                    columnCount: gridColumnCount,
+                                    isGrid: viewModel.isGridView)
+    }
 
     private var segmentContent: some View {
         ScrollView {
-            LazyVStack(alignment: .leading, spacing: DesignTokens.Spacing.generous) {
-                ForEach(viewModel.groupedSegments) { group in
-                    videoSection(group)
+            LazyVStack(alignment: .leading, spacing: DesignTokens.Spacing.normal) {
+                ForEach(libraryRows, id: \.id) { row in
+                    if case .header(let groupID) = row, let group = viewModel.groupByID[groupID] {
+                        sectionHeader(group)
+                            .padding(.top, DesignTokens.Spacing.normal)
+                    }
+                    if case .cards(let groupID, _, let segmentIDs) = row {
+                        cardsRow(groupID: groupID, segmentIDs: segmentIDs)
+                    }
                 }
             }
             .padding(DesignTokens.Spacing.comfortable)
+            // 宽度在背景层间接测量：GeometryReader 不做内容根，避免以零宽/无限提案扰乱懒布局。
+            .background {
+                GeometryReader { geo in
+                    Color.clear.preference(key: LibraryContentWidthKey.self, value: geo.size.width)
+                }
+            }
+            .onPreferenceChange(LibraryContentWidthKey.self) { width in
+                if abs(width - libraryWidth) > 0.5 { libraryWidth = width }
+            }
         }
     }
 
@@ -486,92 +582,98 @@ struct SegmentLibraryView: View {
         project.videoNoByVideoID
     }
 
-    private func videoSection(_ group: VideoSegmentGroup) -> some View {
-        VStack(alignment: .leading, spacing: DesignTokens.Spacing.normal) {
-            // 标题栏：自建分镜聚合组 vs 普通视频分组
-            HStack(spacing: 10) {
-                if group.isSelfBuilt {
-                    RoundedRectangle(cornerRadius: 5, style: .continuous)
-                        .fill(Color.accentColor.opacity(0.12))
-                        .frame(width: 20, height: 36)
-                        .overlay {
-                            Image(systemName: "square.and.arrow.up")
-                                .font(DesignTokens.Typography.label)
-                                .foregroundStyle(Color.accentColor)
-                        }
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("自建分镜")
-                            .font(DesignTokens.Typography.labelStrong)
-                            .lineLimit(1)
-                        Text("\(group.segments.count) 个分镜 · 我上传的")
-                            .font(DesignTokens.Typography.microRegular)
-                            .foregroundStyle(.tertiary)
+    /// 分组标题行（自建分镜聚合组 vs 普通视频分组）
+    private func sectionHeader(_ group: VideoSegmentGroup) -> some View {
+        HStack(spacing: 10) {
+            if group.isSelfBuilt {
+                RoundedRectangle(cornerRadius: 5, style: .continuous)
+                    .fill(Color.accentColor.opacity(0.12))
+                    .frame(width: 20, height: 36)
+                    .overlay {
+                        Image(systemName: "square.and.arrow.up")
+                            .font(DesignTokens.Typography.label)
+                            .foregroundStyle(Color.accentColor)
                     }
-                    Spacer()
-                } else if let video = group.video {
-                    if let thumbPath = video.thumbnailPath,
-                       let image = ThumbnailCache.shared.image(for: thumbPath) {
-                        Image(nsImage: image)
-                            .resizable()
-                            .aspectRatio(contentMode: .fill)
-                            .frame(width: 20, height: 36)
-                            .clipShape(RoundedRectangle(cornerRadius: 5, style: .continuous))
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 5, style: .continuous)
-                                    .stroke(DesignTokens.Palette.border, lineWidth: 1)
-                            )
-                    } else {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("自建分镜")
+                        .font(DesignTokens.Typography.labelStrong)
+                        .lineLimit(1)
+                    Text("\(group.segments.count) 个分镜 · 我上传的")
+                        .font(DesignTokens.Typography.microRegular)
+                        .foregroundStyle(.tertiary)
+                }
+                Spacer()
+            } else if let video = group.video {
+                AsyncCachedImage(
+                    path: video.thumbnailPath,
+                    placeholder: {
                         RoundedRectangle(cornerRadius: 5, style: .continuous)
                             .fill(.quaternary)
-                            .frame(width: 20, height: 36)
                             .overlay {
                                 Image(systemName: "film")
                                     .font(DesignTokens.Typography.microRegular)
                                     .foregroundStyle(.tertiary)
                             }
+                    },
+                    imageContent: { image in
+                        Image(nsImage: image)
+                            .resizable()
+                            .aspectRatio(contentMode: .fill)
+                            .clipShape(RoundedRectangle(cornerRadius: 5, style: .continuous))
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 5, style: .continuous)
+                                    .stroke(DesignTokens.Palette.border, lineWidth: 1)
+                            )
                     }
+                )
+                .frame(width: 20, height: 36)
+                .clipShape(RoundedRectangle(cornerRadius: 5, style: .continuous))
 
-                    VStack(alignment: .leading, spacing: 2) {
-                        HStack(spacing: 6) {
-                            if let no = videoNoByID[video.id] {
-                                Text("\(no) 号")
-                                    .font(DesignTokens.Typography.caption.bold())
-                                    .foregroundStyle(.white)
-                                    .padding(.horizontal, 7)
-                                    .padding(.vertical, 1.5)
-                                    .background(.black.opacity(0.62), in: Capsule())
-                            }
-                            Text(video.name)
-                                .font(DesignTokens.Typography.labelStrong)
-                                .lineLimit(1)
+                VStack(alignment: .leading, spacing: 2) {
+                    HStack(spacing: 6) {
+                        if let no = videoNoByID[video.id] {
+                            Text("\(no) 号")
+                                .font(DesignTokens.Typography.caption.bold())
+                                .foregroundStyle(.white)
+                                .padding(.horizontal, 7)
+                                .padding(.vertical, 1.5)
+                                .background(.black.opacity(0.62), in: Capsule())
                         }
-                        Text("\(group.segments.count) 个分镜 · \(String(format: "%.0f", video.duration))s")
-                            .font(DesignTokens.Typography.microRegular)
-                            .foregroundStyle(.tertiary)
+                        Text(video.name)
+                            .font(DesignTokens.Typography.labelStrong)
+                            .lineLimit(1)
                     }
-
-                    Spacer()
-
-                    // 视频专属「配音」栏（自建分镜组由多个载体视频组成，不显示视频级批量栏，逐卡各自配音）
-                    // 放进分组标题行：这些控件作用于「这个视频」，单独占一行浮在右侧看不出归属。
-                    DubSettingsBar(video: video, dubVM: dubVM)
+                    Text("\(group.segments.count) 个分镜 · \(String(format: "%.0f", video.duration))s")
+                        .font(DesignTokens.Typography.microRegular)
+                        .foregroundStyle(.tertiary)
                 }
-            }
-            .padding(.horizontal, 4)
 
-            // 分镜卡片/行
-            // 性能关键：父视图在 ForEach 内一次性算 isChecked / sequenceNumber，
-            // 传给 SegmentCard 作为 props。SegmentCard 实现 Equatable + .equatable() 后，
-            // 选中变化只会重绘那一个卡片，其他卡片跳过 body 评估。
-            let selectionMode = viewModel.isSelectionMode
-            let selectedIDs = viewModel.selectedSegmentIDs    // 读一次本地变量
-            let selectedSegID = viewModel.selectedSegment?.id // 读一次：检视栏选中分镜
-            let numMap = viewModel.numberByVideo[group.id] ?? [:]   // group.id = 视频id 或 自建分镜组固定id
-            if viewModel.isGridView {
-                LazyVGrid(columns: [
-                    GridItem(.adaptive(minimum: 360, maximum: 460))
-                ], spacing: DesignTokens.Spacing.normal) {
-                    ForEach(group.segments) { segment in
+                Spacer()
+
+                // 视频专属「配音」栏（自建分镜组由多个载体视频组成，不显示视频级批量栏，逐卡各自配音）
+                // 放进分组标题行：这些控件作用于「这个视频」，单独占一行浮在右侧看不出归属。
+                DubSettingsBar(video: video, dubVM: dubVM)
+            }
+        }
+        .padding(.horizontal, 4)
+    }
+
+    /// 一行卡片（网格模式 1...N 个、固定等宽；列表模式恒 1 个、铺满）。
+    ///
+    /// 性能关键（沿袭旧实现）：父视图一次性算好 isChecked / sequenceNumber 等 props 下发，
+    /// 卡片 Equatable + .equatable() 后，选中变化只重绘对应卡片。模型按 id 从 VM 字典回查，
+    /// 禁止强解（重认台词/删除撤销等异步回写可能让行投影与字典短暂跨相位）。
+    @ViewBuilder
+    private func cardsRow(groupID: UUID, segmentIDs: [UUID]) -> some View {
+        let selectionMode = viewModel.isSelectionMode
+        let selectedIDs = viewModel.selectedSegmentIDs
+        let selectedSegID = viewModel.selectedSegment?.id
+        let numMap = viewModel.numberByVideo[groupID] ?? [:]
+
+        if viewModel.isGridView {
+            HStack(alignment: .top, spacing: DesignTokens.Spacing.normal) {
+                ForEach(segmentIDs, id: \.self) { segmentID in
+                    if let segment = viewModel.segmentByID[segmentID] {
                         SegmentCard(
                             segment: segment,
                             isChecked: selectedIDs.contains(segment.id),
@@ -581,23 +683,22 @@ struct SegmentLibraryView: View {
                             viewModel: viewModel
                         )
                         .equatable()
-                    }
-                }
-            } else {
-                LazyVStack(spacing: DesignTokens.Spacing.compact) {
-                    ForEach(group.segments) { segment in
-                        SegmentRow(
-                            segment: segment,
-                            isChecked: selectedIDs.contains(segment.id),
-                            isSelectionMode: selectionMode,
-                            isSelected: segment.id == selectedSegID,
-                            sequenceNumber: numMap[segment.id] ?? 0,
-                            viewModel: viewModel
-                        )
-                        .equatable()
+                        // 必须显式给宽：HStack 不像 LazyVGrid 那样提供列宽提案，
+                        // 不给宽卡片会按理想宽塌缩、右面板 flexible 宽度分配不确定。
+                        .frame(width: cardWidth)
                     }
                 }
             }
+        } else if let segment = segmentIDs.first.flatMap({ viewModel.segmentByID[$0] }) {
+            SegmentRow(
+                segment: segment,
+                isChecked: selectedIDs.contains(segment.id),
+                isSelectionMode: selectionMode,
+                isSelected: segment.id == selectedSegID,
+                sequenceNumber: numMap[segment.id] ?? 0,
+                viewModel: viewModel
+            )
+            .equatable()
         }
     }
 
@@ -676,15 +777,103 @@ struct SegmentLibraryView: View {
     }
 }
 
-// MARK: - 分镜卡片
+// MARK: - 滚动性能基础设施
 
-/// 用于让左面板高度传递给右面板
-private struct SegmentLeftHeightKey: PreferenceKey {
+/// 素材库布局常量。两态等高（cell 出现后高度永不变，是滚动条不跳的前提）用到的数字集中在此。
+private enum SegmentLibraryMetrics {
+    /// 边界微调行的固定行高（TextField 16pt + 上下边距），卡片/列表行的「激活/非激活」两态共用。
+    static let boundaryRowHeight: CGFloat = 24
+    /// hover 停留多久才激活重子树（播放器完整态/AVPlayer、BoundaryAdjustRow、编辑按钮）。
+    /// 快速惯性滚动中单卡停留远小于此值 → 滚动中零结构翻转、零误播放。
+    static let hoverActivationDelay: Duration = .milliseconds(280)
+    /// 网格最小卡宽（与旧 GridItem(.adaptive(minimum:)) 同一口径）。
+    static let gridMinCardWidth: CGFloat = 360
+}
+
+/// 滚动内容宽度偏好键：只在滚动内容上放一个 GeometryReader（间接测量，不做内容根）。
+private struct LibraryContentWidthKey: PreferenceKey {
     static var defaultValue: CGFloat = 0
     static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
         value = max(value, nextValue())
     }
 }
+
+/// 延迟激活的 hover 状态（仅激活态）。播放器使用：不需要即时底色反馈。
+private struct HoverActivationModifier: ViewModifier {
+    @Binding var isActive: Bool
+    var delay: Duration
+    @State private var activationTask: Task<Void, Never>?
+
+    func body(content: Content) -> some View {
+        content
+            .onHover { hovering in
+                activationTask?.cancel()
+                activationTask = nil
+                guard hovering else {
+                    isActive = false
+                    return
+                }
+                activationTask = Task { @MainActor in
+                    try? await Task.sleep(for: delay)
+                    guard !Task.isCancelled else { return }
+                    isActive = true
+                }
+            }
+            .onDisappear {
+                activationTask?.cancel()
+                activationTask = nil
+                isActive = false
+            }
+    }
+}
+
+/// 两层 hover 状态：`isHovering` 即时跟随（只喂底色等零成本反馈，不加动画）；
+/// `isActive` 停留 `delay` 后才翻转（喂重子树）。卡片/列表行使用。
+private struct HoverStateModifier: ViewModifier {
+    @Binding var isHovering: Bool
+    @Binding var isActive: Bool
+    var delay: Duration
+    @State private var activationTask: Task<Void, Never>?
+
+    func body(content: Content) -> some View {
+        content
+            .onHover { hovering in
+                activationTask?.cancel()
+                activationTask = nil
+                isHovering = hovering
+                guard hovering else {
+                    isActive = false
+                    return
+                }
+                activationTask = Task { @MainActor in
+                    try? await Task.sleep(for: delay)
+                    guard !Task.isCancelled else { return }
+                    isActive = true
+                }
+            }
+            .onDisappear {
+                activationTask?.cancel()
+                activationTask = nil
+                isHovering = false
+                isActive = false
+            }
+    }
+}
+
+private extension View {
+    func hoverActivated(isActive: Binding<Bool>,
+                        delay: Duration = SegmentLibraryMetrics.hoverActivationDelay) -> some View {
+        modifier(HoverActivationModifier(isActive: isActive, delay: delay))
+    }
+
+    func hoverState(isHovering: Binding<Bool>,
+                    isActive: Binding<Bool>,
+                    delay: Duration = SegmentLibraryMetrics.hoverActivationDelay) -> some View {
+        modifier(HoverStateModifier(isHovering: isHovering, isActive: isActive, delay: delay))
+    }
+}
+
+// MARK: - 分镜卡片
 
 /// 把「可拖的遮挡框 + 可调高的底部手柄」挂到一个 9:16 画布上。
 ///
@@ -729,8 +918,10 @@ struct SegmentCard: View, Equatable {
 
     @Environment(\.modelContext) private var modelContext
 
+    /// 即时 hover（只喂底色/描边等零成本反馈）
     @State private var isHovering = false
-    @State private var leftHeight: CGFloat = 180
+    /// 延迟激活 hover（停留 SegmentLibraryMetrics.hoverActivationDelay 后才 true，喂重子树）
+    @State private var isHoverActive = false
     @State private var showDeleteConfirm = false
 
     // 行内编辑台词
@@ -773,11 +964,6 @@ struct SegmentCard: View, Equatable {
             // 字幕预览与遮挡层几何是按 200 宽算的，改宽度得连换算一起改。
             leftPanel
                 .frame(width: 200)
-                .background(
-                    GeometryReader { geo in
-                        Color.clear.preference(key: SegmentLeftHeightKey.self, value: geo.size.height)
-                    }
-                )
 
             // 分隔线
             Rectangle()
@@ -785,13 +971,10 @@ struct SegmentCard: View, Equatable {
                 .frame(width: 1)
                 .padding(.vertical, 8)
 
-            // 右侧：台词可滚动
+            // 右侧：台词全文显示（不再内嵌 ScrollView，也不再用 preference 回传高度二次布局）
             rightPanel
                 .frame(maxWidth: .infinity, alignment: .topLeading)
-                .frame(height: leftHeight)
-                .clipped()
         }
-        .onPreferenceChange(SegmentLeftHeightKey.self) { leftHeight = $0 }
         .background {
             RoundedRectangle(cornerRadius: 10, style: .continuous)
                 .fill(isChecked
@@ -824,11 +1007,9 @@ struct SegmentCard: View, Equatable {
             }
         }
         .contentShape(Rectangle())
-        .onHover { hovering in
-            withAnimation(DesignTokens.Motion.hover) {
-                isHovering = hovering
-            }
-        }
+        // 两层 hover：底色即时反馈、重子树（BoundaryAdjustRow/播放/编辑按钮）延迟激活。
+        // 惯性滚动中卡片从指针下穿过，停留不足激活延时，重子树全程不挂载。
+        .hoverState(isHovering: $isHovering, isActive: $isHoverActive)
         // ⇧+点击 = 范围多选（Finder 同款）；普通点击 = 单个切换
         .onTapGesture {
             if isSelectionMode {
@@ -886,6 +1067,21 @@ struct SegmentCard: View, Equatable {
                     try? modelContext.save()   // 旧文件留给孤儿 GC 回收
                 } label: {
                     Label("删除替换画面", systemImage: "photo.badge.arrow.down")
+                }
+            }
+
+            // 素材来源（分镜级逐条改；菜单内按钮只在弹出时挂载，不增加卡片常驻重量）
+            Menu("标记素材来源") {
+                ForEach([SegmentSource.selfShot, .curated, .aiGenerated, .unclassified],
+                        id: \.rawValue) { source in
+                    Button {
+                        modelContext.undoManager?.setActionName("标记来源")
+                        segment.setSource(source)
+                        try? modelContext.save()
+                    } label: {
+                        Label(source.displayName,
+                              systemImage: segment.source == source ? "checkmark" : "")
+                    }
                 }
             }
 
@@ -996,13 +1192,15 @@ struct SegmentCard: View, Equatable {
                     }
                 }
 
-            // 标签行：语义类型 + 位置
+            // 标签行：语义类型 + 位置 + 来源
             FlowLayout(spacing: 3) {
                 ForEach(segment.semanticTypes, id: \.self) { type in
                     SemanticTypeTag(type: type)
                 }
                 PositionTypeTag(type: segment.positionType)
                 QualityBadge(score: segment.qualityScore)
+                SourceBadge(source: segment.source)
+                    .help("素材来源：\(segment.source.displayName)（右键可改）")
             }
 
             // 配音控件：保留原声 + 硬字幕遮挡开关
@@ -1026,17 +1224,16 @@ struct SegmentCard: View, Equatable {
                 onApplyFontSizeToAll: { Self.applyFontSizeToAllSegments(of: segment, in: modelContext) }
             )
 
-            // 边界微调 —— hover 或选中时才显示（性能优化：含多 TextField+@FocusState，
-            // 默认全部展示会让 50 个分镜卡片同步实例化 100+ 个交互控件）
-            if isHovering || isSelected {
-                BoundaryAdjustRow(segment: segment, viewModel: viewModel)
-                    .transition(.opacity)
-            } else {
-                // 占位：保持卡片高度稳定
-                Rectangle()
-                    .fill(.clear)
-                    .frame(height: 24)
+            // 边界微调 —— 激活或选中时才挂载（含多 TextField+@FocusState，常驻会让几十个卡片
+            // 同步实例化上百颗交互控件）。两态共用同一固定高度槽位：激活前后卡片高度零变化，
+            // 这是懒容器行高估算稳定（滚动条不跳）的前提。
+            ZStack(alignment: .topLeading) {
+                Color.clear
+                if isHoverActive || isSelected {
+                    BoundaryAdjustRow(segment: segment, viewModel: viewModel)
+                }
             }
+            .frame(height: SegmentLibraryMetrics.boundaryRowHeight)
         }
         .padding(8)
     }
@@ -1084,17 +1281,20 @@ struct SegmentCard: View, Equatable {
         label.lineLimit(1).fixedSize(horizontal: !compressible, vertical: false)
     }
 
+    /// 按钮区固定单行高度：按钮按激活/编辑态出现与否都不改变台词头部高度
+    ///（cell 出现后布局不得变化，滚动条稳定性的前提）。
     @ViewBuilder private var transcriptHeaderButtons: some View {
-        if isEditingText {
-            Button { isEditingText = false } label: {
-                Image(systemName: "xmark.circle.fill").font(DesignTokens.Typography.label)
-            }
-            .buttonStyle(.plain).foregroundStyle(.secondary).accessibilityLabel("取消编辑").help("取消")
-            Button { saveText() } label: {
-                Image(systemName: "checkmark.circle.fill").font(DesignTokens.Typography.label)
-            }
-            .buttonStyle(.plain).foregroundStyle(.green).accessibilityLabel("保存台词").help("保存（⌘↩）")
-        } else if isHovering || isSelected {
+        Group {
+            if isEditingText {
+                Button { isEditingText = false } label: {
+                    Image(systemName: "xmark.circle.fill").font(DesignTokens.Typography.label)
+                }
+                .buttonStyle(.plain).foregroundStyle(.secondary).accessibilityLabel("取消编辑").help("取消")
+                Button { saveText() } label: {
+                    Image(systemName: "checkmark.circle.fill").font(DesignTokens.Typography.label)
+                }
+                .buttonStyle(.plain).foregroundStyle(.green).accessibilityLabel("保存台词").help("保存（⌘↩）")
+            } else if isHoverActive || isSelected {
             Button {
                 draftText = segment.text
                 isEditingText = true
@@ -1116,7 +1316,9 @@ struct SegmentCard: View, Equatable {
             .accessibilityLabel("重新识别台词")
             .disabled(viewModel.busyASRSegmentIDs.contains(segment.id))
             .help("重认这一段的台词：用哪台引擎由「设置 › 台词重听引擎」与决策表定；没认到字时原台词一字不动")
+            }
         }
+        .frame(height: 18)
     }
 
     // MARK: - 右侧台词面板
@@ -1160,16 +1362,17 @@ struct SegmentCard: View, Equatable {
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
-                ScrollView {
-                    Text(segment.text)
-                        .font(DesignTokens.Typography.caption)
-                        .foregroundStyle(.primary.opacity(0.85))
-                        .lineSpacing(3)
-                        .fixedSize(horizontal: false, vertical: true)
-                        .textSelection(.enabled)
-                        .padding(.horizontal, 8)
-                        .padding(.bottom, 8)
-                }
+                // 全文显示（不截断）：不再内嵌 ScrollView——每卡一颗 NSScrollView 宿主曾是滚动掉帧源，
+                // 且它依赖 preference 回传高度（首次布局先错后修）。卡片随台词自然增高，首次布局即真相。
+                Text(segment.text)
+                    .font(DesignTokens.Typography.caption)
+                    .foregroundStyle(.primary.opacity(0.85))
+                    .lineSpacing(3)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .topLeading)
+                    .padding(.horizontal, 8)
+                    .padding(.bottom, 8)
             }
         }
     }
@@ -1338,8 +1541,11 @@ struct SegmentInlinePlayer: View {
     @State private var timeObserver: Any?
     @State private var endNotifObserver: NSObjectProtocol?  // 到达 forwardPlaybackEndTime / 视频自然播完 → 定格
     @State private var currentTime: Double = 0
-    @State private var isHovering = false
-    @State private var hoverTimer: Timer?
+    /// hover 停留足够久后才激活：驱动「轻量缩略图态 → 完整播放态」翻转与自动播放。
+    /// 快速惯性滚动中卡片在指针下一闪而过，永不激活（不翻转 UI、不创建 AVPlayer）。
+    @State private var isHoverActive = false
+    /// 当前缩略图（异步加载；主图与遮罩预览共用同一份，每卡只解码一次）
+    @State private var thumbnail: NSImage?
 
     /// 视频原始宽高比
     private var videoAspectRatio: CGFloat {
@@ -1360,9 +1566,9 @@ struct SegmentInlinePlayer: View {
     }
 
     var body: some View {
-        // 性能关键：默认只渲染缩略图 + 时长（最轻量），hover/播放才组装完整 ZStack
+        // 性能关键：默认只渲染缩略图 + 时长（最轻量），激活/播放才组装完整 ZStack
         Group {
-            if !isHovering && !isPlaying && !isFrozen {
+            if !isHoverActive && !isPlaying && !isFrozen {
                 // 静态轻量态：只有缩略图 + 时长角标
                 thumbnailView
                     .overlay(alignment: .bottomTrailing) {
@@ -1377,29 +1583,34 @@ struct SegmentInlinePlayer: View {
                     }
                     .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
             } else {
-                // hover 或播放态：完整 player UI
+                // 激活或播放态：完整 player UI
                 playerUI
             }
         }
-        // hover 统一挂在外层 Group(稳定容器)：静态↔playerUI 子视图切换时不会丢/错乱 hover 事件，
-        // 这是"播放中移到另一分镜会卡住"的根因修复。
-        .onHover { hovering in
-            isHovering = hovering
-            if hovering {
-                hoverTimer?.invalidate()
-                hoverTimer = Timer.scheduledTimer(withTimeInterval: 0.35, repeats: false) { _ in
-                    Task { @MainActor in
-                        guard isHovering else { return }
-                        viewModel.requestPlay(segment: segment)
-                    }
-                }
+        // hover 统一挂在外层 Group（稳定容器）：静态↔playerUI 子视图切换不丢 hover 事件。
+        // 延迟激活：滚动中一闪而过的卡片不翻转、不播放。
+        .hoverActivated(isActive: $isHoverActive)
+        .onChange(of: isHoverActive) { _, active in
+            if active {
+                viewModel.requestPlay(segment: segment)
             } else {
-                hoverTimer?.invalidate()
-                hoverTimer = nil
                 if isPlaying || isFrozen { stopPlayback() }
                 // 仅当全局仍是"我"在播才清空——避免离开本分镜时误杀刚移入的下一个分镜。
                 if viewModel.playingSegmentID == segment.id { viewModel.stopCurrentPlayback() }
             }
+        }
+        // 缩略图按路径异步加载（主图与遮罩层共用）；路径变化（替换画面/边界换首帧）自动重取。
+        .task(id: segment.effectivePicture.thumbnailPath) {
+            guard let thumbPath = segment.effectivePicture.thumbnailPath else {
+                thumbnail = nil
+                return
+            }
+            if let cached = ThumbnailCache.shared.cachedImage(for: thumbPath) {
+                thumbnail = cached
+                return
+            }
+            let loaded = await ThumbnailCache.shared.loadImage(for: thumbPath)
+            if !Task.isCancelled { thumbnail = loaded }
         }
         // ⚠️ 播放请求监听必须挂在 body 顶层（而非 playerUI 内）：空闲态只渲染缩略图时
         // 也要能响应微调（adjustStartTime/adjustEndTime）触发的 requestPlay，否则点加减不播放。
@@ -1427,7 +1638,7 @@ struct SegmentInlinePlayer: View {
                 thumbnailView
             }
 
-            if isHovering && !isPlaying && !isFrozen {
+            if isHoverActive && !isPlaying && !isFrozen {
                 Color.black.opacity(0.15)
                 Image(systemName: "play.fill")
                     .font(.system(size: 20))
@@ -1457,7 +1668,6 @@ struct SegmentInlinePlayer: View {
         .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
         // 注意：hover 已统一挂在 body 外层 Group，playerUI 内不再重复挂 onHover（会与子视图切换打架）。
         .onDisappear {
-            hoverTimer?.invalidate()
             stopPlayback()
         }
     }
@@ -1472,8 +1682,7 @@ struct SegmentInlinePlayer: View {
     @ViewBuilder
     private var thumbnailView: some View {
         Group {
-            if let thumbPath = segment.effectivePicture.thumbnailPath,
-               let image = ThumbnailCache.shared.image(for: thumbPath) {
+            if let image = thumbnail {
                 Image(nsImage: image)
                     .resizable()
                     .aspectRatio(contentMode: .fit)   // F11/F12: 横屏视频在 9:16 容器内留黑边，不裁切
@@ -1510,8 +1719,8 @@ struct SegmentInlinePlayer: View {
         let mode = SubtitleMaskMode.from(hasHardSubtitle: segment.hasHardSubtitle,
                                          maskStyleRaw: segment.maskStyleRaw)
         if mode != .none,
-           let thumbPath = segment.effectivePicture.thumbnailPath,
-           let image = ThumbnailCache.shared.image(for: thumbPath) {
+           segment.effectivePicture.thumbnailPath != nil,
+           let image = thumbnail {
             GeometryReader { geo in
                 let px = segment.maskRect.pixelRect(width: geo.size.width, height: geo.size.height)
                 switch mode.renderSpec {
@@ -1704,7 +1913,9 @@ struct SegmentRow: View, Equatable {
     let sequenceNumber: Int
     @Bindable var viewModel: SegmentLibraryViewModel
     @Environment(\.modelContext) private var modelContext
+    /// 即时 hover（底色）/ 延迟激活 hover（重子树），语义同 SegmentCard
     @State private var isHovering = false
+    @State private var isHoverActive = false
 
     // ⚠️ 只比值类型 props —— 理由同 SegmentCard.== 上面那段：`segment` 是 class，
     // `lhs.segment.<字段> == rhs.segment.<字段>` 恒真、不承重，写在这里只会让人以为行内容已被守住。
@@ -1760,6 +1971,7 @@ struct SegmentRow: View, Equatable {
                     }
                     PositionTypeTag(type: segment.positionType)
                     QualityBadge(score: segment.qualityScore)
+                    SourceBadge(source: segment.source)
                 }
 
                 SegmentDubCompactControls(segment: segment)
@@ -1769,11 +1981,15 @@ struct SegmentRow: View, Equatable {
                     .lineLimit(2)
                     .foregroundStyle(.secondary)
 
-                // 边界微调 hover/选中才显示
-                if isHovering || isSelected {
-                    BoundaryAdjustRow(segment: segment, viewModel: viewModel)
-                        .transition(.opacity)
+                // 边界微调：激活/选中才挂载；固定高度槽位保证行高在两态下不变
+                // （旧实现这里「无 else 直接不挂」，hover 会增高整行，列表模式滚动估算同样失真）。
+                ZStack(alignment: .topLeading) {
+                    Color.clear
+                    if isHoverActive || isSelected {
+                        BoundaryAdjustRow(segment: segment, viewModel: viewModel)
+                    }
                 }
+                .frame(height: SegmentLibraryMetrics.boundaryRowHeight)
             }
             // ⚠️ 这一行是"整行铺满列表列"的**唯一**承担者，别当死码删掉。
             // 旧版靠标签行里那颗 `Spacer()` 顺带把行撑满（它同时兼任"把质量分推到最右"），
@@ -1798,11 +2014,8 @@ struct SegmentRow: View, Equatable {
                 .stroke(isChecked ? Color.accentColor : isSelected ? Color.accentColor.opacity(0.5) : DesignTokens.Palette.border,
                         lineWidth: isChecked ? 2 : 1)
         )
-        .onHover { hovering in
-            withAnimation(DesignTokens.Motion.hover) {
-                isHovering = hovering
-            }
-        }
+        // 两层 hover：底色即时、BoundaryAdjustRow 等重子树延迟激活（滚动中不挂载）
+        .hoverState(isHovering: $isHovering, isActive: $isHoverActive)
         // ⇧+点击 = 范围多选（Finder 同款）；普通点击 = 单个切换
         .onTapGesture {
             if isSelectionMode {

@@ -90,19 +90,23 @@ struct SegmentCardCompact: View {
 
     @ViewBuilder
     private var thumbnail: some View {
-        if let path = segment.effectivePicture.thumbnailPath,
-           let image = ThumbnailCache.shared.image(for: path) {
-            Image(nsImage: image)
-                .resizable()
-                .scaledToFill()
-        } else {
-            Rectangle()
-                .fill(.quaternary)
-                .overlay(
-                    Image(systemName: "film")
-                        .font(.system(size: 16))
-                        .foregroundStyle(.tertiary)
-                )
-        }
+        // 异步缩略图：命中缓存直出；未命中后台降采样解码、淡入（见 AsyncCachedImage 契约）。
+        AsyncCachedImage(
+            path: segment.effectivePicture.thumbnailPath,
+            placeholder: {
+                Rectangle()
+                    .fill(.quaternary)
+                    .overlay(
+                        Image(systemName: "film")
+                            .font(.system(size: 16))
+                            .foregroundStyle(.tertiary)
+                    )
+            },
+            imageContent: { image in
+                Image(nsImage: image)
+                    .resizable()
+                    .scaledToFill()
+            }
+        )
     }
 }

@@ -21,6 +21,10 @@ final class Project: Identifiable {
     var createdAt: Date
     var updatedAt: Date
 
+    /// 所属产品（建项目时选定；nil 仅可能出现在 backfill 之前，读侧经 Product 目录回退默认产品）。
+    /// optional to-one + 产品侧不挂 cascade：产品删除不连带删项目（本期产品不做删除）。
+    var product: Product?
+
     @Relationship(deleteRule: .cascade, inverse: \ProjectVideo.project)
     var projectVideos: [ProjectVideo] = []
 

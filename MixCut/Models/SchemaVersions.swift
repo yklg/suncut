@@ -34,6 +34,9 @@ enum AppSchemaV1: VersionedSchema {
             SegmentDub.self,
             PhysicalShot.self,
             ShotVariant.self,
+            // V1 之后新增（optional 字段 + optional to-one + 新实体，走轻量迁移，
+            // 经 .scratch 真实 store 副本 spike 验证；未冻结 V2 副本）：
+            Product.self,
         ]
     }
 }

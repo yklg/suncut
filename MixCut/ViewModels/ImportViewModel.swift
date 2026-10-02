@@ -47,6 +47,9 @@ final class ImportViewModel {
     /// 已取消的视频 ID（删除视频时加入，用于跳过后续处理）
     private var cancelledVideoIDs: Set<UUID> = []
 
+    /// 本批导入新视频的默认来源（importVideos 入口写入，importOrLinkVideo 读取）
+    private var pendingBatchSource: SegmentSource = .curated
+
     private var modelContext: ModelContext?
     private let ffmpeg = FFmpegRunner()
 
@@ -89,10 +92,14 @@ final class ImportViewModel {
 
     /// 导入视频文件列表（全局去重 + 共享引用）
     @discardableResult
-    func importVideos(urls: [URL], to project: Project) async -> ImportReport {
+    /// - Parameter defaultSource: 本批新视频的默认素材来源（写在 Video 上，切出的分镜继承）。
+    ///   全局去重命中的**已有视频不覆写**其来源与 ownerProject（导入事实归首次导入所有）。
+    func importVideos(urls: [URL], to project: Project,
+                      defaultSource: SegmentSource = .curated) async -> ImportReport {
         var report = ImportReport()
         isProcessing = true
         errorMessage = nil
+        pendingBatchSource = defaultSource
 
         // 去重：检查该视频是否已在当前项目中
         var dedupedURLs: [URL] = []
@@ -438,6 +445,10 @@ final class ImportViewModel {
         let video = Video(name: url.lastPathComponent, localPath: destURL.path)
         video.status = .imported
         video.contentHash = hash
+        // 导入事实：首次导入所在项目 + 本批选定来源。命中去重复用的已有视频在上面的分支直接返回，
+        // 不会走到这里，因此这两个事实字段不存在被覆写的路径。
+        video.ownerProject = project
+        video.defaultSourceRaw = pendingBatchSource.rawValue
         context.insert(video)
 
         // 创建 ProjectVideo 关联（幂等入口）
@@ -479,7 +490,10 @@ final class ImportViewModel {
 
     /// 上传自建分镜：每个文件 = 一个分镜（不切分），只做 ASR 台词提取 + AI 只打标。
     /// 处理态用载体视频的 status 驱动占位卡（transcribing/analyzing/completed）。见 PRD/TRD 05。
-    func importSelfSegments(urls: [URL], into project: Project, onUpdate: @escaping @MainActor () -> Void = {}) async {
+    /// - Parameter source: 用户在上传面板选定的素材来源（自拍/搬运/AI），写入载体视频与单分镜
+    func importSelfSegments(urls: [URL], into project: Project,
+                             source: SegmentSource = .curated,
+                             onUpdate: @escaping @MainActor () -> Void = {}) async {
         guard let context = modelContext else { return }
         var skippedLong: [String] = []
         var skippedDup = 0
@@ -505,6 +519,9 @@ final class ImportViewModel {
             let video = Video(name: url.lastPathComponent, localPath: destURL.path)
             video.contentHash = hash
             video.isUserUploaded = true
+            // 自建分镜同样记录导入事实（首次导入项目 + 用户选定来源）
+            video.ownerProject = project
+            video.defaultSourceRaw = source.rawValue
             Self.registerSelfBuiltVideo(video.id)
             video.status = .transcribing
             context.insert(video)
@@ -523,6 +540,7 @@ final class ImportViewModel {
             seg.video = video
             seg.setFrameRange(startFrame: 0, endFrame: endFrame, fps: fps)
             seg.thumbnailPath = video.thumbnailPath
+            seg.setSource(source)
             context.insert(seg)
             context.safeSave()
             onUpdate()   // 占位卡「识别中…」出现
@@ -739,6 +757,8 @@ final class ImportViewModel {
             segment.qualityReasoning = aiSeg.dataQuality.reasoning
             segment.keywords = aiSeg.keywords
             segment.video = video
+            // 分镜继承视频导入时选定的默认来源（自拍/搬运/AI）；之后可在素材库逐条改
+            segment.setSource(video.defaultSource)
             context.insert(segment)
             // 帧化：把秒边界 round 成帧号作为真相（永不差帧）
             if video.fps > 0 {
@@ -1238,6 +1258,8 @@ final class ImportViewModel {
         b.video = video
         b.setFrameRange(startFrame: cutFrame, endFrame: origEnd, fps: fps)
         b.keywords = seg.keywords
+        // 拆出的新段继承原段来源（同一素材切两半，来源不变）
+        b.setSource(seg.source)
         context.insert(b)
         context.safeSave()
         onUpdate()   // 两段先出现

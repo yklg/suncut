@@ -23,6 +23,57 @@ final class ProjectViewModel {
     var newProjectName = ""
     var errorMessage: String?
 
+    // MARK: - 产品（第一层分类）
+    /// 全库产品，按创建时间升序
+    private(set) var products: [Product] = []
+    /// 每个产品下的项目数（产品菜单「名称 · N 个项目」消歧用）
+    private(set) var projectCountByProduct: [UUID: Int] = [:]
+    /// 新建项目弹窗里选中的产品 id；nil = 用默认产品（与存量数据/未选择口径一致）
+    var newProjectProductID: UUID?
+    /// 新建产品名称（弹窗内联输入）；非空即处于「新建产品」模式
+    var newProductName: String = ""
+
+    // MARK: - 侧栏分组（派生状态，零 stored 缓存）
+
+    /// 用户显式折叠的产品（@AppStorage 同源；仅记录「折叠」，展开与否还要结合当前选中项目）
+    private(set) var collapsedProductIDs: Set<UUID> = {
+        Set(UserDefaults.standard.stringArray(forKey: "collapsedProductIDs_v1")?
+            .compactMap(UUID.init(uuidString:)) ?? [])
+    }()
+
+    /// 侧栏「产品 → 项目」分组。计算属性：deleteProject/undo 等路径直接改 projects 数组、
+    /// 不经过 fetch，stored 缓存会漏刷新；@Observable 在 products/projects 变化时自动重算。
+    var sidebarGroups: [SidebarProductGroup] {
+        let productRefs = products.map {
+            SidebarProductRef(id: $0.id, name: $0.name, isDefault: $0.isBuiltInDefault,
+                              createdAt: $0.createdAt)
+        }
+        let projectRefs = projects.map {
+            SidebarProjectRef(id: $0.id, productID: $0.product?.id,
+                              updatedAt: $0.updatedAt, isArchived: $0.status == .archived)
+        }
+        return SidebarProductGrouping.groups(products: productRefs, projects: projectRefs)
+    }
+
+    /// 组是否展开：用户折叠后，只要当前选中项目不在该组即收起；选中项目所在组永远可见。
+    func isExpanded(_ groupID: UUID) -> Bool {
+        !(collapsedProductIDs.contains(groupID) && selectedProject?.product?.id != groupID)
+    }
+
+    func toggleCollapsed(_ groupID: UUID) {
+        if collapsedProductIDs.contains(groupID) {
+            collapsedProductIDs.remove(groupID)
+        } else {
+            collapsedProductIDs.insert(groupID)
+        }
+        UserDefaults.standard.set(collapsedProductIDs.map(\.uuidString),
+                                  forKey: "collapsedProductIDs_v1")
+    }
+
+    func product(byID id: UUID) -> Product? {
+        products.first { $0.id == id }
+    }
+
     /// 概览页的数字快照。
     ///
     /// 原先这四个值写在 `ProjectOverviewView` 的 `@State` 里，而视图实例每次切模块都被销毁重建
@@ -57,6 +108,7 @@ final class ProjectViewModel {
 
     func setModelContext(_ context: ModelContext) {
         self.modelContext = context
+        fetchProducts()
         fetchProjects()
         // 启动时恢复上次选中的项目
         if selectedProject == nil,
@@ -65,6 +117,76 @@ final class ProjectViewModel {
            let proj = projects.first(where: { $0.id == id }) {
             selectedProject = proj
         }
+    }
+
+    // MARK: - 产品操作
+
+    /// 取或建内置「默认产品」（哨兵 UUID，全库唯一）。
+    /// backfill（LaunchSteps）负责给存量项目补归属；VM 这个入口保证 UI 期间也永远有默认项可选。
+    @discardableResult
+    func ensureDefaultProduct(in context: ModelContext? = nil) -> Product? {
+        guard let context = context ?? modelContext else { return nil }
+        if let existing = products.first(where: { $0.isBuiltInDefault }) { return existing }
+        if let existing = try? context.fetch(FetchDescriptor<Product>()),
+           let found = existing.first(where: { $0.isBuiltInDefault }) {
+            fetchProducts()
+            return found
+        }
+        let product = Product(id: ProductCatalogDefaults.defaultProductID,
+                              name: ProductCatalogDefaults.defaultProductName,
+                              isBuiltInDefault: true)
+        context.insert(product)
+        context.safeSave()
+        fetchProducts()
+        return product
+    }
+
+    /// 精确同名产品查询（去首尾空白后比较；UI 用它做「已存在同名产品」二次确认）。
+    func product(named name: String) -> Product? {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        return products.first { $0.name.trimmingCharacters(in: .whitespacesAndNewlines) == trimmed }
+    }
+
+    /// 创建产品。重名由 UI 层先确认（使用已有 / 仍要创建），这里不做静默合并。
+    @discardableResult
+    func createProduct(name: String) -> Product? {
+        guard let context = modelContext else { return nil }
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        let product = Product(name: trimmed)
+        context.insert(product)
+        context.safeSave()
+        fetchProducts()
+        return product
+    }
+
+    func fetchProducts() {
+        guard let context = modelContext else { return }
+        let descriptor = FetchDescriptor<Product>(sortBy: [SortDescriptor(\Product.createdAt, order: .forward)])
+        let fetched = (try? context.fetch(descriptor)) ?? []
+        products = fetched
+        // 项目数统计走内存（产品数/项目数都是个位~几十量级）
+        let projects = (try? context.fetch(FetchDescriptor<Project>())) ?? []
+        var counts: [UUID: Int] = [:]
+        for project in projects {
+            guard let pid = project.product?.id else { continue }
+            counts[pid, default: 0] += 1
+        }
+        projectCountByProduct = counts
+    }
+
+    /// 弹窗里产品选择的当前值：显式选择 → 记住的产品 → 默认产品。
+    var effectiveNewProjectProduct: Product? {
+        if let id = newProjectProductID {
+            if let p = products.first(where: { $0.id == id }) { return p }
+        }
+        if let idString = UserDefaults.standard.string(forKey: "lastSelectedProductID"),
+           let id = UUID(uuidString: idString),
+           let p = products.first(where: { $0.id == id }) {
+            return p
+        }
+        return products.first(where: { $0.isBuiltInDefault })
     }
 
     /// 获取所有项目
@@ -78,13 +200,28 @@ final class ProjectViewModel {
         projects = (try? context.fetch(descriptor)) ?? []
     }
 
-    /// 创建新项目（同步创建"自定义组合"策略容器）
+    /// 创建新项目（同步创建"自定义组合"策略容器），归属到弹窗选定的产品。
     func createProject() {
         guard let context = modelContext else { return }
         let name = newProjectName.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !name.isEmpty else { return }
 
+        // 产品归属：内联新输入的产品名优先（重名时 UI 已让用户拍板）；否则用选中产品；兜底默认产品。
+        let product: Product?
+        let trimmedNewProduct = newProductName.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !trimmedNewProduct.isEmpty {
+            product = self.product(named: trimmedNewProduct) ?? createProduct(name: trimmedNewProduct)
+        } else if let id = newProjectProductID, let selected = products.first(where: { $0.id == id }) {
+            product = selected
+        } else {
+            product = effectiveNewProjectProduct ?? ensureDefaultProduct()
+        }
+        if let pid = product?.id {
+            UserDefaults.standard.set(pid.uuidString, forKey: "lastSelectedProductID")
+        }
+
         let project = Project(name: name)
+        project.product = product
         context.insert(project)
 
         let customGroup = MixStrategy(
@@ -103,7 +240,10 @@ final class ProjectViewModel {
         context.safeSave()
 
         newProjectName = ""
+        newProductName = ""
+        newProjectProductID = product?.id
         isCreatingProject = false
+        fetchProducts()
         fetchProjects()
         selectedProject = project
     }

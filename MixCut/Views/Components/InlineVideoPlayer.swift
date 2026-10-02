@@ -143,22 +143,25 @@ struct InlineVideoPlayer: View {
 
     @ViewBuilder
     private var thumbnailView: some View {
-        if let thumbPath = thumbnailPath,
-           let image = ThumbnailCache.shared.image(for: thumbPath) {
-            Image(nsImage: image)
-                .resizable()
-                .aspectRatio(aspectRatio, contentMode: .fit)
-                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-        } else {
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .fill(.quaternary)
-                .aspectRatio(aspectRatio, contentMode: .fit)
-                .overlay {
-                    Image(systemName: "film")
-                        .font(.system(size: 20))
-                        .foregroundStyle(.secondary)
-                }
-        }
+        AsyncCachedImage(
+            path: thumbnailPath,
+            placeholder: {
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .fill(.quaternary)
+                    .aspectRatio(aspectRatio, contentMode: .fit)
+                    .overlay {
+                        Image(systemName: "film")
+                            .font(.system(size: 20))
+                            .foregroundStyle(.secondary)
+                    }
+            },
+            imageContent: { image in
+                Image(nsImage: image)
+                    .resizable()
+                    .aspectRatio(aspectRatio, contentMode: .fit)
+                    .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+            }
+        )
     }
 
     // MARK: - 播放控制

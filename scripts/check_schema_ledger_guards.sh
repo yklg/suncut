@@ -125,6 +125,30 @@ elif not want_req.issubset(set(gc_req)):
 else:
     ok("SL-06 orphanGC 的 requires 覆盖三颗关键前序", "、".join(sorted(gc_req)))
 
+# ---- SL-13 产品归属回填必须在去重之后，且规则本体走 MixCutCore 纯函数 -------------
+bf_stmt = re.search(r'LaunchStep\(id:\s*"backfillProductOwnership".*?onFailure:[^\n]*', launch_sw, re.S)
+bf_req = re.findall(r'"([A-Za-z]+)"',
+                    re.search(r"requires:\s*\[([^\]]*)\]", bf_stmt.group(0)).group(1)) \
+        if (bf_stmt and re.search(r"requires:\s*\[([^\]]*)\]", bf_stmt.group(0))) else []
+bf_impl = re.search(r"static func backfillProductOwnership\(container: ModelContainer\)", app_sw)
+bf_uses_rule = "ProductOwnershipBackfill.ownerProjectIDByVideoID" in app_sw
+bf_app_rewrite = re.search(r"static func backfillProductOwnership\(.*?\n    \}", app_sw, re.S)
+app_duplicates_rule = bool(bf_app_rewrite and "addedAt" in bf_app_rewrite.group(0)
+                           and "ownerProjectIDByVideoID" not in bf_app_rewrite.group(0))
+if not bf_stmt:
+    bad("SL-13 产品归属回填步骤缺失", "产品/来源升级链没有启动回填")
+elif "dedupProjectVideoAssociations" not in bf_req:
+    bad("SL-13 backfillProductOwnership 必须 requires dedupProjectVideoAssociations",
+        f"现有 {bf_req} —— 可能回填到将被去重删除的脏关联")
+elif not bf_impl:
+    bad("SL-13 backfillProductOwnership 实现缺失")
+elif not bf_uses_rule:
+    bad("SL-13 ownerProject 回填必须调用 ProductOwnershipBackfill 纯函数", "App 层重写规则即绕过 B1-B5 单测")
+elif app_duplicates_rule:
+    bad("SL-13 backfill 内疑似重写了选最早项目的规则", "只准调用纯函数，不要在 App 层再排 addedAt")
+else:
+    ok("SL-13 backfillProductOwnership 注册在去重之后且规则走纯函数", "、".join(bf_req))
+
 # ---- SL-07 有真信号的步骤必须回报成败 --------------------------------------
 SIGNALLED = (
     "rewriteStoredPathPrefixes", "recoverFromDisk", "dedupProjectVideoAssociations",

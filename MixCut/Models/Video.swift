@@ -90,6 +90,22 @@ final class Video: Identifiable {
     /// true = 用户自建分镜的载体视频（分镜库「自建分镜」分类）。SwiftData 加字段，默认 false，旧数据自动为普通视频。
     var isUserUploaded: Bool = false
 
+    /// **导入事实**：这条视频是在哪个项目里导入的（写定后不随复用变化）。
+    /// 视频可被多个项目关联（projectVideos 多对多），但「它最初为哪个产品而来」只有一个答案：
+    /// 产品归属实时经 `ownerProject.product` 推导，未来项目改属产品时视频归属自动跟随，无需冗余同步。
+    /// nil 仅可能出现在 backfill 之前；读侧（ProductOwnershipBackfill/Catalog）回退到最早关联项目。
+    /// 全局去重复用已有视频时**不得覆写**它。
+    var ownerProject: Project?
+
+    /// 该视频切出的分镜默认继承的素材来源 raw（SegmentSource.rawValue）。
+    /// 只作用于**此后新切的分镜**，改动不回溯已有分镜。读侧用 `Video.defaultSource`。
+    var defaultSourceRaw: String = SegmentSource.curated.rawValue
+
+    /// 读侧唯一入口：未知 raw 回退「搬运」（导入默认口径），与分镜的「未分类」回退刻意不同。
+    var defaultSource: SegmentSource {
+        SegmentSource(rawValue: defaultSourceRaw) ?? .curated
+    }
+
     /// 缩略图路径
     var thumbnailPath: String?
 

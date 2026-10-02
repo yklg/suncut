@@ -59,10 +59,16 @@ struct WelcomeView: View {
                                 projectVM.selectedProject = project
                             } label: {
                                 HStack(spacing: DesignTokens.Spacing.tight) {
-                                    Image(systemName: "film.fill")
-                                        .font(DesignTokens.Typography.microRegular)
+                                    ProductDot(product: project.product, size: 7)
                                     Text(project.name)
                                         .font(DesignTokens.Typography.captionStrong)
+                                        .lineLimit(1)
+                                    Text("·")
+                                        .font(DesignTokens.Typography.micro)
+                                        .foregroundStyle(.tertiary)
+                                    Text(project.product?.name ?? ProductCatalogDefaults.defaultProductName)
+                                        .font(DesignTokens.Typography.micro)
+                                        .foregroundStyle(.tertiary)
                                         .lineLimit(1)
                                 }
                                 .padding(.horizontal, 10)
@@ -71,7 +77,7 @@ struct WelcomeView: View {
                                 .clipShape(Capsule())
                             }
                             .buttonStyle(.plain)
-                            .help("打开 \(project.name)")
+                            .help("打开 \(project.name)（\(project.product?.name ?? ProductCatalogDefaults.defaultProductName)）")
                         }
                     }
                 }

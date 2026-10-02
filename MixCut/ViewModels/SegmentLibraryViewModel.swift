@@ -8,6 +8,8 @@ struct SegmentFilter {
     var sourceVideoID: UUID?
     var minQualityScore: Double = 0
     var searchText: String = ""
+    /// 素材来源筛选；nil = 全部
+    var source: SegmentSource? = nil
 }
 
 /// 按视频分组的分镜；`video == nil` 表示「自建分镜」聚合组（多个自建载体视频合并为一组）
@@ -249,10 +251,18 @@ final class SegmentLibraryViewModel {
     /// 每个语义类型对应的镜头数量（基于全部 segments，不随筛选变化）
     /// 缓存到 stored property
     private(set) var countByType: [SemanticType: Int] = [:]
+    /// 每种素材来源的分镜数（基于全部 segments，含未分类）
+    private(set) var countBySource: [SegmentSource: Int] = [:]
 
     /// 按视频分组的筛选结果
     /// 缓存到 stored property（每次 filteredSegments 变化时重算）
     private(set) var groupedSegments: [VideoSegmentGroup] = []
+
+    /// 扁平渲染行按 id 回查模型用的字典，与 `segments`/`groupedSegments` 在同一次
+    /// recomputeAllDerived 中更新——保证视图里「行投影」与「模型查找」看到同一批数据。
+    /// 视图层禁止强解：重认台词/删除撤销等异步回写可能让两相位短暂不一致。
+    private(set) var segmentByID: [UUID: Segment] = [:]
+    private(set) var groupByID: [UUID: VideoSegmentGroup] = [:]
 
     /// 数据变化时统一重算所有派生属性
     private func recomputeAllDerived() {
@@ -266,11 +276,23 @@ final class SegmentLibraryViewModel {
         }
         countByType = counts
 
+        // 1b) countBySource（基于全部 segments，四类恒有键）
+        var sourceCounts: [SegmentSource: Int] = [:]
+        for source in SegmentSource.allCases { sourceCounts[source] = 0 }
+        for seg in segments { sourceCounts[seg.source, default: 0] += 1 }
+        countBySource = sourceCounts
+
         // 2) numberByVideo（基于全部 segments）
         recomputeNumberByVideo()
 
         // 3) groupedSegments（基于 filteredSegments）
         recomputeGroupedSegments()
+
+        // 4) 扁平渲染的回查字典（与上面同源同批更新）
+        segmentByID = Dictionary(segments.map { ($0.id, $0) },
+                                 uniquingKeysWith: { first, _ in first })
+        groupByID = Dictionary(groupedSegments.map { ($0.id, $0) },
+                               uniquingKeysWith: { first, _ in first })
     }
 
     private func recomputeGroupedSegments() {
@@ -314,6 +336,10 @@ final class SegmentLibraryViewModel {
 
         if let videoID = filter.sourceVideoID {
             result = result.filter { $0.video?.id == videoID }
+        }
+
+        if let source = filter.source {
+            result = result.filter { $0.source == source }
         }
 
         if filter.minQualityScore > 0 {
@@ -495,6 +521,26 @@ final class SegmentLibraryViewModel {
                 self.applyFilter()
             }
         )
+    }
+
+    /// 批量标记素材来源（5 秒撤销，快照恢复旧 raw）
+    func applySourceToSelected(_ source: SegmentSource) {
+        guard let context = modelContext else { return }
+        let targets = selectedSegments
+        guard !targets.isEmpty else { return }
+        context.undoManager?.setActionName("标记来源")
+        let snapshot: [(segment: Segment, oldRaw: String)] = targets.map { ($0, $0.sourceRaw) }
+        for seg in targets { seg.setSource(source) }
+        context.safeSave()
+        applyFilter()
+        PendingDeletionCenter.shared.scheduleUndoOnly(
+            message: "已把 \(targets.count) 个分镜标记为「\(source.displayName)」",
+            actionTitle: "还原来源",
+            seconds: 5
+        ) {
+            for (seg, oldRaw) in snapshot { seg.sourceRaw = oldRaw }
+            context.safeSave()
+        }
     }
 
     /// 批量删除当前选中的分镜（延迟删除 + 撤销浮条）
