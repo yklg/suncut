@@ -2,6 +2,12 @@
 import SwiftUI
 
 /// 分镜卡片上的配音相关控件。无持久化逻辑，动作经 binding/闭包上抛。
+///
+/// ⚠️ 这里的开关与两个入口**故意不用 `Toggle`/`Button`**，而是自绘（`InlineSwitch`/`InlineTapLabel`）。
+/// 依据是 2026-10-02 的滚动掉帧归因（Debug 与 Release 两个口径同一把尺子）：滚动窗口里
+/// **40.5% 的主线程样本栈中有 `PlatformViewHost`/`NSHostingView`**、32.5% 在 `NSView` 布局、
+/// 11.9% 在响应者链/命中遍历 —— 代价按"每卡存在多少颗 AppKit 宿主视图"计，而卡片有几十张。
+/// 别"顺手改回原生控件"：那等于把这几十颗宿主视图请回来。要改请先复测同一把尺子。
 struct SegmentDubControls: View {
     @Binding var isVoiceLocked: Bool
     @Binding var treatment: SubtitleTreatment
@@ -16,13 +22,12 @@ struct SegmentDubControls: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Toggle(isOn: $isVoiceLocked) {
-                Label("保留原声", systemImage: "lock.fill")
-                    .font(.caption)
+            InlineSwitch(isOn: isVoiceLocked,
+                         label: "保留原声",
+                         systemImage: "lock.fill",
+                         help: "明星出镜口播等不可替换的镜头，勾选后不参与改写/配音") {
+                isVoiceLocked.toggle()
             }
-            .toggleStyle(.switch)
-            .controlSize(.mini)
-            .help("明星出镜口播等不可替换的镜头，勾选后不参与改写/配音")
 
             // 保留原声的分镜不重配也不烧新字幕，字幕处理对其无意义
             if !isVoiceLocked {
@@ -53,24 +58,21 @@ struct SegmentDubControls: View {
                       """)
 
                 if treatment.needsMask {
-                    Button(action: onApplyMaskToAll) {
+                    InlineTapLabel(help: "把当前遮挡区套用到本视频的所有分镜",
+                                   action: onApplyMaskToAll) {
                         Label("遮挡区应用到所有分镜", systemImage: "square.on.square")
                             .font(DesignTokens.Typography.microRegular)
                             .foregroundStyle(.secondary)
                     }
-                    .buttonStyle(.borderless)
-                    .controlSize(.mini)
                 }
 
-                // ⚠️ 字幕字号是**全局设置**（影响所有视频的所有分镜）。
-                // 早期做法是每张卡各放一个滑条：200 张卡 = 200 个重复控件，
-                // 且用户会以为只改当前分镜。后来挪到工具栏，又太远 —— 正在看这张卡的
-                // 画面预览时想调字号，得满界面找。
-                // 现在：卡片上给**就地入口**，点开是同一个全局设置的弹层，
-                // 弹层里写清作用域。控件只有一个实例，但在手边。
-                Button {
-                    showFontSizePopover = true
-                } label: {
+                // ⚠️ 字幕字号是**本分镜自己的**（不是全局设置）。弹层内容仍每卡一份挂在按钮上，
+                // 但它只在展开时才真正建出来 —— 实测 888 次求值合计 6.1ms/20s，不承重。
+                // 承重的是按钮本身那颗宿主视图，所以下面换成 `InlineTapLabel`。
+                InlineTapLabel(
+                    help: "调整这个分镜的字幕烧录字号。需要统一时，可在弹层里应用到本视频所有分镜。",
+                    action: { showFontSizePopover = true }
+                ) {
                     HStack(spacing: DesignTokens.Spacing.tight) {
                         Image(systemName: "textformat.size")
                             .font(DesignTokens.Typography.micro)
@@ -82,10 +84,7 @@ struct SegmentDubControls: View {
                         Spacer()
                     }
                     .foregroundStyle(.secondary)
-                    .contentShape(Rectangle())
                 }
-                .buttonStyle(.plain)
-                .help("调整这个分镜的字幕烧录字号。需要统一时，可在弹层里应用到本视频所有分镜。")
                 .popover(isPresented: $showFontSizePopover, arrowEdge: .bottom) {
                     SubtitleFontSizePopover(fontRatio: $fontRatio,
                                             isPresented: $showFontSizePopover,
@@ -152,5 +151,72 @@ struct SubtitleFontSizePopover: View {
             .controlSize(.small)
         }
         .padding(DesignTokens.Spacing.comfortable)
+    }
+}
+
+// MARK: - 自绘控件（不用 AppKit 宿主视图）
+
+/// 自绘开关，替代 `Toggle(.switch)`。外观对齐 mini 号开关；点击/键盘/读屏三条都得自己接回来，
+/// 少一条就是静默的功能缺失（以前原生控件是白送的）。
+private struct InlineSwitch: View {
+    let isOn: Bool
+    let label: String
+    let systemImage: String
+    let help: String
+    let onToggle: () -> Void
+
+    var body: some View {
+        HStack(spacing: 5) {
+            Image(systemName: systemImage)
+                .font(DesignTokens.Typography.microRegular)
+                .foregroundStyle(.secondary)
+            Text(label)
+                .font(.caption)
+            Capsule()
+                .fill(isOn ? Color.accentColor : Color.secondary.opacity(0.35))
+                .frame(width: 26, height: 14)
+                .overlay(alignment: isOn ? .trailing : .leading) {
+                    Circle()
+                        .fill(.white)
+                        .frame(width: 10, height: 10)
+                        .padding(2)
+                }
+                .animation(.easeOut(duration: 0.12), value: isOn)
+        }
+        .contentShape(Rectangle())
+        .onTapGesture(perform: onToggle)
+        .focusable()
+        .onKeyPress(.space, phases: .down) { _ in
+            onToggle()
+            return .handled
+        }
+        .help(help)
+        .accessibilityElement()
+        .accessibilityLabel(label)
+        .accessibilityValue(isOn ? "开" : "关")
+        .accessibilityAddTraits(.isButton)
+        .accessibilityAction { onToggle() }
+    }
+}
+
+/// 自绘按钮，替代 `Button(.plain)`/`Button(.borderless)`。同样接回点击、空格与读屏。
+private struct InlineTapLabel<Content: View>: View {
+    let help: String
+    let action: () -> Void
+    @ViewBuilder let content: Content
+
+    var body: some View {
+        content
+            .contentShape(Rectangle())
+            .onTapGesture(perform: action)
+            .focusable()
+            .onKeyPress(.space, phases: .down) { _ in
+                action()
+                return .handled
+            }
+            .help(help)
+            .accessibilityElement(children: .combine)
+            .accessibilityAddTraits(.isButton)
+            .accessibilityAction { action() }
     }
 }
