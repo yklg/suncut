@@ -56,4 +56,17 @@ struct FrameTimeTests {
         // 1 小时 = 3600 秒 × 30 帧 = 108000 帧
         #expect(FrameTime.timecode(frame: 108000, fps: 30) == "1:00:00:00")
     }
+
+    @Test("R7 时间码容量：1 小时以内任意帧/fps 输出 ≤ 8 字符（字段 43pt 上界）")
+    func timecodeFitsFieldWidthBudget() {
+        // 边界帧枚举（最大 59999 帧 / 24fps ≈ 41 分，仍在小时以下）
+        for frame in [0, 1, 59, 60, 599, 600, 5999, 6000, 59999] {
+            for fps in [24.0, 25.0, 30.0, 60.0] {
+                let tc = FrameTime.timecode(frame: frame, fps: fps)
+                #expect(tc.count <= 8, "\(tc)（帧 \(frame), fps \(fps)）超出 8 字符字段契约")
+            }
+        }
+        // 已知例外（如实标注）：跨 1 小时的时间码为「时:分:秒:帧」（≥ 10 字符），
+        // 超出 43pt 字段容量；分镜通常远短于 1 小时，若将来出现小时级分镜需另定字段方案。
+    }
 }

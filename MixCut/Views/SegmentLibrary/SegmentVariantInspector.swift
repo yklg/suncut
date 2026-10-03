@@ -1,11 +1,15 @@
 import SwiftUI
 
 /// 右侧变体池矩阵：行 = 改写版（0..K-1），列 = 选定音色，格 = 按需配音（生成 / 试听 / 重生成）。
-struct SegmentVariantInspector: View {
+struct SegmentVariantInspector<PropertiesContent: View>: View {
     let segment: Segment
     @Bindable var dubVM: DubbingViewModel
-    /// 头部关闭按钮回调（由视图层清空选中、收起面板）
+    /// 当前是否持久选中（驱动关闭按钮显隐；Inspector 不持有素材库 VM）
+    let isPinned: Bool
+    /// 头部关闭回调
     let onClose: () -> Void
+    /// 调用方注入的片段属性内容（Inspector 不反向认识 SegmentLibraryViewModel）
+    @ViewBuilder let propertiesContent: PropertiesContent
     @Environment(\.modelContext) private var modelContext
 
     // 改写版台词行内编辑
@@ -106,7 +110,15 @@ struct SegmentVariantInspector: View {
         VStack(alignment: .leading, spacing: 0) {
             header
             Divider()
-            content
+            // 统一 ScrollView：变体内容 + 片段属性同栏滚动
+            ScrollView {
+                VStack(alignment: .leading, spacing: 14) {
+                    variantContent
+                    Divider().padding(.vertical, 2)
+                    propertiesContent
+                }
+                .padding(14)
+            }
         }
         .frame(width: 340)
         .background(Color(nsColor: .windowBackgroundColor))
@@ -194,7 +206,7 @@ struct SegmentVariantInspector: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(14)
-        // 关闭按钮浮在头部右上角：不动标题行内部布局。
+        // 关闭按钮浮在头部右上角；仅持久（pinned）态可见可用，hover 临时态移走即自动收起
         .overlay(alignment: .topTrailing) {
             Button {
                 onClose()
@@ -208,71 +220,77 @@ struct SegmentVariantInspector: View {
             }
             .buttonStyle(.plain)
             .padding(10)
+            .opacity(isPinned ? 1 : 0)
+            .allowsHitTesting(isPinned)
             .accessibilityLabel("收起配音变体池")
             .help("收起配音变体池")
         }
     }
 
-    // MARK: - 内容
+    // MARK: - 变体内容（统一 ScrollView 内部；三分支）
 
     @ViewBuilder
-    private var content: some View {
+    private var variantContent: some View {
         if segment.isVoiceLocked {
-            emptyHint(icon: "lock.fill",
-                      text: "保留原声\n（明星出镜锁定，不参与配音）",
-                      color: .orange)
+            lockBlock
         } else if segment.segmentDubs.isEmpty {
-            VStack(spacing: 14) {
-                Spacer(minLength: 0)
-                Image(systemName: "wand.and.stars")
-                    .font(.system(size: 26)).foregroundStyle(.tertiary)
-                Text("该分镜还没有配音变体")
-                    .font(.callout).foregroundStyle(.secondary)
-
-                Button {
-                    runSingleRewrite()
-                } label: {
-                    Label("一键改写本分镜", systemImage: "wand.and.stars")
-                        .frame(maxWidth: .infinity)
-                }
-                .buttonStyle(.borderedProminent)
-                .controlSize(.regular)
-                .help("自动克隆原声 → 改写本分镜台词 → 生成配音；视频未克隆时会先请你确认计费")
-
-                addManualVariantButton
-
-                Text("要一次处理整个视频，用上方「一键改写台词」（视频标题行右侧）")
-                    .font(.system(size: 11))
-                    .foregroundStyle(.tertiary)
-                    .multilineTextAlignment(.center)
-                Spacer(minLength: 0)
-            }
-            .padding(.horizontal, 16)
+            emptyVariantsBlock
         } else {
-            matrix
+            variantsBlock
         }
     }
 
-    private func emptyHint(icon: String, text: String, color: Color) -> some View {
+    /// 锁定态：固定高度区块（ScrollView 内不用 Spacer 撑高）
+    private var lockBlock: some View {
         VStack(spacing: 10) {
-            Image(systemName: icon).font(.system(size: 26)).foregroundStyle(color)
-            Text(text).font(.callout).foregroundStyle(color)
+            Image(systemName: "lock.fill").font(.system(size: 26)).foregroundStyle(.orange)
+            Text("保留原声\n（明星出镜锁定，不参与配音）")
+                .font(.callout).foregroundStyle(.orange)
                 .multilineTextAlignment(.center)
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .frame(maxWidth: .infinity)
+        .frame(height: 130)
         .padding(DesignTokens.Padding.page)
     }
 
-    private var matrix: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 14) {
-                rewriteBar
-                ForEach(presentVariantIndices, id: \.self) { t in
-                    versionCard(t)
-                }
-                addManualVariantButton
+    /// 空变体态：固定高度区块，内容居中
+    private var emptyVariantsBlock: some View {
+        VStack(spacing: 13) {
+            Image(systemName: "wand.and.stars")
+                .font(.system(size: 26)).foregroundStyle(.tertiary)
+            Text("该分镜还没有配音变体")
+                .font(.callout).foregroundStyle(.secondary)
+
+            Button {
+                runSingleRewrite()
+            } label: {
+                Label("一键改写本分镜", systemImage: "wand.and.stars")
+                    .frame(maxWidth: .infinity)
             }
-            .padding(14)
+            .buttonStyle(.borderedProminent)
+            .controlSize(.regular)
+            .help("自动克隆原声 → 改写本分镜台词 → 生成配音；视频未克隆时会先请你确认计费")
+
+            addManualVariantButton
+
+            Text("要一次处理整个视频，用上方「一键改写台词」（视频标题行右侧）")
+                .font(.system(size: 11))
+                .foregroundStyle(.tertiary)
+                .multilineTextAlignment(.center)
+        }
+        .frame(maxWidth: .infinity)
+        .frame(height: 250)
+        .padding(.horizontal, 4)
+    }
+
+    /// 已存在变体：rewriteBar + 各版卡片 + 手动新增（原 matrix 内容，去掉内层 ScrollView）
+    private var variantsBlock: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            rewriteBar
+            ForEach(presentVariantIndices, id: \.self) { t in
+                versionCard(t)
+            }
+            addManualVariantButton
         }
     }
 

@@ -32,9 +32,10 @@ enum HostedControlScan {
         let hits: [Hit]
     }
 
-    /// 只扫 `marker`（形如 `"struct SegmentDubControls"`）起的那一个花括号块内部。
+    /// 只扫 `marker`（形如 `"struct SegmentCard"`）起的那一个花括号块内部。
     static func hits(in src: String, inside marker: String) -> Result {
-        let a = TagRowHostScan.codeOnly(src)      // 复用那颗剥注释/剥字符串的公共件
+        var a = Array(TagRowHostScan.codeOnly(src))   // 复用那颗剥注释/剥字符串的公共件
+        maskLazyClosures(&a)                          // 遮蔽 contextMenu/alert 等延迟闭包
         let n = a.count
         guard let head = indexOfSeq(a, marker) else { return Result(anchored: false, hits: []) }
         var i = head + marker.count
@@ -53,6 +54,49 @@ enum HostedControlScan {
             j += 1
         }
         return Result(anchored: true, hits: scanRegion(Array(a[i..<end]), startLine: openLine))
+    }
+
+    /// 遮蔽 SwiftUI 延迟构建的修饰符闭包：contextMenu / alert / sheet / popover /
+    /// confirmationDialog 的内容只在用户触发时由 AppKit 构建，不是每卡常驻宿主。
+    /// 做法：定位修饰符名，从其后第一个 `{` 按括号配对整段替换为空格（保留换行）。
+    private static let lazyModifiers = [
+        ".contextMenu", ".alert(", ".sheet(", ".popover(", ".confirmationDialog("
+    ]
+
+    private static func maskLazyClosures(_ a: inout [Character]) {
+        for modifier in lazyModifiers {
+            var searchFrom = 0
+            while let range = findSeq(Array(a[searchFrom..<a.count]), modifier) {
+                let found = searchFrom + range.lowerBound
+                searchFrom = found + modifier.count
+                // 找修饰符之后第一个 `{`
+                var brace = searchFrom
+                while brace < a.count, a[brace] != "{" { brace += 1 }
+                guard brace < a.count else { break }
+                var depth = 0
+                var end = brace
+                while end < a.count {
+                    if a[end] == "{" { depth += 1 }
+                    else if a[end] == "}" {
+                        depth -= 1
+                        if depth == 0 { break }
+                    }
+                    end += 1
+                }
+                guard end < a.count else { break }
+                for k in brace...end where a[k] != "\n" { a[k] = " " }
+                searchFrom = end + 1
+            }
+        }
+    }
+
+    private static func findSeq(_ hay: [Character], _ needle: String) -> Range<Int>? {
+        let p = Array(needle)
+        guard !p.isEmpty, hay.count >= p.count else { return nil }
+        for s in 0...(hay.count - p.count) where hay[s] == p[0] {
+            if Array(hay[s..<(s + p.count)]) == p { return s..<(s + p.count) }
+        }
+        return nil
     }
 
     private static func scanRegion(_ a: [Character], startLine: Int) -> [Hit] {
@@ -122,7 +166,6 @@ private func hostRead(_ rel: String) -> String {
 
 /// 每卡/每行常驻挂载路径上的文件。少一个就是扫描面窄一档。
 private let perCardFiles = [
-    "MixCut/Views/SegmentLibrary/SegmentDubControls.swift",
     "MixCut/Views/SegmentLibrary/SegmentLibraryView.swift",
     "MixCut/Views/Shared/SegmentCardCompact.swift",
 ]
@@ -188,36 +231,43 @@ func scanRootIsSane() {
     }
 }
 
-@Test("本轮修复的防线：SegmentDubControls 那颗 struct 里今天必须零宿主控件")
-func segmentDubControlsIsHostControlFree() {
-    let src = hostRead("MixCut/Views/SegmentLibrary/SegmentDubControls.swift")
-    let r = HostedControlScan.hits(in: src, inside: "struct SegmentDubControls")
-    if !r.anchored {
-        Issue.record("没找到 `struct SegmentDubControls` —— 判据没跑起来，不算通过")
-        return
-    }
-    #expect(r.hits.isEmpty, "每卡常驻挂载的视图里又出现 AppKit 宿主控件了：\(r.hits)。要么改回自绘等价物，要么带着新的每帧实测数字显式改这条判据，别默默放进去。")
-}
-
-@Test("反向对照（真码）：把 InlineSwitch 换回 Toggle 那一行，守卫必须立刻变红")
-func mutatingBackToNativeTurnsItRed() {
-    let src = hostRead("MixCut/Views/SegmentLibrary/SegmentDubControls.swift")
-    let mutated = src.replacingOccurrences(of: "InlineSwitch(isOn:", with: "Toggle(isOn:")
-    #expect(mutated != src, "变异没落地：源码里找不到 `InlineSwitch(isOn:`，这条对照作废")
-    let r = HostedControlScan.hits(in: mutated, inside: "struct SegmentDubControls")
-    #expect(r.hits.contains(where: { $0.token == "Toggle" }),
-            "改回原生 Toggle 必须被抓到，实得 \(r.hits)")
-}
-
-@Test("正向对照：同一颗检测器在行内那颗 Menu 上仍要报得出东西（证明上一条的「零」不是空转）")
-func detectorStillFiresOnTheControlGroup() {
+@Test("瘦化防线：SegmentCard / SegmentRow（常驻网格单元）必须零宿主控件")
+func cardsAndRowsAreHostControlFree() {
     let src = hostRead("MixCut/Views/SegmentLibrary/SegmentLibraryView.swift")
-    let r = HostedControlScan.hits(in: src, inside: "struct SegmentDubCompactControls")
-    if !r.anchored {
-        Issue.record("没找到 `struct SegmentDubCompactControls` —— 判据没跑起来，不算通过")
+    for marker in ["struct SegmentCard", "struct SegmentRow"] {
+        let r = HostedControlScan.hits(in: src, inside: marker)
+        if !r.anchored {
+            Issue.record("没找到 `\(marker)` —— 判据没跑起来，不算通过")
+            continue
+        }
+        #expect(r.hits.isEmpty,
+                "常驻单元内又出现 AppKit 宿主控件：\(r.hits)。编辑动作应进 Inspector；要例外请带新的每帧实测数字显式改判据。")
+    }
+}
+
+@Test("紧凑选择卡（抽屉/排序面板）只允许 Button（整卡点按），其余重宿主零出现")
+func compactCardOnlyAllowsButtonWrapper() {
+    let src = hostRead("MixCut/Views/Shared/SegmentCardCompact.swift")
+    let r = HostedControlScan.hits(in: src, inside: "struct SegmentCardCompact")
+    #expect(r.anchored, "没找到 `struct SegmentCardCompact`")
+    let heavy = r.hits.filter { $0.token != "Button" }
+    #expect(heavy.isEmpty, "紧凑卡只允许整卡 Button，实得重宿主：\(heavy)")
+}
+
+@Test("反向对照（真码）：卡片域换回原生 Toggle，守卫必须立刻变红")
+func mutatingCardBackToNativeTurnsItRed() {
+    let src = hostRead("MixCut/Views/SegmentLibrary/SegmentLibraryView.swift")
+    // 在 SegmentCard 的 body 内植入一颗原生 Toggle（模拟控件回流）
+    guard let range = src.range(of: "struct SegmentCard") else {
+        Issue.record("没找到 struct SegmentCard")
         return
     }
-    // ⚠️ 这条是**反向锚点**，不是豁免：列表行那颗 Menu 是本轮故意留的对照组（自绘它要把
-    // 键盘上下选/Esc/点外收起自己实现回来）。将来它被自绘替掉时，请把期望改成 ==0，别删整条测试。
-    #expect(r.hits.count >= 2, "对照组文件里这颗检测器必须还能数出 Menu/Button，实得 \(r.hits)。数不出来说明检测器本身失效，上一条的「零」就不可信")
+    let searchRange: Range<String.Index> = range.lowerBound..<src.endIndex
+    let mutated = src.replacingOccurrences(of: "var body: some View {",
+                                           with: "var body: some View {\n Toggle(isOn: .constant(false)) { Text(\"x\") }",
+                                           options: [], range: searchRange)
+    #expect(mutated != src, "变异没落地，对照作废")
+    let r = HostedControlScan.hits(in: mutated, inside: "struct SegmentCard")
+    #expect(r.hits.contains(where: { $0.token == "Toggle" }),
+            "回流的 Toggle 必须被抓到，实得 \(r.hits)")
 }

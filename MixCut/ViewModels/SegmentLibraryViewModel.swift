@@ -28,7 +28,45 @@ struct VideoSegmentGroup: Identifiable {
 final class SegmentLibraryViewModel {
     var segments: [Segment] = []
     var filteredSegments: [Segment] = []
-    var selectedSegment: Segment?
+
+    /// 选中状态机（pinned 持久 + hovered 临时）；纯逻辑在 MixCutCore，VM 只持值
+    private var selectionState = SegmentSelectionState()
+    /// 当前生效选中（pinned 优先），下游原有接口不变
+    var selectedSegment: Segment? {
+        guard let id = selectionState.resolvedID else { return nil }
+        return segmentByID[id]
+    }
+    /// Inspector 关闭按钮判定所需：当前是否持久选中
+    var pinnedSegmentID: UUID? { selectionState.pinnedID }
+    /// hover 自动选中是否被当前宽度允许（由视图按 libraryWidth 计算后下发）
+    private(set) var hoverSelectionAllowed: Bool = true
+
+    // MARK: 选中变更（转发给状态机）
+
+    /// 点击持久选中
+    func pin(_ segment: Segment) {
+        selectionState.pin(segment.id)
+    }
+
+    /// hover 临时选中（仅非多选、且当前宽度允许时调用方触发）
+    func setHoveredSegmentID(_ id: UUID?) {
+        selectionState.setHovered(id)
+    }
+
+    /// 收起 Inspector
+    func clearPinned() {
+        selectionState.clearPinned()
+    }
+
+    /// 视图随宽度变化更新 hover 门禁结果
+    func setHoverSelectionAllowed(_ allowed: Bool) {
+        guard hoverSelectionAllowed != allowed else { return }
+        hoverSelectionAllowed = allowed
+        // 新宽度不再允许且当前仅靠 hover 选中 → 释放临时选中（持久 pinned 不受影响）
+        if !allowed, selectionState.pinnedID == nil {
+            selectionState.setHovered(nil)
+        }
+    }
     /// 右键"分镜头替换"请求的分镜（驱动 ShotEditSheet 弹出）
     var shotEditRequestSegment: Segment?
     /// 右键"拆分"请求的分镜（驱动 SplitSegmentSheet 弹出）
@@ -84,7 +122,7 @@ final class SegmentLibraryViewModel {
         // 重载前先把待删除项真正删除，避免「界面已隐藏但数据库未删」在重载后又冒出来
         PendingDeletionCenter.shared.flushNow()
         // 切项目铁律：清空多选 / 预览 / 选中状态（避免 A 项目状态残留到 B）
-        selectedSegment = nil
+        selectionState.clearAll()
         isSelectionMode = false
         selectedSegmentIDs.removeAll()
         selectionOrderedIDs.removeAll()
@@ -511,7 +549,7 @@ final class SegmentLibraryViewModel {
     func deleteSegment(_ segment: Segment) {
         guard modelContext != nil else { return }
         let id = segment.id
-        if selectedSegment?.id == id { selectedSegment = nil }
+        if selectionState.resolvedID == id { selectionState.clearAll() }
         // 界面隐藏（不真删）
         segments.removeAll { $0.id == id }
         selectedSegmentIDs.remove(id)
@@ -561,7 +599,7 @@ final class SegmentLibraryViewModel {
         let segs = segments.filter { idsToDelete.contains($0.id) }
         guard !segs.isEmpty else { return }
         // 界面隐藏（不真删）
-        if let sel = selectedSegment?.id, idsToDelete.contains(sel) { selectedSegment = nil }
+        if let sel = selectionState.resolvedID, idsToDelete.contains(sel) { selectionState.clearAll() }
         segments.removeAll { idsToDelete.contains($0.id) }
         selectedSegmentIDs.removeAll()
         selectionOrderedIDs.removeAll()

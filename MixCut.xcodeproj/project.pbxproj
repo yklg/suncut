@@ -165,6 +165,12 @@
 		A17E05D2E4B60718293A4B02 /* DubRewriteScopeResolver.swift in Sources */ = {isa = PBXBuildFile; fileRef = A17E05D2E4B60718293A4B01 /* DubRewriteScopeResolver.swift */; };
 		C3D20F5E6B782930415C7002 /* PlaybackActivationPolicy.swift in Sources */ = {isa = PBXBuildFile; fileRef = C3D20F5E6B782930415C7001 /* PlaybackActivationPolicy.swift */; };
 		D4E31A6F7C892A31405D8002 /* SegmentHeaderLayout.swift in Sources */ = {isa = PBXBuildFile; fileRef = D4E31A6F7C892A31405D8001 /* SegmentHeaderLayout.swift */; };
+		F0A1B2C3D4E5F60718293A02 /* HoverTipState.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0A1B2C3D4E5F60718293A01 /* HoverTipState.swift */; };
+		F0A1B2C3D4E5F60718293B02 /* BoundaryAdjustLayout.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0A1B2C3D4E5F60718293B01 /* BoundaryAdjustLayout.swift */; };
+		F0A1B2C3D4E5F60718293C02 /* SegmentSelectionState.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0A1B2C3D4E5F60718293C01 /* SegmentSelectionState.swift */; };
+		F0A1B2C3D4E5F60718293D02 /* InspectorPresentationGating.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0A1B2C3D4E5F60718293D01 /* InspectorPresentationGating.swift */; };
+		F0A1B2C3D4E5F60718293E02 /* SegmentPropertiesSection.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0A1B2C3D4E5F60718293E01 /* SegmentPropertiesSection.swift */; };
+		F0A1B2C3D4E5F60718293A04 /* HoverTip.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0A1B2C3D4E5F60718293A03 /* HoverTip.swift */; };
 		B2C10E4D5A671829304B6002 /* PlaybackCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2C10E4D5A671829304B6001 /* PlaybackCoordinator.swift */; };
 		AB03C0A3E5E04B2A9C030006 /* ProductPresentation.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB03C0A3E5E04B2A9C030005 /* ProductPresentation.swift */; };
 		EE55FF6622AA33BB44CC55DD /* SubtitleMaskOverlay.swift in Sources */ = {isa = PBXBuildFile; fileRef = EE55FF6622AA33BB44CC55DE /* SubtitleMaskOverlay.swift */; };
@@ -176,7 +182,7 @@
 		FCB1E2FAF87605183B47DD34 /* Segment.swift in Sources */ = {isa = PBXBuildFile; fileRef = B4C895AC8C650A48ECA7B1F0 /* Segment.swift */; };
 		FD08F64BC77F45B281D55094 /* DubbingViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4C4CC2EDACAE4BFBA8750741 /* DubbingViewModel.swift */; };
 		FF00BB11CC22DD3344EE55AB /* DubStaleness.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF00BB11CC22DD3344EE55AA /* DubStaleness.swift */; };
-		FF66AA77BB88CC99DD00EE11 /* SegmentDubControls.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF66AA77BB88CC99DD00EE12 /* SegmentDubControls.swift */; };
+		FF66AA77BB88CC99DD00EE11 /* SubtitleFontSizePopover.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF66AA77BB88CC99DD00EE12 /* SubtitleFontSizePopover.swift */; };
 		FF77AA88BB99CC0011DD22EE /* RewriteResultMapper.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF77AA88BB99CC0011DD22EF /* RewriteResultMapper.swift */; };
 /* End PBXBuildFile section */
 
@@ -338,6 +344,12 @@
 		A17E05D2E4B60718293A4B01 /* DubRewriteScopeResolver.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = DubRewriteScopeResolver.swift; path = Sources/MixCutCore/DubRewriteScopeResolver.swift; sourceTree = "<group>"; };
 		C3D20F5E6B782930415C7001 /* PlaybackActivationPolicy.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = PlaybackActivationPolicy.swift; path = Sources/MixCutCore/PlaybackActivationPolicy.swift; sourceTree = "<group>"; };
 		D4E31A6F7C892A31405D8001 /* SegmentHeaderLayout.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = SegmentHeaderLayout.swift; path = Sources/MixCutCore/SegmentHeaderLayout.swift; sourceTree = "<group>"; };
+		F0A1B2C3D4E5F60718293A01 /* HoverTipState.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = HoverTipState.swift; path = Sources/MixCutCore/HoverTipState.swift; sourceTree = "<group>"; };
+		F0A1B2C3D4E5F60718293B01 /* BoundaryAdjustLayout.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = BoundaryAdjustLayout.swift; path = Sources/MixCutCore/BoundaryAdjustLayout.swift; sourceTree = "<group>"; };
+		F0A1B2C3D4E5F60718293C01 /* SegmentSelectionState.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = SegmentSelectionState.swift; path = Sources/MixCutCore/SegmentSelectionState.swift; sourceTree = "<group>"; };
+		F0A1B2C3D4E5F60718293D01 /* InspectorPresentationGating.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = InspectorPresentationGating.swift; path = Sources/MixCutCore/InspectorPresentationGating.swift; sourceTree = "<group>"; };
+		F0A1B2C3D4E5F60718293E01 /* SegmentPropertiesSection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SegmentPropertiesSection.swift; sourceTree = "<group>"; };
+		F0A1B2C3D4E5F60718293A03 /* HoverTip.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = HoverTip.swift; sourceTree = "<group>"; };
 		B2C10E4D5A671829304B6001 /* PlaybackCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlaybackCoordinator.swift; sourceTree = "<group>"; };
 		AB03C0A3E5E04B2A9C030005 /* ProductPresentation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProductPresentation.swift; sourceTree = "<group>"; };
 		EE55FF6622AA33BB44CC55DE /* SubtitleMaskOverlay.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SubtitleMaskOverlay.swift; sourceTree = "<group>"; };
@@ -350,7 +362,7 @@
 		F8BEF73BC53AA8F9435A240E /* SunCut.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = SunCut.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		FD09EFBAFD23D44FB86BE80C /* ProjectViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProjectViewModel.swift; sourceTree = "<group>"; };
 		FF00BB11CC22DD3344EE55AA /* DubStaleness.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = DubStaleness.swift; path = Sources/MixCutCore/DubStaleness.swift; sourceTree = "<group>"; };
-		FF66AA77BB88CC99DD00EE12 /* SegmentDubControls.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SegmentDubControls.swift; sourceTree = "<group>"; };
+		FF66AA77BB88CC99DD00EE12 /* SubtitleFontSizePopover.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SubtitleFontSizePopover.swift; sourceTree = "<group>"; };
 		FF77AA88BB99CC0011DD22EF /* RewriteResultMapper.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = RewriteResultMapper.swift; path = Sources/MixCutCore/RewriteResultMapper.swift; sourceTree = "<group>"; };
 		FF88AA99BB00CC1122DD33EE /* QwenVoice.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = QwenVoice.swift; path = Sources/MixCutCore/QwenVoice.swift; sourceTree = "<group>"; };
 		FFC59912B0CFE892506831DB /* ShotEditRules.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = ShotEditRules.swift; path = Sources/MixCutCore/ShotEditRules.swift; sourceTree = "<group>"; };
@@ -553,6 +565,10 @@
 				A17E05D2E4B60718293A4B01 /* DubRewriteScopeResolver.swift */,
 				C3D20F5E6B782930415C7001 /* PlaybackActivationPolicy.swift */,
 				D4E31A6F7C892A31405D8001 /* SegmentHeaderLayout.swift */,
+				F0A1B2C3D4E5F60718293A01 /* HoverTipState.swift */,
+				F0A1B2C3D4E5F60718293B01 /* BoundaryAdjustLayout.swift */,
+				F0A1B2C3D4E5F60718293C01 /* SegmentSelectionState.swift */,
+				F0A1B2C3D4E5F60718293D01 /* InspectorPresentationGating.swift */,
 				4562C1C2A6CE4CD7B4F426D1 /* VariantSelector.swift */,
 				99A0F9157CC046E984692787 /* CaptionRenderer.swift */,
 				10110DE8620848149D31030E /* CaptionLayout.swift */,
@@ -607,6 +623,7 @@
 				AB02C0A2E5E04B2A9C02000B /* SegmentSourceBadge.swift */,
 				AB03C0A3E5E04B2A9C030005 /* ProductPresentation.swift */,
 				B9989E690AD7737E922DDAE5 /* PendingDeletionCenter.swift */,
+				F0A1B2C3D4E5F60718293A03 /* HoverTip.swift */,
 			);
 			path = Shared;
 			sourceTree = "<group>";
@@ -686,7 +703,8 @@
 				EE55FF6622AA33BB44CC55DE /* SubtitleMaskOverlay.swift */,
 				18C3F980EFF4481A9F9323C7 /* DubSettingsBar.swift */,
 				BDA81666C0EF4C52A4518514 /* SegmentVariantInspector.swift */,
-				FF66AA77BB88CC99DD00EE12 /* SegmentDubControls.swift */,
+				FF66AA77BB88CC99DD00EE12 /* SubtitleFontSizePopover.swift */,
+				F0A1B2C3D4E5F60718293E01 /* SegmentPropertiesSection.swift */,
 				0B9979BFB126617C6473DCA2 /* ShotEditSheet.swift */,
 				E0D178A296D785FD169F2923 /* RangeVideoPlayer.swift */,
 				20E690500D19E15B4DD3CF7A /* CaptionTimingEditorSheet.swift */,
@@ -920,7 +938,8 @@
 				EE55FF6622AA33BB44CC55DD /* SubtitleMaskOverlay.swift in Sources */,
 				224A2CE41B404536AE2DB350 /* DubSettingsBar.swift in Sources */,
 				56C8FC6396E2466C84870DA4 /* SegmentVariantInspector.swift in Sources */,
-				FF66AA77BB88CC99DD00EE11 /* SegmentDubControls.swift in Sources */,
+				FF66AA77BB88CC99DD00EE11 /* SubtitleFontSizePopover.swift in Sources */,
+				F0A1B2C3D4E5F60718293E02 /* SegmentPropertiesSection.swift in Sources */,
 				3A4C06F557F58FA17AE5D986 /* SettingsView.swift in Sources */,
 				1BF0326E3E9F3C597920E4D0 /* InlineBanner.swift in Sources */,
 				D5B459517C3D9E6C7DD72B6B /* KeyboardShortcutsSheet.swift in Sources */,
@@ -931,6 +950,7 @@
 				2E068775441C4A393BF919B4 /* SidebarView.swift in Sources */,
 				FA6F04366C4DEB5E60A2229B /* InsertGapButton.swift in Sources */,
 				442DB34CB4AF607DFB365D1C /* SegmentCardCompact.swift in Sources */,
+				F0A1B2C3D4E5F60718293A04 /* HoverTip.swift in Sources */,
 				AB02C0A2E5E04B2A9C02000C /* SegmentSourceBadge.swift in Sources */,
 				AB03C0A3E5E04B2A9C030006 /* ProductPresentation.swift in Sources */,
 				8BA0DD196B2CB35D0199F751 /* SegmentPickerDrawer.swift in Sources */,
@@ -970,6 +990,10 @@
 				A17E05D2E4B60718293A4B02 /* DubRewriteScopeResolver.swift in Sources */,
 				C3D20F5E6B782930415C7002 /* PlaybackActivationPolicy.swift in Sources */,
 				D4E31A6F7C892A31405D8002 /* SegmentHeaderLayout.swift in Sources */,
+				F0A1B2C3D4E5F60718293A02 /* HoverTipState.swift in Sources */,
+				F0A1B2C3D4E5F60718293B02 /* BoundaryAdjustLayout.swift in Sources */,
+				F0A1B2C3D4E5F60718293C02 /* SegmentSelectionState.swift in Sources */,
+				F0A1B2C3D4E5F60718293D02 /* InspectorPresentationGating.swift in Sources */,
 				B2C10E4D5A671829304B6002 /* PlaybackCoordinator.swift in Sources */,
 				5C37778E86144BA7923334E9 /* VariantSelector.swift in Sources */,
 				51A558C4CA964DE784D34934 /* CaptionRenderer.swift in Sources */,

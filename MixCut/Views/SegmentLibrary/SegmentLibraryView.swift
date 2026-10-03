@@ -21,6 +21,8 @@ struct SegmentLibraryView: View {
     @State private var importVM = ImportViewModel()
     /// 滚动内容实测宽（背景 GeometryReader 间接测量），驱动网格列数与固定卡宽
     @State private var libraryWidth: CGFloat = 0
+    /// Inspector 未展开时的内容区宽（门禁判定基准：模拟 inspector 展开后列数是否改变）
+    @State private var unconstrainedWidth: CGFloat = 0
     @Environment(\.modelContext) private var modelContext
 
     var body: some View {
@@ -130,11 +132,14 @@ struct SegmentLibraryView: View {
 
                 if let seg = viewModel.selectedSegment {
                     Divider()
-                    SegmentVariantInspector(segment: seg, dubVM: dubVM, onClose: {
-                        // 单处状态翻转（无 withAnimation/无 sleep；动画由本视图的
-                        // .animation(value:) + transition 接管）
-                        viewModel.selectedSegment = nil
-                    })
+                    SegmentVariantInspector(
+                        segment: seg,
+                        dubVM: dubVM,
+                        isPinned: seg.id == viewModel.pinnedSegmentID,
+                        onClose: { viewModel.clearPinned() }
+                    ) {
+                        SegmentPropertiesContent(segment: seg, viewModel: viewModel)
+                    }
                     // R2 · 仅对 inspector 做 120ms opacity 动画（内容快速淡出，无宽度/子树插值）
                     .transition(.opacity)
                     .animation(.easeOut(duration: 0.12), value: viewModel.selectedSegment?.id)
@@ -543,9 +548,10 @@ struct SegmentLibraryView: View {
     // LibraryRowLayout 把分组拍平成「标题行/卡片行」单层序列，行高固定、id 稳定。
 
     private var gridColumnCount: Int {
-        guard libraryWidth > 0 else { return 1 }
-        let spacing = DesignTokens.Spacing.normal
-        return max(1, Int((libraryWidth + spacing) / (SegmentLibraryMetrics.gridMinCardWidth + spacing)))
+        InspectorPresentationGating.columnCount(
+            available: Double(libraryWidth),
+            minCardWidth: Double(SegmentLibraryMetrics.gridMinCardWidth),
+            spacing: Double(DesignTokens.Spacing.normal))
     }
 
     private var cardWidth: CGFloat {
@@ -586,6 +592,15 @@ struct SegmentLibraryView: View {
             }
             .onPreferenceChange(LibraryContentWidthKey.self) { width in
                 if abs(width - libraryWidth) > 0.5 { libraryWidth = width }
+                // Inspector 关闭状态下记录满宽；关闭后区域回弹会再次触发回调
+                if viewModel.selectedSegment == nil {
+                    if abs(width - unconstrainedWidth) > 0.5 { unconstrainedWidth = width }
+                    let allows = InspectorPresentationGating.hoverAutoSelectionAllows(
+                        available: Double(width),
+                        minCardWidth: Double(SegmentLibraryMetrics.gridMinCardWidth),
+                        spacing: Double(DesignTokens.Spacing.normal))
+                    viewModel.setHoverSelectionAllowed(allows)
+                }
             }
         }
     }
@@ -814,9 +829,7 @@ struct SegmentLibraryView: View {
 
 /// 素材库布局常量。两态等高（cell 出现后高度永不变，是滚动条不跳的前提）用到的数字集中在此。
 private enum SegmentLibraryMetrics {
-    /// 边界微调行的固定行高（TextField 16pt + 上下边距），卡片/列表行的「激活/非激活」两态共用。
-    static let boundaryRowHeight: CGFloat = 24
-    /// hover 停留多久才激活重子树（播放器完整态/AVPlayer、BoundaryAdjustRow、编辑按钮）。
+    /// hover 停留多久才激活重子树（播放器完整态/AVPlayer、Inspector 临时选中）。
     /// 快速惯性滚动中单卡停留远小于此值 → 滚动中零结构翻转、零误播放。
     static let hoverActivationDelay: Duration = .milliseconds(280)
     /// 网格最小卡宽（与旧 GridItem(.adaptive(minimum:)) 同一口径）。
@@ -957,11 +970,6 @@ struct SegmentCard: View, Equatable {
     @State private var isHoverActive = false
     @State private var showDeleteConfirm = false
 
-    // 行内编辑台词
-    @State private var isEditingText = false
-    @State private var draftText = ""
-    @FocusState private var textEditorFocused: Bool
-
     // Equatable：SwiftUI 看到这俩相等就跳过 body 评估
     // viewModel 引用不参与比较（Bindable 让其变化通过 @State observation 触发，跟 Equatable 跳过逻辑互不冲突）
     //
@@ -1040,10 +1048,14 @@ struct SegmentCard: View, Equatable {
             }
         }
         .contentShape(Rectangle())
-        // 两层 hover：底色即时反馈、重子树（BoundaryAdjustRow/播放/编辑按钮）延迟激活。
+        // 两层 hover：底色即时反馈；延迟激活驱动播放与 Inspector 临时选中。
         // 惯性滚动中卡片从指针下穿过，停留不足激活延时，重子树全程不挂载。
         .hoverState(isHovering: $isHovering, isActive: $isHoverActive)
-        // ⇧+点击 = 范围多选（Finder 同款）；普通点击 = 单个切换
+        .onChange(of: isHoverActive) { _, active in
+            guard !isSelectionMode, viewModel.hoverSelectionAllowed else { return }
+            viewModel.setHoveredSegmentID(active ? segment.id : nil)
+        }
+        // ⇧+点击 = 范围多选（Finder 同款）；普通点击 = 钉住选中（Inspector 持久展开）
         .onTapGesture {
             if isSelectionMode {
                 if NSEvent.modifierFlags.contains(.shift) {
@@ -1052,8 +1064,7 @@ struct SegmentCard: View, Equatable {
                     viewModel.toggleSelection(segment)
                 }
             } else {
-                // 非多选：点击选中分镜 → 打开右侧配音变体检视栏
-                viewModel.selectedSegment = segment
+                viewModel.pin(segment)
             }
         }
         .contextMenu {
@@ -1067,9 +1078,8 @@ struct SegmentCard: View, Equatable {
             .disabled(segment.text.isEmpty)
 
             Button {
-                draftText = segment.text
-                isEditingText = true
-                textEditorFocused = true
+                // 台词编辑已迁入 Inspector「台词原文」分区；点击即钉住并展示
+                viewModel.pin(segment)
             } label: {
                 Label("编辑台词", systemImage: "square.and.pencil")
             }
@@ -1192,28 +1202,28 @@ struct SegmentCard: View, Equatable {
                     .padding(6)
                 }
                 .overlay(alignment: .bottomTrailing) {
-                    // 就地替换画面：切换按钮（仅当存在替换画面时显示）原画面 ↔ 替换画面
+                    // 就地替换画面：自绘切换（仅当存在替换画面时显示），原画面 ↔ 替换画面。
+                    // 不用 Button：常驻单元不挂 AppKit 宿主（瘦化守卫同款规则）。
                     if segment.replacedPictureVideoPath != nil {
-                        Button {
+                        HStack(spacing: 3) {
+                            // ⚠️ 交换语义图标（非 arrow.triangle.2.circlepath 的重试语义）
+                            Image(systemName: "rectangle.2.swap")
+                            Text(segment.pictureShowsReplaced ? "替换画面" : "原画面")
+                        }
+                        .font(DesignTokens.Typography.microEmphasis)
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 6).padding(.vertical, 3)
+                        .background(Capsule().fill(segment.pictureShowsReplaced
+                            ? Color.green.opacity(0.75) : Color.black.opacity(0.6)))
+                        .contentShape(Capsule())
+                        .onTapGesture {
                             segment.pictureShowsReplaced.toggle()
                             try? modelContext.save()
-                        } label: {
-                            HStack(spacing: 3) {
-                                // ⚠️ 原来用 arrow.triangle.2.circlepath（HIG 里是"刷新/重试"语义），
-                                // 与全 App 的重试按钮撞车。这里是"原画面 ↔ 替换画面"的二选一切换，
-                                // 用交换语义的图标才不会误导。
-                                Image(systemName: "rectangle.2.swap")
-                                Text(segment.pictureShowsReplaced ? "替换画面" : "原画面")
-                            }
-                            .font(DesignTokens.Typography.microEmphasis)
-                            .foregroundStyle(.white)
-                            .padding(.horizontal, 6).padding(.vertical, 3)
-                            .background(Capsule().fill(segment.pictureShowsReplaced
-                                ? Color.green.opacity(0.75) : Color.black.opacity(0.6)))
                         }
-                        .buttonStyle(.plain)
                         .padding(6)
                         .help("在原画面与 AI 替换画面之间切换")
+                        .accessibilityElement()
+                        .accessibilityLabel("切换原画面与替换画面")
                     }
                 }
                 .subtitleMaskHandle(on: segment) { try? modelContext.save() }
@@ -1243,38 +1253,6 @@ struct SegmentCard: View, Equatable {
                 SourceBadge(source: segment.source)
                     .help("素材来源：\(segment.source.displayName)（右键可改）")
             }
-
-            // 配音控件：保留原声 + 硬字幕遮挡开关
-            SegmentDubControls(
-                isVoiceLocked: Binding(
-                    get: { segment.isVoiceLocked },
-                    set: { segment.isVoiceLocked = $0; try? modelContext.save() }
-                ),
-                treatment: Binding(
-                    get: { segment.subtitleTreatment },
-                    set: { segment.subtitleTreatment = $0; try? modelContext.save() }
-                ),
-                onApplyMaskToAll: { Self.applyMaskToAllSegments(of: segment, in: modelContext) },
-                fontRatio: Binding(
-                    get: { segment.subtitleFontRatio },
-                    set: {
-                        segment.setSubtitleFontRatio($0)
-                        modelContext.safeSave()
-                    }
-                ),
-                onApplyFontSizeToAll: { Self.applyFontSizeToAllSegments(of: segment, in: modelContext) }
-            )
-
-            // 边界微调 —— 激活或选中时才挂载（含多 TextField+@FocusState，常驻会让几十个卡片
-            // 同步实例化上百颗交互控件）。两态共用同一固定高度槽位：激活前后卡片高度零变化，
-            // 这是懒容器行高估算稳定（滚动条不跳）的前提。
-            ZStack(alignment: .topLeading) {
-                Color.clear
-                if isHoverActive || isSelected {
-                    BoundaryAdjustRow(segment: segment, viewModel: viewModel)
-                }
-            }
-            .frame(height: SegmentLibraryMetrics.boundaryRowHeight)
         }
         .padding(8)
     }
@@ -1344,25 +1322,7 @@ struct SegmentCard: View, Equatable {
                 .padding(.top, 8)
                 .padding(.bottom, 4)
 
-            if isEditingText {
-                TextEditor(text: $draftText)
-                    .font(DesignTokens.Typography.caption)
-                    .lineSpacing(3)
-                    .focused($textEditorFocused)
-                    .scrollContentBackground(.hidden)
-                    .background(Color(.textBackgroundColor).opacity(0.6))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 4, style: .continuous)
-                            .stroke(Color.accentColor.opacity(0.5), lineWidth: 1)
-                    )
-                    .padding(.horizontal, 6)
-                    .padding(.bottom, 8)
-                    // ⌘↩ 保存
-                    .onKeyPress(.return, phases: .down) { press in
-                        if press.modifiers.contains(.command) { saveText(); return .handled }
-                        return .ignored
-                    }
-            } else if segment.text.isEmpty {
+            if segment.text.isEmpty {
                 VStack(spacing: DesignTokens.Spacing.tight) {
                     Image(systemName: "waveform.slash")
                         .font(DesignTokens.Typography.bodyLarge)
@@ -1388,111 +1348,6 @@ struct SegmentCard: View, Equatable {
         }
     }
 
-    // MARK: - 台词编辑（具体按钮内容见文件外 TranscriptHeaderButtons）
-
-    /// 保存行内编辑的台词（全局共享，写回 Segment.text）
-    private func saveText() {
-        let trimmed = draftText.trimmingCharacters(in: .whitespacesAndNewlines)
-        if trimmed != segment.text {
-            segment.setText(trimmed, source: .manualEdit)
-            try? modelContext.save()
-            ToastCenter.shared.show("台词已更新", icon: "checkmark.circle.fill")
-        }
-        isEditingText = false
-        textEditorFocused = false
-    }
-
-    // MARK: - 遮挡应用
-
-    /// 把当前分镜的字幕字号应用到**同一视频**的所有分镜（不跨视频）。
-    /// 与「遮挡区应用到所有分镜」同一套模式：覆盖前存快照、完成后给可撤销的 Toast。
-    ///
-    /// 做成 `static` 是为了让网格卡与列表行共用同一份批量逻辑 —— 这两个入口改的是同一批字段，
-    /// 各写一份就会出现"卡上撤销得回来、行上撤销不回来"这类分叉。
-    fileprivate static func applyFontSizeToAllSegments(of source: Segment, in context: ModelContext) {
-        guard let video = source.video else { return }
-        let ratio = SubtitleFontSize.clamp(source.subtitleFontRatio)
-        let targets = video.segments.filter { $0.id != source.id }
-        guard !targets.isEmpty else {
-            ToastCenter.shared.show("这个视频只有一个分镜，无需应用", icon: "info.circle.fill", style: .info)
-            return
-        }
-        let snapshot: [(seg: Segment, ratio: Double)] = targets.map { ($0, $0.subtitleFontRatio) }
-        for seg in targets { seg.subtitleFontRatio = ratio }
-        context.safeSave()
-
-        PendingDeletionCenter.shared.scheduleUndoOnly(
-            message: "已把字幕字号应用到本视频 \(targets.count) 个分镜",
-            actionTitle: "撤销批量字号",
-            seconds: 5
-        ) {
-            // 宽限期内分镜可能已被删除，写已删对象会崩溃 → 逐项守卫
-            var restored = 0
-            for item in snapshot where item.seg.modelContext != nil {
-                item.seg.subtitleFontRatio = item.ratio
-                restored += 1
-            }
-            context.safeSave()
-            ToastCenter.shared.show(restored == snapshot.count
-                                    ? "已还原字幕字号"
-                                    : "已还原 \(restored) 个分镜的字幕字号（其余已被删除）",
-                                    icon: "arrow.uturn.backward", style: .info)
-        }
-    }
-
-    /// 把当前分镜的遮挡设置应用到同一视频的所有分镜。
-    ///
-    /// 这是个**批量覆盖**操作：会盖掉其他分镜可能已经逐个微调好的遮挡框。
-    /// 以前点完界面毫无变化（当前卡片本来就是这个值），用户根本不知道有没有生效，
-    /// 也没有后悔药。现在：① 覆盖前先存快照；② 完成后 Toast 说明影响范围；③ 提供撤销。
-    /// ⚠️ `static` 的理由同上：网格卡与列表行共用这一份批量逻辑与同一份撤销账。
-    fileprivate static func applyMaskToAllSegments(of source: Segment, in context: ModelContext) {
-        guard let video = source.video else { return }
-        let rect = source.maskRect
-        let style = source.maskStyle
-        let hasSub = source.hasHardSubtitle
-
-        let targets = video.segments.filter { $0.id != source.id }
-        guard !targets.isEmpty else {
-            ToastCenter.shared.show("这个视频只有一个分镜，无需应用", icon: "info.circle.fill", style: .info)
-            return
-        }
-
-        // 快照旧值，供撤销还原
-        let snapshot: [(seg: Segment, hasSub: Bool, rect: SubtitleMaskRect, style: MaskStyle)] =
-            targets.map { ($0, $0.hasHardSubtitle, $0.maskRect, $0.maskStyle) }
-
-        for seg in targets {
-            seg.hasHardSubtitle = hasSub
-            seg.maskRect = rect
-            seg.maskStyle = style
-        }
-        try? context.save()
-
-        PendingDeletionCenter.shared.scheduleUndoOnly(
-            message: "已把遮挡设置应用到 \(targets.count) 个分镜",
-            actionTitle: "撤销批量遮挡",
-            seconds: 5
-        ) {
-            // ⚠️ 撤销闭包最长在 5 秒后才执行，这期间用户完全可能删掉其中某个分镜
-            // （删除走 PendingDeletionCenter，宽限期 5 分钟，到点后台自动真删）。
-            // 两个窗口本来就不等长，所以这里从来不能假设"对象还在"：
-            // 对已被 delete 的 SwiftData 对象写属性会直接崩溃（见 CLAUDE.md 删对象崩溃记录），
-            // 所以逐项检查对象是否仍在上下文里，失效的跳过。
-            var restored = 0
-            for item in snapshot where item.seg.modelContext != nil {
-                item.seg.hasHardSubtitle = item.hasSub
-                item.seg.maskRect = item.rect
-                item.seg.maskStyle = item.style
-                restored += 1
-            }
-            try? context.save()
-            ToastCenter.shared.show(restored == snapshot.count
-                                    ? "已还原遮挡设置"
-                                    : "已还原 \(restored) 个分镜的遮挡设置（其余已被删除）",
-                                    icon: "arrow.uturn.backward", style: .info)
-        }
-    }
 }
 
 // MARK: - 字幕字号所见即所得预览
@@ -2063,22 +1918,10 @@ struct SegmentRow: View, Equatable {
                     SourceBadge(source: segment.source)
                 }
 
-                SegmentDubCompactControls(segment: segment)
-
                 Text(segment.text)
                     .font(DesignTokens.Typography.caption)
                     .lineLimit(2)
                     .foregroundStyle(.secondary)
-
-                // 边界微调：激活/选中才挂载；固定高度槽位保证行高在两态下不变
-                // （旧实现这里「无 else 直接不挂」，hover 会增高整行，列表模式滚动估算同样失真）。
-                ZStack(alignment: .topLeading) {
-                    Color.clear
-                    if isHoverActive || isSelected {
-                        BoundaryAdjustRow(segment: segment, viewModel: viewModel)
-                    }
-                }
-                .frame(height: SegmentLibraryMetrics.boundaryRowHeight)
             }
             // ⚠️ 这一行是"整行铺满列表列"的**唯一**承担者，别当死码删掉。
             // 旧版靠标签行里那颗 `Spacer()` 顺带把行撑满（它同时兼任"把质量分推到最右"），
@@ -2103,9 +1946,13 @@ struct SegmentRow: View, Equatable {
                 .stroke(isChecked ? Color.accentColor : isSelected ? Color.accentColor.opacity(0.5) : DesignTokens.Palette.border,
                         lineWidth: isChecked ? 2 : 1)
         )
-        // 两层 hover：底色即时、BoundaryAdjustRow 等重子树延迟激活（滚动中不挂载）
+        // 两层 hover：底色即时；延迟激活驱动「Inspector 临时选中」（编辑已迁入 Inspector）
         .hoverState(isHovering: $isHovering, isActive: $isHoverActive)
-        // ⇧+点击 = 范围多选（Finder 同款）；普通点击 = 单个切换
+        .onChange(of: isHoverActive) { _, active in
+            guard !isSelectionMode, viewModel.hoverSelectionAllowed else { return }
+            viewModel.setHoveredSegmentID(active ? segment.id : nil)
+        }
+        // ⇧+点击 = 范围多选（Finder 同款）；普通点击 = 钉住选中
         .onTapGesture {
             if isSelectionMode {
                 if NSEvent.modifierFlags.contains(.shift) {
@@ -2114,93 +1961,9 @@ struct SegmentRow: View, Equatable {
                     viewModel.toggleSelection(segment)
                 }
             } else {
-                viewModel.selectedSegment = segment
+                viewModel.pin(segment)
             }
         }
-    }
-}
-
-// MARK: - 列表行的紧凑配音入口
-
-/// 列表行里的两颗胶囊：字幕处理（Menu 三档）+ 字幕字号（弹层）。
-///
-/// ⚠️ 为什么不直接把网格卡那块 `SegmentDubControls` 搬进来：行内文字列实测只有 147pt
-/// （列表列 339pt − `.padding(10)`×2 − 播放器 160pt − `Spacing.normal` 12），
-/// 而三颗胶囊按理想宽需要 ≈184pt ⇒ 搬进来就会在行内复现"中文被压成竖排"那同一类塌陷。
-/// 这里改成单颗胶囊 + Menu：宽度可控，且与"行=快扫、卡=精修"的分工一致。
-///
-/// 写盘走的是与卡片**同一套**模型桥接（`Segment.subtitleTreatment` / `setSubtitleFontRatio`）
-/// 与同一对批量函数（`SegmentCard.apply*ToAllSegments`），所以两处改的是同一份真相、
-/// 撤销账也只有一份。
-private struct SegmentDubCompactControls: View {
-    let segment: Segment
-    @Environment(\.modelContext) private var modelContext
-    @State private var showFontPopover = false
-
-    private var treatment: SubtitleTreatment { segment.subtitleTreatment }
-    private var isLocked: Bool { segment.isVoiceLocked }
-
-    var body: some View {
-        // 与标签行同一条纪律：用 FlowLayout 换行，不用裸 HStack。
-        // 两颗胶囊按理想宽 ≈153pt > 文字列 147pt，裸 HStack 会压字或溢出到右侧面板上。
-        FlowLayout(spacing: DesignTokens.Spacing.tight) {
-            Menu {
-                ForEach(SubtitleTreatment.allCases) { t in
-                    Button {
-                        segment.subtitleTreatment = t
-                        try? modelContext.save()
-                    } label: {
-                        if t == treatment {
-                            Label(t.displayName, systemImage: "checkmark")
-                        } else {
-                            Text(t.displayName)
-                        }
-                    }
-                }
-                if treatment.needsMask {
-                    Divider()
-                    Button("遮挡区应用到所有分镜") {
-                        SegmentCard.applyMaskToAllSegments(of: segment, in: modelContext)
-                    }
-                }
-            } label: {
-                pill("字幕处理：\(treatment.displayName)")
-            }
-            .menuStyle(.borderlessButton)
-            .fixedSize()
-            .disabled(isLocked)
-            .help(isLocked
-                  ? "这一档已「保留原声」，不参与改写/配音，字幕处理对它无意义；要改请先在网格卡取消保留原声。"
-                  : "在哪一步生效：所有走配音渲染的导出（方案配音导出、多选→批量导出）。普通混剪导出、单分镜批量导出不处理字幕区。")
-
-            Button { showFontPopover = true } label: {
-                pill(String(format: "字号 %.1f%%", SubtitleFontSize.clamp(segment.subtitleFontRatio) * 100))
-            }
-            .buttonStyle(.plain)
-            .fixedSize()
-            .disabled(isLocked)
-            .popover(isPresented: $showFontPopover, arrowEdge: .bottom) {
-                SubtitleFontSizePopover(
-                    fontRatio: Binding(
-                        get: { segment.subtitleFontRatio },
-                        set: { segment.setSubtitleFontRatio($0); modelContext.safeSave() }
-                    ),
-                    isPresented: $showFontPopover,
-                    onApplyToAll: {
-                        SegmentCard.applyFontSizeToAllSegments(of: segment, in: modelContext)
-                    })
-            }
-        }
-    }
-
-    private func pill(_ text: String) -> some View {
-        Text(text)
-            .font(DesignTokens.Typography.microRegular)
-            .lineLimit(1)
-            .foregroundStyle(.secondary)
-            .padding(.horizontal, 7)
-            .padding(.vertical, 3)
-            .background(.quaternary, in: RoundedRectangle(cornerRadius: 5, style: .continuous))
     }
 }
 
@@ -2328,171 +2091,3 @@ struct FilterChip: View {
     }
 }
 
-// MARK: - 边界微调行
-
-struct BoundaryAdjustRow: View {
-    let segment: Segment
-    @Bindable var viewModel: SegmentLibraryViewModel
-
-    private enum TimeField: Hashable {
-        case start, end
-    }
-
-    @State private var startText: String = ""
-    @State private var endText: String = ""
-    @FocusState private var focusedField: TimeField?
-
-    private var fps: Double { segment.video?.fps ?? 30 }
-    private func timecode(_ frame: Int) -> String { FrameTime.timecode(frame: frame, fps: fps) }
-
-    var body: some View {
-        HStack(spacing: 6) {
-            // IN 时间组
-            HStack(spacing: 1) {
-                adjustButton(systemName: "minus", accessibilityLabel: "入点提前") {
-                    viewModel.adjustStartFrame(for: segment, by: -1)
-                }
-                TextField("", text: $startText)
-                    .font(DesignTokens.Typography.microMonoStrong)
-                    .textFieldStyle(.plain)
-                    .multilineTextAlignment(.center)
-                    .foregroundStyle(focusedField == .start ? .primary : .secondary)
-                    .focused($focusedField, equals: .start)
-                    .onSubmit { commitStart() }
-                    .frame(width: 44, height: 16)
-                    .background(focusedField == .start ? Color.accentColor.opacity(0.08) : .clear)
-                    .clipShape(RoundedRectangle(cornerRadius: 3, style: .continuous))
-                adjustButton(systemName: "plus", accessibilityLabel: "入点延后") {
-                    viewModel.adjustStartFrame(for: segment, by: 1)
-                }
-            }
-
-            // OUT 时间组
-            HStack(spacing: 1) {
-                adjustButton(systemName: "minus", accessibilityLabel: "出点提前") {
-                    viewModel.adjustEndFrame(for: segment, by: -1)
-                }
-                TextField("", text: $endText)
-                    .font(DesignTokens.Typography.microMonoStrong)
-                    .textFieldStyle(.plain)
-                    .multilineTextAlignment(.center)
-                    .foregroundStyle(focusedField == .end ? .primary : .secondary)
-                    .focused($focusedField, equals: .end)
-                    .onSubmit { commitEnd() }
-                    .frame(width: 44, height: 16)
-                    .background(focusedField == .end ? Color.accentColor.opacity(0.08) : .clear)
-                    .clipShape(RoundedRectangle(cornerRadius: 3, style: .continuous))
-                adjustButton(systemName: "plus", accessibilityLabel: "出点延后") {
-                    viewModel.adjustEndFrame(for: segment, by: 1)
-                }
-            }
-
-            Spacer(minLength: 0)
-
-            // 类型编辑 + 删除
-            Menu {
-                ForEach(SemanticType.allCases) { type in
-                    Button {
-                        viewModel.toggleSemanticType(for: segment, type: type)
-                    } label: {
-                        HStack {
-                            Text(type.rawValue)
-                            if segment.semanticTypes.contains(type) {
-                                Image(systemName: "checkmark")
-                            }
-                        }
-                    }
-                }
-                Divider()
-                ForEach(PositionType.allCases) { type in
-                    Button {
-                        viewModel.updatePositionType(for: segment, to: type)
-                    } label: {
-                        HStack {
-                            Text(type.rawValue)
-                            if segment.positionType == type {
-                                Image(systemName: "checkmark")
-                            }
-                        }
-                    }
-                }
-            } label: {
-                Image(systemName: "ellipsis")
-                    .font(DesignTokens.Typography.microRegular)
-                    .foregroundStyle(.tertiary)
-                    .frame(width: 20, height: 18)
-                    .background(.quaternary.opacity(DesignTokens.Palette.Alpha.strong))
-                    .clipShape(RoundedRectangle(cornerRadius: 4, style: .continuous))
-            }
-            .menuStyle(.borderlessButton)
-            .accessibilityLabel("更多操作")
-            .fixedSize()
-        }
-        // C5：整行统一悬停说明（零布局改动）：入点/出点是什么、怎么调、调完有什么联动。
-        .help("入点 / 出点：该分镜在原视频中的起止时间。点 ± 逐帧微调，或点数字直接输入帧号；调整后自动重新切取台词、重生成封面并播放预览。")
-        .onChange(of: focusedField) { oldField, newField in
-            // 进入编辑显示帧号（便于精确输入）；离开时提交并恢复时间码显示
-            if newField == .start { startText = "\(segment.startFrame)" }
-            if newField == .end { endText = "\(segment.endFrame)" }
-            if oldField == .start { commitStart() }
-            if oldField == .end { commitEnd() }
-        }
-        .onAppear {
-            startText = timecode(segment.startFrame)
-            endText = timecode(segment.endFrame)
-        }
-        .onChange(of: segment.startFrame) { _, newVal in
-            if focusedField != .start { startText = timecode(newVal) }
-        }
-        .onChange(of: segment.endFrame) { _, newVal in
-            if focusedField != .end { endText = timecode(newVal) }
-        }
-    }
-
-    /// 提交开始帧（输入框输入的是帧号整数）
-    private func commitStart() {
-        guard let f = Int(startText.trimmingCharacters(in: .whitespaces)), f >= 0 else {
-            startText = timecode(segment.startFrame)
-            return
-        }
-        if f != segment.startFrame {
-            viewModel.setStartFrame(for: segment, to: f)
-        }
-        startText = timecode(segment.startFrame)
-    }
-
-    /// 提交结束帧（输入框输入的是帧号整数）
-    private func commitEnd() {
-        guard let f = Int(endText.trimmingCharacters(in: .whitespaces)), f > 0 else {
-            endText = timecode(segment.endFrame)
-            return
-        }
-        if f != segment.endFrame {
-            viewModel.setEndFrame(for: segment, to: f)
-        }
-        endText = timecode(segment.endFrame)
-    }
-
-    private func adjustButton(systemName: String, accessibilityLabel: String, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Image(systemName: systemName)
-                // ⚠️ 尺寸必须保持 14×14：这一行只在 hover 时出现，而卡片宽度由最宽的子视图决定。
-                // 一旦把按钮放大（曾试过 18×18），这行会变宽 → 悬停瞬间把整张卡片撑宽 →
-                // 网格重排 → 卡片左右跳动、画面移出播放框。字号 10pt 在 14×14 里留白足够，不必放大容器。
-                .font(DesignTokens.Typography.microEmphasis)
-                .foregroundStyle(.secondary)
-                .frame(width: 14, height: 14)
-                .background(.secondary.opacity(DesignTokens.Palette.Alpha.subtle))
-                .clipShape(RoundedRectangle(cornerRadius: 4, style: DesignTokens.Corner.style))
-                // 让整个 14×14 方块（含透明区域）都可点，而不是只有图标笔画可点。
-                // 不用放大 frame —— 放大会撑宽这一行进而撑宽整张卡片，悬停时造成网格跳动。
-                .contentShape(Rectangle())
-                .overlay(
-                    RoundedRectangle(cornerRadius: 4, style: .continuous)
-                        .stroke(.secondary.opacity(0.1), lineWidth: 0.5)
-                )
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel(accessibilityLabel)
-    }
-}
