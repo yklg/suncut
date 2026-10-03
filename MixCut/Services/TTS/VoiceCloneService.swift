@@ -23,7 +23,7 @@ actor VoiceCloneService {
 
     private let apiKeyProvider: @Sendable () -> String?
 
-    init(apiKeyProvider: @escaping @Sendable () -> String? = { KeychainHelper.getAPIKey(for: .qwen) }) {
+    init(apiKeyProvider: @escaping @Sendable () -> String? = { KeychainHelper.dashScopeKey }) {
         self.apiKeyProvider = apiKeyProvider
     }
 

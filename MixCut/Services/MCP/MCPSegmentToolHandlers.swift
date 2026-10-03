@@ -548,19 +548,24 @@ extension MCPToolHandlers {
             let byVideo = Dictionary(grouping: eligible, by: { $0.video?.id ?? UUID() })
             for (_, group) in byVideo {
                 guard let video = group.first?.video else { continue }
-                vm.errorMessage = nil
+                vm.errorState = nil
                 let cloneOK = await vm.ensureClonedVoice(for: video, context: ctx)
                 guard cloneOK else {
-                    let reason = vm.errorMessage ?? "克隆原声失败"
+                    let reason = vm.errorState?.message ?? "克隆原声失败"
                     for seg in group {
                         perSegment.append(["segment_index": seg.segmentIndex, "ok": false, "reason": reason])
                     }
                     continue
                 }
                 for seg in group {
-                    vm.errorMessage = nil
-                    await vm.rewriteSegment(seg, context: ctx)
-                    if let err = vm.errorMessage {
+                    vm.errorState = nil
+                    // 统一改写入口（single 作用域）
+                    await vm.rewrite(
+                        video: video,
+                        targets: [seg],
+                        presentation: DubScopePresentationMapper.presentation(for: .single),
+                        context: ctx)
+                    if let err = vm.errorState?.message {
                         perSegment.append(["segment_index": seg.segmentIndex, "ok": false, "reason": err])
                     } else {
                         perSegment.append(["segment_index": seg.segmentIndex, "ok": true,

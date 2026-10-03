@@ -15,6 +15,11 @@ struct SettingsView: View {
     @State private var customModelName: String = ""
     @State private var relayBaseURL: String = ""
     @State private var relayPlatform: RelayPlatform = KeychainHelper.relayPlatform
+
+    // 语音与画面服务（千问 DashScope）独立于上方「文本智能」选择器的编辑状态
+    @State private var qwenAPIKey: String = ""
+    @State private var showQwenKey: Bool = false
+    @State private var isQwenKeySaved: Bool = false
     @State private var isDownloadingModel = false
     @State private var modelDownloadError: String?
     @State private var downloadProgress: DownloadProgress?
@@ -68,7 +73,7 @@ struct SettingsView: View {
                     }
             }
         }
-        .frame(width: 500, height: 400)
+        .frame(width: 500, height: 470)
         .onAppear {
             loadProviderState()
             refreshASRState()
@@ -146,7 +151,7 @@ struct SettingsView: View {
     // MARK: - API Key 设置
     private var apiKeySettings: some View {
         Form {
-            Section("AI 提供商") {
+            Section("文本智能（分镜分析 / 方案生成 / 台词改写 · 六选一）") {
                 Picker("提供商", selection: $selectedProvider) {
                     ForEach(AIProviderType.allCases) { provider in
                         Text(provider.displayName).tag(provider)
@@ -314,9 +319,121 @@ struct SettingsView: View {
                     }
                 }
             }
+
+            // MARK: 语音与画面服务（独立于上方文本智能）
+            Section("语音与画面服务（阿里云百炼 DashScope · 独立 Key）") {
+                // Key 输入行（复用上方交互模式，但状态独立）
+                HStack(spacing: DesignTokens.Spacing.compact) {
+                    if showQwenKey {
+                        TextField("千问 API Key", text: $qwenAPIKey)
+                            .textFieldStyle(.roundedBorder)
+                            .font(DesignTokens.Typography.labelMono)
+                    } else {
+                        SecureField("千问 API Key", text: $qwenAPIKey)
+                            .textFieldStyle(.roundedBorder)
+                    }
+                    Button {
+                        showQwenKey.toggle()
+                        if showQwenKey {
+                            qwenAPIKey = KeychainHelper.dashScopeKey ?? qwenAPIKey
+                        } else if isQwenKeySaved {
+                            qwenAPIKey = "••••••••••••••••••••"
+                        }
+                    } label: {
+                        Image(systemName: showQwenKey ? "eye.slash" : "eye")
+                            .font(DesignTokens.Typography.label)
+                            .foregroundStyle(.secondary)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel(showQwenKey ? "隐藏密钥" : "显示密钥")
+                }
+
+                // 能力对照：这把 Key 能解锁的四项能力
+                capabilityRow(title: "原声克隆",
+                              detail: "自动复刻原主播嗓音（qwen-voice-enrollment + qwen3-tts-vc）")
+                capabilityRow(title: "TTS 配音合成",
+                              detail: "用克隆嗓音为改写台词生成配音")
+                capabilityRow(title: "云端语音识别",
+                              detail: "可选；本地 Whisper 已就绪时无需使用")
+                capabilityRow(title: "AI 画面替换",
+                              detail: "Wan2.5 视频编辑接口")
+
+                // 同 Key 身份声明：Key 按提供商身份存储，文本智能选千问时与此处是同一把。
+                Text("千问 Key 同时服务上方文本智能（提供商选「千问」时）与本区域四项能力，是同一把 Key，任一处保存两边同时生效。")
+                    .font(DesignTokens.Typography.microRegular)
+                    .foregroundStyle(.tertiary)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                // 共存说明
+                Text("此 Key 与上方「文本智能」所选厂商相互独立、可同时配置：例如文本用 DeepSeek，配音/画面用千问，互不影响。")
+                    .font(DesignTokens.Typography.microRegular)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                // 操作行
+                HStack(spacing: DesignTokens.Spacing.compact) {
+                    if isQwenKeySaved {
+                        HStack(spacing: DesignTokens.Spacing.tight) {
+                            Image(systemName: "checkmark.circle.fill")
+                                .font(DesignTokens.Typography.label)
+                                .foregroundStyle(.green)
+                            Text("已保存").font(DesignTokens.Typography.caption).foregroundStyle(.green)
+                        }
+                    }
+                    Spacer()
+                    if isQwenKeySaved {
+                        Button("清除", role: .destructive) { clearQwenKey() }
+                            .controlSize(.small)
+                    }
+                    Button("保存千问 Key") { saveQwenKey() }
+                        .controlSize(.small)
+                        .buttonStyle(.borderedProminent)
+                        .disabled(qwenAPIKey.isEmpty || qwenAPIKey.starts(with: "•"))
+                }
+            }
         }
         .formStyle(.grouped)
         .padding()
+    }
+
+    /// 语音/画面能力对照行：绿色对勾 + 能力标题 + 三级色说明。
+    @ViewBuilder
+    private func capabilityRow(title: String, detail: String) -> some View {
+        HStack(alignment: .top, spacing: 7) {
+            Image(systemName: "checkmark.circle.fill")
+                .font(DesignTokens.Typography.caption)
+                .foregroundStyle(.green)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(title).font(DesignTokens.Typography.caption.weight(.medium))
+                Text(detail)
+                    .font(DesignTokens.Typography.microRegular)
+                    .foregroundStyle(.tertiary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+
+    // MARK: - 千问 Key 操作
+
+    private func saveQwenKey() {
+        // 与上方 saveAPIKey 同口径：trim 防复制带入空格/换行导致每次调用 401。
+        let trimmed = qwenAPIKey.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, !trimmed.starts(with: "•") else { return }
+        do {
+            try KeychainHelper.saveAPIKey(trimmed, for: .qwen)
+            isQwenKeySaved = true
+            qwenAPIKey = "••••••••••••••••••••"
+            MixLog.info("千问 API Key 已保存（语音与画面服务）")
+        } catch {
+            connectionTestResult = (false, "保存失败：\(FriendlyError.reason(for: error))")
+        }
+    }
+
+    private func clearQwenKey() {
+        try? KeychainHelper.removeAPIKey(for: .qwen)
+        isQwenKeySaved = false
+        qwenAPIKey = ""
+        showQwenKey = false
     }
 
     /// 发一次最小请求验证 Key 是否真的可用，把错误提前到"填 Key 的当下"。
@@ -781,6 +898,11 @@ struct SettingsView: View {
         } else {
             apiKey = ""
         }
+
+        // 千问 Key 状态独立于 selectedProvider：切厂商不影响其载入，避免切走再切回状态丢失。
+        isQwenKeySaved = KeychainHelper.hasAPIKey(for: .qwen)
+        showQwenKey = false
+        qwenAPIKey = isQwenKeySaved ? "••••••••••••••••••••" : ""
     }
 
     /// 接口地址填得不对时的具体说明；没问题返回 nil。

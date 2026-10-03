@@ -121,6 +121,9 @@ struct SidebarView: View {
             // Settings 关闭时重新检查
             if !newValue { refreshDependencyStatus() }
         }
+        .onReceive(NotificationCenter.default.publisher(for: .mixCutShowSettings)) { _ in
+            showSettings = true
+        }
         .sheet(isPresented: $showSettings) {
             SettingsView()
         }

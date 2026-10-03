@@ -124,10 +124,20 @@ struct SegmentLibraryView: View {
                     }
                 }
                 .frame(maxWidth: .infinity)
+                // R2 · grid 隔离：选中变化引起的宽度/列数重排不做逐帧动画，
+                // grid 只在最终态布局一次（消除多相位插值掉帧）。
+                .animation(nil, value: viewModel.selectedSegment?.id)
 
                 if let seg = viewModel.selectedSegment {
                     Divider()
-                    SegmentVariantInspector(segment: seg, dubVM: dubVM)
+                    SegmentVariantInspector(segment: seg, dubVM: dubVM, onClose: {
+                        // 单处状态翻转（无 withAnimation/无 sleep；动画由本视图的
+                        // .animation(value:) + transition 接管）
+                        viewModel.selectedSegment = nil
+                    })
+                    // R2 · 仅对 inspector 做 120ms opacity 动画（内容快速淡出，无宽度/子树插值）
+                    .transition(.opacity)
+                    .animation(.easeOut(duration: 0.12), value: viewModel.selectedSegment?.id)
                 }
             }
         }
@@ -139,12 +149,18 @@ struct SegmentLibraryView: View {
         //   ② 分组标题被滚出可视区，Lazy 容器把宿主回收掉
         // 结果就是配音失败后界面只是转一圈然后恢复原样，用户完全不知道发生了什么。
         .alert("配音", isPresented: Binding(
-            get: { dubVM.errorMessage != nil },
-            set: { if !$0 { dubVM.errorMessage = nil } }
+            get: { dubVM.errorState != nil },
+            set: { if !$0 { dubVM.errorState = nil } }
         )) {
-            Button("知道了", role: .cancel) { dubVM.errorMessage = nil }
+            // 缺凭证时提供跳设置入口；按钮由 errorState.kind 派生，无影子状态。
+            if dubVM.errorState?.kind == .missingCredential {
+                Button("去设置配置") {
+                    NotificationCenter.default.post(name: .mixCutShowSettings, object: nil)
+                }
+            }
+            Button("知道了", role: .cancel) { dubVM.errorState = nil }
         } message: {
-            Text(dubVM.errorMessage ?? "")
+            Text(dubVM.errorState?.message ?? "")
         }
         .sheet(item: $viewModel.shotEditRequestSegment) { seg in
             ShotEditSheet(segment: seg)
@@ -652,7 +668,24 @@ struct SegmentLibraryView: View {
 
                 // 视频专属「配音」栏（自建分镜组由多个载体视频组成，不显示视频级批量栏，逐卡各自配音）
                 // 放进分组标题行：这些控件作用于「这个视频」，单独占一行浮在右侧看不出归属。
-                DubSettingsBar(video: video, dubVM: dubVM)
+                // 作用域以本视频分镜为定义域解析，跨视频勾选经交集剔除；targets 稳定排序。
+                let scope = DubRewriteScopeResolver.resolve(
+                    domainIDs: Set(video.segments.map(\.id)),
+                    isSelectionMode: viewModel.isSelectionMode,
+                    selectedSegmentIDs: viewModel.selectedSegmentIDs,
+                    singleSegmentID: viewModel.selectedSegment?.id)
+                let mapped: [Segment] = {
+                    guard let ids = scope.targetIDs else { return video.segments }
+                    return ids.compactMap { viewModel.segmentByID[$0] }
+                }()
+                let targets = DubTargetOrdering.ordered(mapped) {
+                    ($0.startTime, $0.startFrame)
+                }
+                DubSettingsBar(video: video,
+                               dubVM: dubVM,
+                               scope: scope,
+                               targets: targets,
+                               presentation: DubScopePresentationMapper.presentation(for: scope.kind))
             }
         }
         .padding(.horizontal, 4)
@@ -1041,6 +1074,14 @@ struct SegmentCard: View, Equatable {
                 Label("编辑台词", systemImage: "square.and.pencil")
             }
 
+            // 重新识别台词：与头部旧入口同一逻辑，入口统一进右键菜单
+            Button {
+                Task { await viewModel.reextractTranscript(segment, context: modelContext) }
+            } label: {
+                Label("重新识别台词", systemImage: "arrow.clockwise")
+            }
+            .disabled(viewModel.busyASRSegmentIDs.contains(segment.id))
+
             Button {
                 viewModel.shotEditRequestSegment = segment
             } label: {
@@ -1238,100 +1279,70 @@ struct SegmentCard: View, Equatable {
         .padding(8)
     }
 
-    // MARK: - 右侧台词面板的头部行（窄容器三档降级）
+    // MARK: - 右侧台词面板的头部行（纯展示，动作在右键菜单）
     //
-    // ⚠️ 这一行四段中文原先**一个 lineLimit 都没有**。素材库窗口里右面板被三处硬宽度挤到
-    // 约 100pt（侧栏 220 + 配音变体池 340 + 卡片左面板 200，见下面 leftPanel 的 `.frame(width: 200)`），
-    // SwiftUI 于是把中文逐字断行、压成"台/词"这样的竖排单字，再被 `rightPanel` 的
-    // `.frame(height: leftHeight).clipped()` 裁掉 —— 看起来就像"台词 16字 手动编辑"撞在一起。
-    // 同类缺陷这文件里已是第三次（:168 与 :339 的注释各记过一次），差别只在这行的可压缩性没声明。
+    // 头部只承载标签，降级档位（各档包含什么、顺序）由 MixCutCore 的
+    // `SegmentHeaderLayout.tiers` 单一声明，这里按 kind 映射渲染：
+    // 宽度测量交给 ViewThatFits，顺序契约与视图解耦。
     //
-    // 三档降级靠 `ViewThatFits` 选档，**关键是前两档必须 fixedSize**：
-    // 只给 `.lineLimit(1)` 的 Text 在水平方向是可变窄的（靠截断接受任何提案宽），
-    // `sizeThatFits` 会永远回报"放得下" ⇒ 第一档永选、后两档成为死码。
-    // 兜底档反过来**不能** fixedSize —— `ViewThatFits` 的语义是"一档都放不下就用最后一个"，
-    // 若最后一个也按理想宽报，它会溢出再被裁掉，丢的是行尾的编辑/重认按钮。
-    private func transcriptHeader(count: Bool, provenance: Bool, compressibleLabels: Bool) -> some View {
-        HStack(spacing: DesignTokens.Spacing.tight) {
+    // 历史上「编辑/重认」按钮曾放在 ViewThatFits 候选内部，因测量缓存时序连续三轮被裁。
+    // 现动作入口统一进卡片右键菜单（编辑已有、重认同入口），头部不含动作变量，
+    // 裁切缺陷在结构上不可能复发。
+
+    /// 按标签种类渲染对应内容（沿用各档原有字号/色阶）。
+    @ViewBuilder
+    private func headerLabelContent(_ kind: SegmentHeaderLabelKind) -> some View {
+        switch kind {
+        case .icon:
             Image(systemName: "text.quote")
                 .font(DesignTokens.Typography.microRegular)
                 .foregroundStyle(.secondary)
-            transcriptHeaderLabel(Text("台词")
+        case .title:
+            Text("台词")
                 .font(DesignTokens.Typography.microEmphasis)
-                .foregroundStyle(.secondary), compressibleLabels)
-            if count {
-                transcriptHeaderLabel(Text("\(segment.text.count)字")
-                    .font(DesignTokens.Typography.microMono)
-                    .foregroundStyle(.tertiary), compressibleLabels)
-            }
-            if provenance {
-                // 台词来源。旧数据那一档显示"旧数据·未记录来源"，用**中性色**：
-                // 它是"没记过"，不是"坏了"——标红会让升级当天的整库看起来全出问题（计划 §6 P2-8）。
-                // 它也是这一行里最长的一段，所以窄窗口下第一个被丢掉。
-                transcriptHeaderLabel(Text(TextProvenance.displayLabel(of: segment.textSource))
-                    .font(DesignTokens.Typography.microMono)
-                    .foregroundStyle(.tertiary), compressibleLabels)
-            }
-            Spacer(minLength: 4)
-            transcriptHeaderButtons
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+        case .wordCount:
+            Text("\(segment.text.count)字")
+                .font(DesignTokens.Typography.microMono)
+                .foregroundStyle(.tertiary)
+                .lineLimit(1)
+        case .provenance:
+            // 台词来源。旧数据显示「旧数据·未记录来源」，用中性色：
+            // 它是「没记过」，不是「坏了」。
+            Text(TextProvenance.displayLabel(of: segment.textSource))
+                .font(DesignTokens.Typography.microMono)
+                .foregroundStyle(.tertiary)
+                .lineLimit(1)
         }
     }
 
-    private func transcriptHeaderLabel(_ label: Text, _ compressible: Bool) -> some View {
-        label.lineLimit(1).fixedSize(horizontal: !compressible, vertical: false)
-    }
-
-    /// 按钮区固定单行高度：按钮按激活/编辑态出现与否都不改变台词头部高度
-    ///（cell 出现后布局不得变化，滚动条稳定性的前提）。
-    @ViewBuilder private var transcriptHeaderButtons: some View {
-        Group {
-            if isEditingText {
-                Button { isEditingText = false } label: {
-                    Image(systemName: "xmark.circle.fill").font(DesignTokens.Typography.label)
+    /// 由 tiers 驱动的头部（ViewThatFits 逐档试放）。
+    private var transcriptHeader: some View {
+        ViewThatFits(in: .horizontal) {
+            ForEach(Array(SegmentHeaderLayout.tiers.enumerated()), id: \.offset) { _, kinds in
+                HStack(spacing: DesignTokens.Spacing.tight) {
+                    ForEach(Array(kinds.enumerated()), id: \.offset) { _, kind in
+                        headerLabelContent(kind)
+                    }
                 }
-                .buttonStyle(.plain).foregroundStyle(.secondary).accessibilityLabel("取消编辑").help("取消")
-                Button { saveText() } label: {
-                    Image(systemName: "checkmark.circle.fill").font(DesignTokens.Typography.label)
-                }
-                .buttonStyle(.plain).foregroundStyle(.green).accessibilityLabel("保存台词").help("保存（⌘↩）")
-            } else if isHoverActive || isSelected {
-            Button {
-                draftText = segment.text
-                isEditingText = true
-                textEditorFocused = true
-            } label: {
-                Image(systemName: "square.and.pencil").font(DesignTokens.Typography.caption)
-            }
-            .buttonStyle(.plain).foregroundStyle(.secondary).accessibilityLabel("编辑台词").help("编辑台词")
-            Button {
-                Task { await viewModel.reextractTranscript(segment, context: modelContext) }
-            } label: {
-                if viewModel.busyASRSegmentIDs.contains(segment.id) {
-                    ProgressView().controlSize(.mini)
-                } else {
-                    Image(systemName: "arrow.clockwise").font(DesignTokens.Typography.caption)
-                }
-            }
-            .buttonStyle(.borderless)
-            .accessibilityLabel("重新识别台词")
-            .disabled(viewModel.busyASRSegmentIDs.contains(segment.id))
-            .help("重认这一段的台词：用哪台引擎由「设置 › 台词重听引擎」与决策表定；没认到字时原台词一字不动")
+                // 各档按理想宽上报：ViewThatFits 才能在放不下时正确降到下一档。
+                // 末档 [.icon] 仅 12pt，任何真实面板都放得下（兜底）。
+                .fixedSize()
             }
         }
-        .frame(height: 18)
+        // 任何降级档下悬停都能看到完整「字数·来源」
+        .help("台词 \(segment.text.count)字 · \(TextProvenance.displayLabel(of: segment.textSource))")
     }
 
     // MARK: - 右侧台词面板
     private var rightPanel: some View {
         VStack(alignment: .leading, spacing: 0) {
-            ViewThatFits(in: .horizontal) {
-                transcriptHeader(count: true, provenance: true, compressibleLabels: false)
-                transcriptHeader(count: true, provenance: false, compressibleLabels: false)
-                transcriptHeader(count: false, provenance: false, compressibleLabels: true)
-            }
-            .padding(.horizontal, 8)
-            .padding(.top, 8)
-            .padding(.bottom, 4)
+            // 头部纯展示：四档降级由 transcriptHeader（tiers 驱动）内部完成
+            transcriptHeader
+                .padding(.horizontal, 8)
+                .padding(.top, 8)
+                .padding(.bottom, 4)
 
             if isEditingText {
                 TextEditor(text: $draftText)
@@ -1377,7 +1388,7 @@ struct SegmentCard: View, Equatable {
         }
     }
 
-    // MARK: - 台词编辑
+    // MARK: - 台词编辑（具体按钮内容见文件外 TranscriptHeaderButtons）
 
     /// 保存行内编辑的台词（全局共享，写回 Segment.text）
     private func saveText() {
@@ -1525,7 +1536,7 @@ private struct SubtitleSizePreviewOverlay: View {
 
 // ThumbnailCache 已移到 Views/Shared/ThumbnailCache.swift，全局共享
 
-// MARK: - 分镜原地播放器（hover 播放，全局唯一播放，原始比例）
+// MARK: - 分镜原地播放器（hover 播放 + 点击播放，全局唯一播放，原始比例）
 
 struct SegmentInlinePlayer: View {
     let segment: Segment
@@ -1533,14 +1544,25 @@ struct SegmentInlinePlayer: View {
     /// 可选：选中配音变体的音频路径。非 nil 时播放静音视频原声、同步播此变体音轨（方案预览用）。
     var dubAudioPath: String? = nil
 
+    /// 播放模式（单一状态，取代 isPlaying/isFrozen 两布尔；paused 语义不再额外打标）。
+    /// 非法组合（如 paused+frozen）不可表达；视图呈现、点击行为全部从 mode 派生。
+    enum SegmentPlaybackMode: Equatable {
+        case idle       // 缩略图态
+        case playing    // 播放中
+        case paused     // 播放中被手动暂停（player 保留，再点继续）
+        case frozen     // 自然播完定格最后一帧
+    }
+
     @State private var player: AVPlayer?
     @State private var dubPlayer: AVAudioPlayer?
     @State private var bgmPlayer: AVAudioPlayer?   // 变体预览时叠加的分离背景音乐
-    @State private var isPlaying = false
-    @State private var isFrozen = false        // 播放到结尾后定格在最后一帧（非 nil player，但已暂停）
+    @State private var mode: SegmentPlaybackMode = .idle
     @State private var timeObserver: Any?
     @State private var endNotifObserver: NSObjectProtocol?  // 到达 forwardPlaybackEndTime / 视频自然播完 → 定格
     @State private var currentTime: Double = 0
+    /// 播放起始的首帧覆盖：新 AVPlayerView 出首帧前会黑一帧，
+    /// 用同画面缩略图盖住；固定 300ms 后揭盖（覆盖帧与首帧同画面，何时揭都零跳变）。
+    @State private var coverFirstFrame = false
     /// hover 停留足够久后才激活：驱动「轻量缩略图态 → 完整播放态」翻转与自动播放。
     /// 快速惯性滚动中卡片在指针下一闪而过，永不激活（不翻转 UI、不创建 AVPlayer）。
     @State private var isHoverActive = false
@@ -1568,7 +1590,7 @@ struct SegmentInlinePlayer: View {
     var body: some View {
         // 性能关键：默认只渲染缩略图 + 时长（最轻量），激活/播放才组装完整 ZStack
         Group {
-            if !isHoverActive && !isPlaying && !isFrozen {
+            if mode == .idle && !isHoverActive {
                 // 静态轻量态：只有缩略图 + 时长角标
                 thumbnailView
                     .overlay(alignment: .bottomTrailing) {
@@ -1580,6 +1602,10 @@ struct SegmentInlinePlayer: View {
                             .background(.black.opacity(0.55))
                             .clipShape(Capsule())
                             .padding(5)
+                    }
+                    .overlay(alignment: .center) {
+                        // 静态态整区可点播放（R1 实测检查点：先验证点击不触发父级选中）
+                        playbackTapButton
                     }
                     .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
             } else {
@@ -1594,7 +1620,7 @@ struct SegmentInlinePlayer: View {
             if active {
                 viewModel.requestPlay(segment: segment)
             } else {
-                if isPlaying || isFrozen { stopPlayback() }
+                if mode != .idle { stopPlayback() }
                 // 仅当全局仍是"我"在播才清空——避免离开本分镜时误杀刚移入的下一个分镜。
                 if viewModel.playingSegmentID == segment.id { viewModel.stopCurrentPlayback() }
             }
@@ -1614,9 +1640,9 @@ struct SegmentInlinePlayer: View {
         }
         // ⚠️ 播放请求监听必须挂在 body 顶层（而非 playerUI 内）：空闲态只渲染缩略图时
         // 也要能响应微调（adjustStartTime/adjustEndTime）触发的 requestPlay，否则点加减不播放。
-        // play() 会把 isPlaying 置 true，body 随即切到 playerUI。
+        // play() 会把 mode 置 .playing，body 随即切到 playerUI。
         .onChange(of: viewModel.playingSegmentID) { _, newID in
-            if newID != segment.id && (isPlaying || isFrozen) {
+            if newID != segment.id && mode != .idle {
                 stopPlayback()
             }
         }
@@ -1631,14 +1657,21 @@ struct SegmentInlinePlayer: View {
     @ViewBuilder
     private var playerUI: some View {
         ZStack {
-            if (isPlaying || isFrozen), let player {
+            if mode != .idle, let player {
                 PlayerRepresentable(player: player)
                     .aspectRatio(videoAspectRatio, contentMode: .fit)   // F11/F12: 横屏视频在 9:16 容器内留黑边，不裁切
             } else {
                 thumbnailView
             }
 
-            if isHoverActive && !isPlaying && !isFrozen {
+            // 首帧覆盖：盖住新 AVPlayerView 出画前的黑帧（同画面缩略图，300ms 后揭）
+            if coverFirstFrame {
+                thumbnailView
+                    .allowsHitTesting(false)
+            }
+
+            // hover 激活但尚未播放（idle）：显示「播放」引导
+            if isHoverActive && mode == .idle {
                 Color.black.opacity(0.15)
                 Image(systemName: "play.fill")
                     .font(.system(size: 20))
@@ -1646,7 +1679,16 @@ struct SegmentInlinePlayer: View {
                     .shadow(color: .black.opacity(0.3), radius: 4)
             }
 
-            if isPlaying {
+            // 手动暂停 / 定格：中央显示播放图标（再点续播/重播）
+            if mode == .paused || mode == .frozen {
+                Color.black.opacity(0.18)
+                Image(systemName: mode == .paused ? "play.fill" : "play.circle.fill")
+                    .font(.system(size: mode == .paused ? 20 : 26))
+                    .foregroundStyle(.white.opacity(0.9))
+                    .shadow(color: .black.opacity(0.3), radius: 4)
+            }
+
+            if mode == .playing {
                 VStack {
                     Spacer()
                     GeometryReader { geo in
@@ -1661,6 +1703,9 @@ struct SegmentInlinePlayer: View {
                     .padding(.bottom, 4)
                 }
             }
+
+            // 点击层：整区响应播放/暂停（最上层；R1：点击由本 Button 消费，不冒泡到卡片选中）
+            playbackTapButton
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(Color.black)   // 横屏视频 fit 进 9:16 的留边填黑，避免透出卡片底色的「透明边」
@@ -1669,6 +1714,41 @@ struct SegmentInlinePlayer: View {
         // 注意：hover 已统一挂在 body 外层 Group，playerUI 内不再重复挂 onHover（会与子视图切换打架）。
         .onDisappear {
             stopPlayback()
+        }
+    }
+
+    /// 整区点击播放/暂停的透明按钮（静态态与 playerUI 共用）。
+    private var playbackTapButton: some View {
+        Button {
+            togglePlayback()
+        } label: {
+            Color.clear
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(mode == .playing ? "暂停" : "播放")
+    }
+
+    /// 点击行为：按 mode 派生，无新布尔。
+    private func togglePlayback() {
+        switch mode {
+        case .idle:
+            // 首次播放：幂等激活（hover 已激活同 ID 时 Gate 会去重）
+            viewModel.requestPlay(segment: segment)
+        case .frozen:
+            // 定格后重播：必须强制——active 仍是本 ID，ensureActive 会被 Gate 吞掉
+            viewModel.requestPlay(segment: segment, intent: .restart)
+        case .playing:
+            // 手动暂停：av 与 dub/bgm 同步暂停但不销毁，再点续播
+            player?.pause()
+            dubPlayer?.pause()
+            bgmPlayer?.pause()
+            mode = .paused
+        case .paused:
+            player?.play()
+            dubPlayer?.play()
+            bgmPlayer?.play()
+            mode = .playing
         }
     }
 
@@ -1776,6 +1856,9 @@ struct SegmentInlinePlayer: View {
     private func play(from requestedStart: Double, to requestedEnd: Double) {
         stopPlayback()
 
+        // 首帧覆盖就位（盖住 AVPlayerView 出画前的黑帧）
+        coverFirstFrame = true
+
         // 当前生效画面：替换版是整段独立片(0..duration)，忽略传入的源时间轴区间；原版用传入区间。
         let ep = segment.effectivePicture
         let startTime = ep.isReplaced ? ep.startTime : requestedStart
@@ -1799,8 +1882,7 @@ struct SegmentInlinePlayer: View {
         let avPlayer = AVPlayer(playerItem: item)
         avPlayer.actionAtItemEnd = .pause   // 到结尾停住，不回到开头、不循环
         self.player = avPlayer
-        isPlaying = true
-        isFrozen = false
+        mode = .playing
 
         // 方案预览：有选中变体音频时静音视频原声（含原人声），改放「克隆人声 + 分离BGM」
         if let dubPath = dubAudioPath, FileManager.default.fileExists(atPath: dubPath) {
@@ -1853,12 +1935,19 @@ struct SegmentInlinePlayer: View {
         avPlayer.play()
         dubPlayer?.play()
         bgmPlayer?.play()
+
+        // 固定 300ms 揭盖：覆盖帧与首帧同画面，无需精确同步首帧事件。
+        // 不持有 Task 句柄——停止路径统一以 coverFirstFrame 复位为准。
+        Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(300))
+            coverFirstFrame = false
+        }
     }
 
     /// 播放到分镜结尾：暂停并定格在分镜最后一帧（endTime 前半帧），不回缩略图。
     /// 便于肉眼确认最后一帧是否已串入下一个镜头（验证 endTime 边界是否切晚了）。
     private func freezeAtLastFrame(endTime: Double) {
-        guard !isFrozen else { return }   // 防重入：forwardPlaybackEndTime 到点与自然播完通知可能都触发
+        guard mode != .frozen else { return }   // 防重入：forwardPlaybackEndTime 到点与自然播完通知可能都触发
         // 移除所有观察者，防止重复/继续触发
         if let observer = timeObserver, let p = player { p.removeTimeObserver(observer) }
         timeObserver = nil
@@ -1876,8 +1965,7 @@ struct SegmentInlinePlayer: View {
         let lastFrame = CMTime(seconds: max(0, endTime - halfFrame), preferredTimescale: 600)
         p.seek(to: lastFrame, toleranceBefore: .zero, toleranceAfter: .zero)
         currentTime = endTime
-        isPlaying = false
-        isFrozen = true
+        mode = .frozen
         // 关键：不调 viewModel.stopCurrentPlayback()。那会把 playingSegmentID 置 nil，
         // 反过来触发本视图 onChange(playingSegmentID) → stopPlayback() 把定格画面清掉回封面。
         // 保留 playingSegmentID = 本段，定格留存；hover 到别的分镜时才会被清理。
@@ -1896,9 +1984,10 @@ struct SegmentInlinePlayer: View {
         bgmPlayer = nil
         player?.pause()
         player = nil
-        isPlaying = false
-        isFrozen = false
+        mode = .idle
         currentTime = 0
+        // 首帧覆盖不残留（hover 离开/点新分镜/切项目/onDisappear 全经此路径）
+        coverFirstFrame = false
     }
 }
 
@@ -2339,6 +2428,8 @@ struct BoundaryAdjustRow: View {
             .accessibilityLabel("更多操作")
             .fixedSize()
         }
+        // C5：整行统一悬停说明（零布局改动）：入点/出点是什么、怎么调、调完有什么联动。
+        .help("入点 / 出点：该分镜在原视频中的起止时间。点 ± 逐帧微调，或点数字直接输入帧号；调整后自动重新切取台词、重生成封面并播放预览。")
         .onChange(of: focusedField) { oldField, newField in
             // 进入编辑显示帧号（便于精确输入）；离开时提交并恢复时间码显示
             if newField == .start { startText = "\(segment.startFrame)" }

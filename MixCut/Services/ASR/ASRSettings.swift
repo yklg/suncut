@@ -32,7 +32,8 @@ enum ASRSettings {
 
     /// 云端凭据是否就绪。**只回布尔** —— Key 的任何片段不得进日志、能力面或界面文案。
     static var hasCloudKey: Bool {
-        guard let key = KeychainHelper.getAPIKey(for: .qwen) else { return false }
+        // 与配音/画面各能力共用凭证路由单点（KeychainHelper.dashScopeKey）。
+        guard let key = KeychainHelper.dashScopeKey else { return false }
         return !key.isEmpty
     }
 }

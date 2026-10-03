@@ -20,6 +20,9 @@ struct ImportView: View {
     /// 本批导入新视频的默认素材来源（与「上传自建分镜」入口分别记忆，互不污染）
     @AppStorage("importDefaultSourceRaw") private var batchSourceRaw: String = SegmentSource.curated.rawValue
 
+    /// 本页视频播放设备的唯一协调器：所有成片卡片共享，同一时刻只允许一个播放。
+    @State private var playbackCoordinator = PlaybackCoordinator()
+
     private var batchSource: SegmentSource { SegmentSource(persisted: batchSourceRaw) }
 
     var body: some View {
@@ -240,7 +243,8 @@ struct ImportView: View {
                     }, onReidentify: {
                         Task { await importVM.reidentifyWholeVideo(video, context: modelContext) }
                     }, isReidentifying: importVM.reidentifyingVideoIDs.contains(video.id),
-                       reidentifyProgress: importVM.reidentifyProgress[video.id].map { "\($0.done + 1)/\($0.total)" })
+                       reidentifyProgress: importVM.reidentifyProgress[video.id].map { "\($0.done + 1)/\($0.total)" },
+                       playbackCoordinator: playbackCoordinator)
                     .overlay(alignment: .topLeading) {
                         // 视频编号徽章：与 Agent 指令里的 video_no 同一套编号（「1 号视频」即此号）
                         Text("\(item.no) 号")
@@ -285,6 +289,8 @@ struct ImportedVideoCard: View {
     var isReidentifying: Bool = false
     /// 逐段重认的可见进度（形如 `3/17`）；nil = 没在跑这一步
     var reidentifyProgress: String? = nil
+    /// 播放设备协调器（所有卡片共享同一实例以实现唯一播放）
+    var playbackCoordinator: PlaybackCoordinator? = nil
 
     private let panelWidth: CGFloat = 190
 
@@ -506,7 +512,9 @@ struct ImportedVideoCard: View {
                     InlineVideoPlayer(
                         videoPath: video.localPath,
                         thumbnailPath: video.thumbnailPath,
-                        aspectRatio: videoAspectRatio
+                        aspectRatio: videoAspectRatio,
+                        playbackID: video.id.uuidString,
+                        coordinator: playbackCoordinator
                     )
                 } else {
                     thumbnailOrPlaceholder

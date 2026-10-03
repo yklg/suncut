@@ -35,7 +35,23 @@ final class DubbingViewModel {
     var busyDubIDs: Set<UUID> = []
     var auditioningVoiceId: String?
     var playingDubID: UUID?
-    var errorMessage: String?
+
+    /// 配音错误性质：alert 是否提供「去设置配置」由它派生。
+    enum DubErrorKind: Equatable {
+        /// 缺少千问/DashScope 凭证（可跳设置）
+        case missingCredential
+        /// 其余错误
+        case generic
+    }
+
+    /// 配音错误状态（单一真源，替代旧的 errorMessage 字符串）。
+    /// alert 关闭 = 整体置 nil，一处复位；错误信息与错误性质不再是两份影子状态。
+    struct DubErrorState: Equatable {
+        let message: String
+        let kind: DubErrorKind
+    }
+    var errorState: DubErrorState?
+
     /// 每个变体最近一次合成失败的友好原因（dubID → 文案），供批量汇总与单格展示。
     var lastDubErrors: [UUID: String] = [:]
 
@@ -118,7 +134,7 @@ final class DubbingViewModel {
         video.clonedVoiceId = nil   // 走下方重克隆流程（能复用的已在上面 return）
         let path = video.localPath
         guard !path.isEmpty, FileManager.default.fileExists(atPath: path) else {
-            errorMessage = "找不到原视频文件，无法克隆原声"
+            errorState = .init(message: "找不到原视频文件，无法克隆原声", kind: .generic)
             return false
         }
         let vid = video.id   // 进度按此视频独立跟踪；忙碌状态由调用方管理
@@ -146,24 +162,44 @@ final class DubbingViewModel {
         } catch {
             setProgress(vid, "")
             MixLog.error("[Clone] 克隆失败: \(error.localizedDescription)")
-            errorMessage = "原声克隆失败：\(Self.friendlyError(error))"
+            // 缺凭证性质在错误产生点定型：未配置千问 Key → 可跳设置；其余按通用错误。
+            let kind: DubErrorKind
+            if case VoiceCloneService.CloneError.missingAPIKey = error {
+                kind = .missingCredential
+            } else {
+                kind = .generic
+            }
+            errorState = .init(message: "原声克隆失败：\(Self.friendlyError(error))", kind: kind)
             return false
         }
     }
 
-    // MARK: - 一键改写（自动克隆原声 → 改写 K 套台词 → 克隆配音）
+    // MARK: - 统一改写入口（自动克隆原声 → 改写 K 套台词 → 合成配音）
+    //
+    // 作用域（本视频全部 / 当前分镜 / 选中分镜）由入参 targets 与 presentation 表达，
+    // 管线体内不出现 scope 分支。调用方负责：disabled 不触发、targets 已稳定排序。
 
-    func rewriteAll(video: Video, context: ModelContext) async {
+    func rewrite(video: Video,
+                 targets: [Segment],
+                 presentation: DubScopePresentation,
+                 context: ModelContext) async {
         let vid = video.id
         guard !isBusy(videoID: vid) else { return }   // 防重复点击；与其它视频互不影响
+        // 入口 guard（P2-R6）：空目标（disabled 被程序化误用）静默不执行，
+        // 不产出空 Toast、不触发任何计费链路。
+        guard !targets.isEmpty else { return }
         beginBusy(vid)
         defer { endBusy(vid) }
 
         guard await ensureClonedVoice(for: video, context: context) else { return }
         let voices = video.selectedVoiceIds   // = [clonedVoiceId]
-        guard !voices.isEmpty else { errorMessage = "克隆原声未就绪"; return }
-        let reconfigurable = video.segments.filter { !$0.isVoiceLocked && !$0.text.isEmpty }
-        guard !reconfigurable.isEmpty else { errorMessage = "没有可重配的分镜"; return }
+        guard !voices.isEmpty else {
+            errorState = .init(message: "克隆原声未就绪", kind: .generic); return
+        }
+        let reconfigurable = targets.filter { !$0.isVoiceLocked && !$0.text.isEmpty }
+        guard !reconfigurable.isEmpty else {
+            errorState = .init(message: presentation.emptyEligibleError, kind: .generic); return
+        }
 
         let inputs = reconfigurable.map {
             RewriteSegmentInput(segmentId: $0.id.uuidString,
@@ -201,7 +237,9 @@ final class DubbingViewModel {
                 // ⚠️ 以前这里直接 return：已落库的前几套台词留在库里，但后面的批量合成被整体跳过，
                 // 于是产生一批"有台词、没音频"的变体，用户看不出问题、也没有"只补合成"的入口。
                 // 改为 break：保留已成功的几套，并继续往下走合成，把它们补齐。
-                errorMessage = "第 \(k + 1) 套改写失败：\(Self.friendlyError(error))"
+                errorState = .init(
+                    message: "第 \(k + 1) 套改写失败：\(Self.friendlyError(error))",
+                    kind: .generic)
                 if completedRounds == 0 {
                     setProgress(vid, "")
                     return   // 一套都没成功才真的中止
@@ -220,67 +258,20 @@ final class DubbingViewModel {
         let producedCount = reconfigurable.count * voices.count * n
         if result.fail > 0 {
             // 弹 alert 给出真实失败原因（可截图/复制），不再只显示笼统计数
-            errorMessage = Self.dubFailureMessage(
-                summary: "已生成 \(producedCount) 个变体，配音合成 \(result.ok) 成功 / \(result.fail) 失败。",
-                errors: result.errors)
+            errorState = .init(
+                message: Self.dubFailureMessage(
+                    summary: "已生成 \(producedCount) 个变体，配音合成 \(result.ok) 成功 / \(result.fail) 失败。",
+                    errors: result.errors),
+                kind: .generic)
         } else {
-            ToastCenter.shared.show(
-                "已生成 \(producedCount) 个配音变体并完成 TTS 合成，点开任意分镜可在右侧试听",
-                icon: "checkmark.circle.fill",
-                style: .success,
-                duration: 3.5)
-        }
-    }
-
-    // MARK: - 单分镜重新改写（改完原台词后只重出本分镜的 K 套改写 + TTS）
-
-    func rewriteSegment(_ segment: Segment, context: ModelContext) async {
-        guard let video = segment.video else { return }
-        guard !segment.isVoiceLocked else { errorMessage = "该分镜保留原声，不参与配音"; return }
-        guard !segment.text.isEmpty else { errorMessage = "该分镜没有原台词"; return }
-        let vid = video.id
-        guard !isBusy(videoID: vid) else { return }
-        beginBusy(vid)
-        defer { endBusy(vid) }
-
-        guard await ensureClonedVoice(for: video, context: context) else { return }
-        let voices = video.selectedVoiceIds   // = [clonedVoiceId]
-        guard !voices.isEmpty else { errorMessage = "克隆原声未就绪"; return }
-
-        let input = RewriteSegmentInput(segmentId: segment.id.uuidString,
-                                        originalText: segment.text,
-                                        durationSeconds: segment.duration,
-                                        keywords: segment.keywords)
-        let n = variantCount
-        for k in 0..<n {
-            setProgress(vid, "改写第 \(k + 1)/\(n) 套…")
-            do {
-                let results = try await rewriteService.rewrite(
-                    inputs: [input],
-                    style: Self.rewriteStyles[k % Self.rewriteStyles.count])
-                if let r = results.first {
-                    for voiceId in voices {
-                        upsertDub(segment: segment, voiceId: voiceId, textVariantIndex: k,
-                                  text: r.rewrittenText, context: context)
-                    }
-                }
-                try? context.save()
-            } catch {
-                errorMessage = "改写失败：\(error.localizedDescription)"
-                return
-            }
-        }
-        setProgress(vid, "")
-
-        let result = await generateAllAudioWithRecloneFallback(
-            for: [segment], videoID: vid, video: video, context: context)
-        if result.fail > 0 {
-            errorMessage = Self.dubFailureMessage(
-                summary: "本分镜已重写，配音 \(result.ok) 成功 / \(result.fail) 失败。",
-                errors: result.errors)
-        } else {
-            ToastCenter.shared.show("本分镜已重新改写并生成配音",
-                                    icon: "checkmark.circle.fill", style: .success)
+            // wantsCount 决定是否前置变体总数（布尔开关，无占位符漏传风险）
+            let text = presentation.wantsCount
+                ? "\(producedCount) \(presentation.successToast)"
+                : presentation.successToast
+            ToastCenter.shared.show(text,
+                                    icon: "checkmark.circle.fill",
+                                    style: .success,
+                                    duration: 3.5)
         }
     }
 
@@ -291,7 +282,9 @@ final class DubbingViewModel {
     @discardableResult
     func addManualVariant(for segment: Segment, context: ModelContext) async -> Int? {
         guard let video = segment.video else { return nil }
-        guard !segment.isVoiceLocked else { errorMessage = "该分镜保留原声，不参与配音"; return nil }
+        guard !segment.isVoiceLocked else {
+            errorState = .init(message: "该分镜保留原声，不参与配音", kind: .generic); return nil
+        }
         let vid = video.id
         guard !isBusy(videoID: vid) else { return nil }
         beginBusy(vid)
@@ -299,7 +292,9 @@ final class DubbingViewModel {
 
         guard await ensureClonedVoice(for: video, context: context) else { return nil }
         let voices = video.selectedVoiceIds   // = [clonedVoiceId]
-        guard !voices.isEmpty else { errorMessage = "克隆原声未就绪"; return nil }
+        guard !voices.isEmpty else {
+            errorState = .init(message: "克隆原声未就绪", kind: .generic); return nil
+        }
 
         let nextIndex = (segment.segmentDubs.map { $0.textVariantIndex }.max() ?? -1) + 1
         for voiceId in voices {
@@ -334,7 +329,9 @@ final class DubbingViewModel {
     func updateVariantText(segment: Segment, textVariantIndex t: Int,
                            newText: String, context: ModelContext) async {
         let trimmed = newText.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { errorMessage = "台词不能为空"; return }
+        guard !trimmed.isEmpty else {
+            errorState = .init(message: "台词不能为空", kind: .generic); return
+        }
 
         let dubs = segment.segmentDubs.filter { $0.textVariantIndex == t }
         guard !dubs.isEmpty else { return }
@@ -357,9 +354,11 @@ final class DubbingViewModel {
             for: [segment], videoID: vid, video: video, context: context)
         setProgress(vid, "")
         if result.fail > 0 {
-            errorMessage = Self.dubFailureMessage(
-                summary: "台词已更新，配音 \(result.ok) 成功 / \(result.fail) 失败。",
-                errors: result.errors)
+            errorState = .init(
+                message: Self.dubFailureMessage(
+                    summary: "台词已更新，配音 \(result.ok) 成功 / \(result.fail) 失败。",
+                    errors: result.errors),
+                kind: .generic)
         } else {
             ToastCenter.shared.show("台词已更新并重新生成配音", icon: "checkmark.circle.fill", style: .success)
         }
@@ -429,13 +428,19 @@ final class DubbingViewModel {
     func generateAudio(for dub: SegmentDub, context: ModelContext, silent: Bool = false) async -> Bool {
         guard let segment = dub.segment, let video = segment.video else { return false }
         guard !dub.rewrittenText.isEmpty else {
-            if !silent { errorMessage = "该变体没有台词" }
+            if !silent {
+                errorState = .init(message: "该变体没有台词", kind: .generic)
+            }
             return false
         }
         let cloned = isCloned(dub.voiceId, video)
         // 防御：非克隆音色必须在当前 CosyVoice 目录里，否则引擎会报 418
         guard cloned || VoiceCatalog.voice(id: dub.voiceId) != nil else {
-            if !silent { errorMessage = "该变体的音色已失效（旧音色），请在顶部重选音色后重新「一键改写」" }
+            if !silent {
+                errorState = .init(
+                    message: "该变体的音色已失效（旧音色），请在顶部重选音色后重新「一键改写」",
+                    kind: .generic)
+            }
             return false
         }
         busyDubIDs.insert(dub.id)
@@ -490,7 +495,16 @@ final class DubbingViewModel {
             let friendly = Self.friendlyError(error)
             lastDubErrors[dub.id] = friendly   // 即使 silent 也记录，供批量汇总透出
             MixLog.error("[Dub] 配音生成失败 dub=\(dub.id): \(error.localizedDescription)")
-            if !silent { errorMessage = "配音生成失败：\(friendly)" }
+            if !silent {
+                // 未配置千问 Key 的 TTS 失败 → 可跳设置；与克隆失败的归类口径一致。
+                let kind: DubErrorKind
+                if case TTSError.missingAPIKey = error {
+                    kind = .missingCredential
+                } else {
+                    kind = .generic
+                }
+                errorState = .init(message: "配音生成失败：\(friendly)", kind: kind)
+            }
             return false
         }
     }
@@ -629,7 +643,7 @@ final class DubbingViewModel {
     func playDub(_ dub: SegmentDub) {
         if playingDubID == dub.id { stopDubPlayback(); return }
         guard let path = dub.audioFilePath, FileManager.default.fileExists(atPath: path) else {
-            errorMessage = "音频文件不存在，请重新生成该变体"
+            errorState = .init(message: "音频文件不存在，请重新生成该变体", kind: .generic)
             return
         }
         do {
@@ -646,7 +660,8 @@ final class DubbingViewModel {
                 if self?.playingDubID == dub.id { self?.playingDubID = nil }
             }
         } catch {
-            errorMessage = "播放失败：\(error.localizedDescription)"
+            errorState = .init(
+                message: "播放失败：\(error.localizedDescription)", kind: .generic)
         }
     }
 
@@ -683,7 +698,8 @@ final class DubbingViewModel {
             auditionPlayer = player
             player.play()
         } catch {
-            errorMessage = "试听失败：\(Self.friendlyError(error))"
+            errorState = .init(
+                message: "试听失败：\(Self.friendlyError(error))", kind: .generic)
         }
     }
 }

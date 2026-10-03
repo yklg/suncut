@@ -4,6 +4,8 @@ import SwiftUI
 struct SegmentVariantInspector: View {
     let segment: Segment
     @Bindable var dubVM: DubbingViewModel
+    /// 头部关闭按钮回调（由视图层清空选中、收起面板）
+    let onClose: () -> Void
     @Environment(\.modelContext) private var modelContext
 
     // 改写版台词行内编辑
@@ -12,6 +14,8 @@ struct SegmentVariantInspector: View {
     @State private var variantPendingDelete: Int? = nil
     @State private var captionEditDub: SegmentDub? = nil
     @FocusState private var editorFocused: Bool
+    /// 视频尚未克隆时，单分镜改写的计费确认弹窗
+    @State private var showCloneCostConfirm = false
 
     /// 本检查器发起的、仍在跑的付费任务（AI 改写 / TTS 合成）。
     ///
@@ -126,6 +130,39 @@ struct SegmentVariantInspector: View {
         } message: { t in
             Text("将删除「改写版 \(variantLetter(t))」的台词与配音，不可恢复。")
         }
+        // 单分镜改写、视频尚未克隆 → 先确认计费（demucs 分离 + 音色注册）
+        .confirmationDialog("该视频还没克隆原声",
+                            isPresented: $showCloneCostConfirm) {
+            Button("开始克隆并改写（按次计费）") {
+                proceedSingleRewrite()
+            }
+            Button("取消", role: .cancel) {}
+        } message: {
+            Text("改写本分镜会先自动分离人声并注册克隆音色（按次计费，耗时较长），再改写台词并生成配音。克隆音色之后全视频复用。")
+        }
+    }
+
+    // MARK: - 单分镜改写（确认策略按「视频是否已克隆」，空状态与 matrix 共用）
+
+    /// 入口：未克隆先弹计费确认；已克隆（小额）直接执行。
+    private func runSingleRewrite() {
+        if (segment.video?.clonedVoiceId ?? "").isEmpty {
+            showCloneCostConfirm = true
+        } else {
+            proceedSingleRewrite()
+        }
+    }
+
+    /// 实际执行：single 作用域走统一管线。
+    private func proceedSingleRewrite() {
+        guard let video = segment.video else { return }
+        runCancellable {
+            await dubVM.rewrite(
+                video: video,
+                targets: [segment],
+                presentation: DubScopePresentationMapper.presentation(for: .single),
+                context: modelContext)
+        }
     }
 
     // MARK: - 头部
@@ -157,6 +194,23 @@ struct SegmentVariantInspector: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(14)
+        // 关闭按钮浮在头部右上角：不动标题行内部布局。
+        .overlay(alignment: .topTrailing) {
+            Button {
+                onClose()
+            } label: {
+                Image(systemName: "xmark")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(.secondary)
+                    .frame(width: 22, height: 22)
+                    .background(.secondary.opacity(0.12))
+                    .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+            }
+            .buttonStyle(.plain)
+            .padding(10)
+            .accessibilityLabel("收起配音变体池")
+            .help("收起配音变体池")
+        }
     }
 
     // MARK: - 内容
@@ -169,11 +223,31 @@ struct SegmentVariantInspector: View {
                       color: .orange)
         } else if segment.segmentDubs.isEmpty {
             VStack(spacing: 14) {
-                emptyHint(icon: "wand.and.stars",
-                          text: "点顶部「一键改写台词」自动克隆原声并生成配音\n或在下方手动添加一版自己写台词",
-                          color: .secondary)
-                addManualVariantButton.padding(.horizontal, 14)
+                Spacer(minLength: 0)
+                Image(systemName: "wand.and.stars")
+                    .font(.system(size: 26)).foregroundStyle(.tertiary)
+                Text("该分镜还没有配音变体")
+                    .font(.callout).foregroundStyle(.secondary)
+
+                Button {
+                    runSingleRewrite()
+                } label: {
+                    Label("一键改写本分镜", systemImage: "wand.and.stars")
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.regular)
+                .help("自动克隆原声 → 改写本分镜台词 → 生成配音；视频未克隆时会先请你确认计费")
+
+                addManualVariantButton
+
+                Text("要一次处理整个视频，用上方「一键改写台词」（视频标题行右侧）")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.tertiary)
+                    .multilineTextAlignment(.center)
+                Spacer(minLength: 0)
             }
+            .padding(.horizontal, 16)
         } else {
             matrix
         }
@@ -234,7 +308,8 @@ struct SegmentVariantInspector: View {
                 }
             } else {
                 Button {
-                    runCancellable { await dubVM.rewriteSegment(segment, context: modelContext) }
+                    // 改走统一入口（single）；未克隆时由 runSingleRewrite 先确认计费
+                    runSingleRewrite()
                 } label: {
                     Label("重新改写本分镜", systemImage: "arrow.triangle.2.circlepath")
                         .font(.caption.weight(.medium))

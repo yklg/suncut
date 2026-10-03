@@ -44,14 +44,21 @@ final class SegmentLibraryViewModel {
     /// 微调后触发预览播放的回调信号
     var previewRequest: SegmentPreviewRequest?
 
-    /// 当前正在播放的分镜 ID（全局唯一，确保只有一个播放）
-    var playingSegmentID: UUID?
+    /// 播放激活门禁：「当前激活分镜」状态与「是否放行新播放」判定的唯一真源。
+    private var activationGate = PlaybackActivationGate()
 
-    /// 请求播放某个分镜（自动停止其他播放）
-    func requestPlay(segment: Segment, from startTime: Double? = nil, to endTime: Double? = nil) {
+    /// 当前正在播放的分镜 ID（全局唯一，确保只有一个播放）。
+    /// 只读暴露 gate 状态，写入统一经 requestPlay / stopCurrentPlayback。
+    var playingSegmentID: UUID? { activationGate.activeSegmentID }
+
+    /// 请求播放某个分镜（自动停止其他播放）。
+    /// - Parameter intent：ensureActive（默认，幂等——hover/点击）或 restart（强制重播——边界微调）。
+    func requestPlay(segment: Segment, from startTime: Double? = nil, to endTime: Double? = nil,
+                     intent: PlaybackActivationIntent = .ensureActive) {
+        // Gate 单点去重：同一分镜重复的 ensureActive 在此被吞，不产生第二个播放信号。
+        guard activationGate.request(segmentID: segment.id, intent: intent) else { return }
         let from = startTime ?? segment.startTime
         let to = endTime ?? segment.endTime
-        playingSegmentID = segment.id
         previewRequest = SegmentPreviewRequest(
             segmentID: segment.id,
             from: from,
@@ -61,7 +68,7 @@ final class SegmentLibraryViewModel {
 
     /// 停止当前播放
     func stopCurrentPlayback() {
-        playingSegmentID = nil
+        activationGate.clear()
     }
 
     private var modelContext: ModelContext?
@@ -82,7 +89,7 @@ final class SegmentLibraryViewModel {
         selectedSegmentIDs.removeAll()
         selectionOrderedIDs.removeAll()
         previewRequest = nil
-        playingSegmentID = nil
+        activationGate.clear()
 
         var allSegments: [Segment] = []
         for video in project.videos {
@@ -409,7 +416,8 @@ final class SegmentLibraryViewModel {
         scheduleStartThumbnailRegen(for: segment)   // 开始边界变了 → 首帧缩略图重生
 
         let toFrame = min(newStart + Int((2 * fps).rounded()), segment.endFrame)
-        requestPlay(segment: segment, from: segment.startTime, to: FrameTime.seconds(frame: toFrame, fps: fps))
+        requestPlay(segment: segment, from: segment.startTime, to: FrameTime.seconds(frame: toFrame, fps: fps),
+                    intent: .restart)
     }
 
     /// 调整结束帧（±frames），调整后播放到结束
@@ -424,7 +432,8 @@ final class SegmentLibraryViewModel {
         modelContext?.safeSave()
 
         let fromFrame = max(segment.startFrame, newEnd - Int(fps.rounded()))
-        requestPlay(segment: segment, from: FrameTime.seconds(frame: fromFrame, fps: fps), to: segment.endTime)
+        requestPlay(segment: segment, from: FrameTime.seconds(frame: fromFrame, fps: fps), to: segment.endTime,
+                    intent: .restart)
     }
 
     /// 根据当前时间范围重新从 ASR 提取台词（中心点匹配，避免跨段重复）
@@ -453,7 +462,8 @@ final class SegmentLibraryViewModel {
         modelContext?.safeSave()
         scheduleStartThumbnailRegen(for: segment)   // 开始边界变了 → 首帧缩略图重生
         let toFrame = min(clamped + Int((2 * fps).rounded()), segment.endFrame)
-        requestPlay(segment: segment, from: segment.startTime, to: FrameTime.seconds(frame: toFrame, fps: fps))
+        requestPlay(segment: segment, from: segment.startTime, to: FrameTime.seconds(frame: toFrame, fps: fps),
+                    intent: .restart)
     }
 
     /// 直接设置结束帧（输入框提交帧号）
@@ -467,7 +477,8 @@ final class SegmentLibraryViewModel {
         reExtractText(for: segment)
         modelContext?.safeSave()
         let fromFrame = max(segment.startFrame, clamped - Int(fps.rounded()))
-        requestPlay(segment: segment, from: FrameTime.seconds(frame: fromFrame, fps: fps), to: segment.endTime)
+        requestPlay(segment: segment, from: FrameTime.seconds(frame: fromFrame, fps: fps), to: segment.endTime,
+                    intent: .restart)
     }
 
     /// 调「开始」边界后重生成首帧缩略图（debounce，避免连点 ±帧时反复抽帧卡顿）。

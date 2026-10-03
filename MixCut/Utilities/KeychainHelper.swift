@@ -30,6 +30,14 @@ enum KeychainHelper {
         return !key.isEmpty
     }
 
+    /// 语音/画面类能力（原声克隆 / TTS 配音 / 云端 ASR / Wan25 画面替换）统一使用的
+    /// 阿里云百炼 DashScope 凭证。
+    ///
+    /// 凭证路由规则的单点真源：这些能力只走 DashScope，与 `activeProvider` 无关——
+    /// 用户文本智能选 DeepSeek 时，配音/画面仍读这里。日后接入第二家语音厂商时，
+    /// 只需改此访问点（或升级为带厂商参数的路由），不必全库搜索 getAPIKey。
+    static var dashScopeKey: String? { getAPIKey(for: .qwen) }
+
     // MARK: - 活跃提供商
 
     private static let activeProviderKey = "active_ai_provider"

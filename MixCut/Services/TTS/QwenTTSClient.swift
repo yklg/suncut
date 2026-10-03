@@ -10,7 +10,7 @@ actor QwenTTSClient: TTSClient {
     private let apiKeyProvider: @Sendable () -> String?
 
     init(model: String = "qwen3-tts-flash",
-         apiKeyProvider: @escaping @Sendable () -> String? = { KeychainHelper.getAPIKey(for: .qwen) }) {
+         apiKeyProvider: @escaping @Sendable () -> String? = { KeychainHelper.dashScopeKey }) {
         self.model = model
         self.apiKeyProvider = apiKeyProvider
     }

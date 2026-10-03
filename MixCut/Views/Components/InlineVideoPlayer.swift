@@ -7,6 +7,11 @@ struct InlineVideoPlayer: View {
     let thumbnailPath: String?
     let aspectRatio: CGFloat
 
+    /// 播放身份（调用方保证同列表唯一，用 video.id）。
+    var playbackID: String = ""
+    /// 播放设备协调器：同一列表同一时刻只允许一个播放；nil = 不参与协调、行为完全独立。
+    var coordinator: PlaybackCoordinator? = nil
+
     @State private var isPlaying = false
     @State private var player: AVPlayer?
     @State private var currentTime: Double = 0
@@ -41,7 +46,14 @@ struct InlineVideoPlayer: View {
                     }
             }
         }
+        // 唯一播放互斥：协调器的活跃身份变成「别的播放器」时，本卡立即停止回缩略图。
+        .onChange(of: coordinator?.activePlaybackID) { _, newID in
+            // 协调器存在 + 活跃身份已不是我 + 我正在播 → 立即停止（点新视频即停旧）
+            guard coordinator != nil, newID != playbackID, isPlaying else { return }
+            stopPlayback()
+        }
         .onDisappear {
+            // stopPlayback 内部统一 deactivate（覆盖删除/离开/换页所有销毁路径）
             stopPlayback()
         }
     }
@@ -167,6 +179,10 @@ struct InlineVideoPlayer: View {
     // MARK: - 播放控制
 
     private func startPlayback() {
+        // 抢占播放身份：协调器会让其它正在播放的卡片经 onChange 停止
+        if let coordinator, !playbackID.isEmpty {
+            coordinator.activate(playbackID)
+        }
         let url = URL(fileURLWithPath: videoPath)
         let newPlayer = AVPlayer(url: url)
         player = newPlayer
@@ -200,7 +216,13 @@ struct InlineVideoPlayer: View {
             object: newPlayer.currentItem,
             queue: .main
         ) { _ in
-            player?.pause()
+            // NotificationCenter block 静态为 nonisolated，统一切回 MainActor
+            // （queue: .main 只在运行时保证，编译器不可见）
+            Task { @MainActor in
+                player?.pause()
+                // R3：自然播完后画面定格末帧（现有表现不变），但释放「唯一播放」占位
+                coordinator?.deactivate(playbackID)
+            }
         }
     }
 
@@ -218,6 +240,9 @@ struct InlineVideoPlayer: View {
         isPlaying = false
         currentTime = 0
         duration = 0
+        // 统一兜底：任何销毁路径（抢占停止/离开/删除）都释放自己的占位。
+        // 若占位已属于别的播放器，deactivate 是 no-op。
+        coordinator?.deactivate(playbackID)
     }
 
     private func formatTime(_ seconds: Double) -> String {

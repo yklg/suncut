@@ -651,7 +651,14 @@ enum DebugSelfTest {
         write(outPath, ["# G1 一键改写实跑", "视频: \(video.name)", "改写前变体数: \(before)，每镜变体设置: \(n)", "[运行中…]"])
         let vm = DubbingViewModel()
         Task { @MainActor in
-            await vm.rewriteAll(video: video, context: ctx)
+            // 统一改写入口（all 作用域）；排序与生产路径同口径
+            let targets = DubTargetOrdering.ordered(video.segments) {
+                ($0.startTime, $0.startFrame)
+            }
+            await vm.rewrite(video: video,
+                             targets: targets,
+                             presentation: DubScopePresentationMapper.presentation(for: .all),
+                             context: ctx)
             let dubs = video.segments.flatMap(\.segmentDubs)
             let withAudio = dubs.filter { $0.audioFilePath != nil }.count
             let cloned = video.clonedVoiceId ?? "nil"
@@ -659,7 +666,7 @@ enum DebugSelfTest {
                      "克隆音色: \(cloned)",
                      "改写后变体总数: \(dubs.count)，其中有音频: \(withAudio)",
                      "非锁定分镜数: \(video.segments.filter { !$0.isVoiceLocked && !$0.text.isEmpty }.count)，每镜应产: \(n)"]
-            if let err = vm.errorMessage { r.append("errorMessage: \(err)") }
+            if let err = vm.errorState?.message { r.append("errorMessage: \(err)") }
             // 各分镜每条配音的时长对齐情况：分镜时长 D / 配音时长 / 末尾空挡静音
             for s in video.segments.sorted(by: { $0.segmentIndex < $1.segmentIndex }) {
                 let dur = s.duration

@@ -6,6 +6,8 @@ extension Notification.Name {
     static let mixCutNavigate = Notification.Name("mixCutNavigate")
     static let mixCutNewProject = Notification.Name("mixCutNewProject")
     static let mixCutShowShortcuts = Notification.Name("mixCutShowShortcuts")
+    /// 打开设置窗口（配音缺凭证报错 → 点「去设置配置」时广播，侧栏接收开 sheet）
+    static let mixCutShowSettings = Notification.Name("mixCutShowSettings")
     /// 撤销 / 重做后广播：当前视图据此重载，避免显示已回滚 / 恢复前的陈旧数据
     static let mixCutDataDidUndo = Notification.Name("mixCutDataDidUndo")
 }

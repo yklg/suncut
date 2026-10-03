@@ -16,7 +16,7 @@ actor QwenASRClient {
     private static let endpoint = URL(string: "wss://dashscope.aliyuncs.com/api-ws/v1/inference/")!
 
     func transcribe(pcmPath: String, sampleRate: Int = 16000) async throws -> String {
-        guard let key = KeychainHelper.getAPIKey(for: .qwen), !key.isEmpty else {
+        guard let key = KeychainHelper.dashScopeKey, !key.isEmpty else {
             throw ASRError.missingAPIKey
         }
         guard let pcm = FileManager.default.contents(atPath: pcmPath), !pcm.isEmpty else {
@@ -79,7 +79,7 @@ actor QwenASRClient {
     /// 整片 PCM 识别，返回完整 TranscriptionResult（含 words + 句子 + 时间戳）。
     /// 时间单位：服务端返回 ms，内部统一换算为秒。
     func transcribeFull(pcmPath: String, sampleRate: Int = 16000) async throws -> TranscriptionResult {
-        guard let key = KeychainHelper.getAPIKey(for: .qwen), !key.isEmpty else { throw ASRError.missingAPIKey }
+        guard let key = KeychainHelper.dashScopeKey, !key.isEmpty else { throw ASRError.missingAPIKey }
         guard let pcm = FileManager.default.contents(atPath: pcmPath), !pcm.isEmpty else { throw ASRError.recognitionFailed }
 
         var request = URLRequest(url: Self.endpoint)
