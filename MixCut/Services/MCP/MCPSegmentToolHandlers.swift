@@ -506,7 +506,7 @@ extension MCPToolHandlers {
                 fps: video.fps))
         }
         try ensureNoActiveJob()
-        let projectID: UUID = segments.first?.video?.projectVideos.first?.project?.id ?? UUID()
+        let projectID = jobProjectID(explicit: args.project_id, segments: segments)
         let job = jobs.begin(kind: .exportSegments, projectID: projectID)
         let registry = jobs
         let exportItems = items
@@ -538,16 +538,26 @@ extension MCPToolHandlers {
             throw ToolFailure(code: .invalidArgument, message: "所选分镜均无法生成变体（保留原声或台词为空）")
         }
         try ensureNoActiveJob()
-        let projectID: UUID = eligible.first?.video?.projectVideos.first?.project?.id ?? UUID()
+        let projectID = jobProjectID(explicit: sel.project_id, segments: eligible)
         let job = jobs.begin(kind: .generateVoiceVariants, projectID: projectID)
         let vm = dubbingVM
         let ctx = context
         let registry = jobs
         Task { @MainActor in
             var perSegment: [[String: Any]] = []
-            let byVideo = Dictionary(grouping: eligible, by: { $0.video?.id ?? UUID() })
-            for (_, group) in byVideo {
-                guard let video = group.first?.video else { continue }
+            // 没有所属视频的分镜以前掉进 `?? UUID()` 自成一组，再被下面那句 guard 静默跳过
+            // ⇒ 结果里悄悄少了这些分镜，Agent 拿到的是一份"成功但缺条目"的报告。现在逐条显式记失败。
+            for seg in eligible where seg.video == nil {
+                perSegment.append(["segment_index": seg.segmentIndex, "ok": false, "reason": "分镜缺少所属视频"])
+            }
+            let withVideo = eligible.compactMap { (seg) -> (Video, Segment)? in
+                guard let video = seg.video else { return nil }
+                return (video, seg)
+            }
+            let byVideo = Dictionary(grouping: withVideo, by: { $0.0.id })
+            for pair in byVideo.values {
+                guard let video = pair.first?.0 else { continue }
+                let group: [Segment] = pair.map(\.1)
                 vm.errorState = nil
                 let cloneOK = await vm.ensureClonedVoice(for: video, context: ctx)
                 guard cloneOK else {
@@ -582,6 +592,14 @@ extension MCPToolHandlers {
             "job_id": job.id.uuidString,
             "note": "生成中：克隆原声→AI 改写→合成→字幕对齐，用 get_job 轮询",
         ])
+    }
+
+    /// job 的归属项目标签：先吃调用方自带的 `project_id`（Agent 的寻址口径，确定值），
+    /// 再退回分段链上第一个可解析的项目；都解析不出就 **nil** —— 宁可 `get_job` 报 `project_id: null`，
+    /// 也不许编一个随机 UUID 冒充某个项目（消费方 `MCPToolHandlers.getJob` 会照它回报并去查项目）。
+    private func jobProjectID(explicit: String?, segments: [Segment]) -> UUID? {
+        if let pid = explicit, let uuid = UUID(uuidString: pid) { return uuid }
+        return segments.first?.video?.projectVideos.first?.project?.id
     }
 
     /// all-or-nothing 定位：全部找到才返回，否则整个调用不执行

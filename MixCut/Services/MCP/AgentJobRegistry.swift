@@ -21,7 +21,10 @@ struct AgentJob: Sendable {
 
     let id: UUID
     let kind: Kind
-    let projectID: UUID
+    /// 归属项目；**跨项目或解析不出单一项目时为 nil**。
+    /// 不许拿随机 UUID 顶替 —— `MCPToolHandlers.getJob` 会把它当 `project_id` 报给 Agent，
+    /// 并拿它去 `fetchProject`：随机值 = 张冠李戴 + 一个永远查不到的项目，比"不知道"更坏。
+    let projectID: UUID?
     let startedAt: Date
     var finishedAt: Date?
     var state: State
@@ -41,7 +44,7 @@ final class AgentJobRegistry {
         jobs.values.first { $0.state == .running }
     }
 
-    func begin(kind: AgentJob.Kind, projectID: UUID) -> AgentJob {
+    func begin(kind: AgentJob.Kind, projectID: UUID?) -> AgentJob {
         let job = AgentJob(
             id: UUID(), kind: kind, projectID: projectID,
             startedAt: Date(), finishedAt: nil, state: .running,

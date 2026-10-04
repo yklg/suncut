@@ -311,7 +311,7 @@ final class MCPToolHandlers {
             "id": job.id.uuidString,
             "kind": job.kind.rawValue,
             "state": job.state.rawValue,
-            "project_id": job.projectID.uuidString,
+            "project_id": job.projectID.map { $0.uuidString } ?? NSNull(),
             "started_at": Self.iso(job.startedAt),
         ]
         if let finished = job.finishedAt { payload["finished_at"] = Self.iso(finished) }
@@ -329,8 +329,9 @@ final class MCPToolHandlers {
                 "abort_message": report.abortMessage ?? NSNull(),
             ] as [String: Any]
         }
-        // 项目内所有视频的实时流水线状态（直接读 SwiftData，非缓存）
-        if let project = try? fetchProject(job.projectID.uuidString) {
+        // 项目内所有视频的实时流水线状态（直接读 SwiftData，非缓存）。归属不明（nil）时整段缺席，
+        // 与"项目被删导致查不到"走同一分支，Agent 侧契约不变（键仍在，值为 null）。
+        if let pid = job.projectID, let project = try? fetchProject(pid.uuidString) {
             payload["videos"] = project.videos.map(Self.videoSummary)
         }
         return success(payload)
@@ -559,7 +560,8 @@ final class MCPToolHandlers {
                           name: scheme.name))
         }
         try ensureNoActiveJob()
-        let job = jobs.begin(kind: .exportScheme, projectID: projectID ?? UUID())
+        // projectID 为 nil = 这批方案跨项目（或都不挂在项目上），如实报 null：不编一个项目出来
+        let job = jobs.begin(kind: .exportScheme, projectID: projectID)
         let registry = jobs
         let exportTasks = tasks
         Task { @MainActor in
@@ -608,22 +610,14 @@ final class MCPToolHandlers {
                 "message": "未执行删除。确认无误后，带 confirm=true 重新调用才会真正删除（无撤销）。",
             ])
         }
-        // 与 ProjectViewModel.deleteProject 的 commit 逻辑一致，但立即执行、无撤销
-        context.delete(project)
-        context.safeSave()
-        var deletedVideoNames: [String] = []
-        for video in referencedVideos where video.projectVideos.isEmpty {
-            let segmentSnapshot = Array(video.segments)
-            for segment in segmentSnapshot { context.delete(segment) }
-            context.delete(video)
-            deletedVideoNames.append(video.name)
-        }
-        context.safeSave()
+        // 与 UI 侧同一个咽喉（原先这里是一份**复制粘贴的第二实现**：`delete` 之后才去读
+        // `video.projectVideos` / `video.segments`，那本身就是一次「delete 之后读关系」的墓碑窗口）。
+        let outcome = context.deleteProjectSettlingOwnerEdges(project)
         Self.notifyUIReload()
         return success([
             "deleted": true,
             "name": projectName,
-            "videos_deleted_globally": deletedVideoNames,
+            "videos_deleted_globally": outcome.deletedVideoNames,
         ])
     }
 
@@ -632,7 +626,9 @@ final class MCPToolHandlers {
     /// Agent 绕过 UI 流程写库后，广播全量重载通知（复用撤销后的刷新机制），
     /// 让侧边栏/概览等非 SwiftData 观察驱动的列表立即反映变化
     static func notifyUIReload() {
-        NotificationCenter.default.post(name: .mixCutDataDidUndo, object: nil)
+        // 收口到唯一发布口（前案 §3 刀 2）。Agent 一次删的是跨项目跨视频的范围，
+        // 给它上剪枝要重画 8 处投影的口径 ⇒ 这里**固定按无载荷发**，保持"全量重载"的旧语义当它的回归基线。
+        GraphBroadcast.post()
     }
 
     func ensureNoActiveJob() throws {
