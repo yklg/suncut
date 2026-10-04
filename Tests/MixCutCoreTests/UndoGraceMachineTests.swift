@@ -29,7 +29,7 @@ import Testing
 // ============================================================================
 
 private let t0 = Date(timeIntervalSince1970: 1_800_000_000)   // 固定基准，避免用例间隔秒漂移
-private let grace: Double = 300                               // 1.3 的目标宽限期：5 分钟
+private let grace: Double = 300                               // 本文件自造的夹具值，与 App 的 `graceSeconds`（产品档位）无关：Tests 不 import MixCut，状态机的算术也不该跟着档位漂
 
 private func deletion(_ msg: String = "已删除分镜",
                       at armedAt: Date = t0,
@@ -252,3 +252,125 @@ struct UndoGraceMachineTests {
         #expect(!b.needsCommitOnSettle)
     }
 }
+
+// ============================================================================
+// 批 1 · 刀 2 变更台账（GraphEntity / GraphChange）判据用例（GC-01~06）
+//
+// 锁定的接口：
+//   enum GraphEntity : 10 类实体 + static let prunable: Set<GraphEntity>
+//   struct GraphChange { noteDeleted(_:of:), idsDeleted(of:), isEmpty, isPrunable }
+//
+// 规则（每条都对应发布口 `GraphBroadcast.post` 里的一行判据）：
+//   C1 noteDeleted 是**并集**，不是追加事件 ⇒ 同一实体被分几笔记下，观察者看到的仍是同一份。
+//   C2 空集不落键 ⇒ 没删任何东西的变更必须 isEmpty==true，且不可剪枝（回落全量重载）。
+//   C3 只要变更里混进一类 UI 不认得的实体，**整个变更**都不可剪枝 —— 而不是「剪能剪的那部分」。
+//      这条是降级规则的全部意义：半剪半不剪会留下没人认领的投影。
+//   C5 「能不能剪」看的是**有没有人接得住**，不是 id 好不好拿：`.video` 虽是三类之一，
+//      它的投影却只随所属项目一起被摘 ⇒ 带 video 却不带 project 的变更一律降级（GC-07）。
+//   C4 prunable 名册改动必须经过 review（少一类=少剪一处投影；多一类=多一处没人重算的边）。
+//   注意：App 层的重入闸与「saveFailed 时丢弃 change」在 MixCut target 里，swift test 看不见，
+//   由 G19（源码扫描：发布口唯一 + 三条承重写法逐字钉住）与真机 T-0 兜。
+// ============================================================================
+
+@Suite("GraphChange · 变更台账与剪枝判据")
+struct GraphChangeTests {
+
+    private func uuid(_ seed: Int) -> UUID {
+        // 12 位末组是 UUID 的硬格式，多一位少一位都会让 uuidString 返回 nil
+        UUID(uuidString: "00000000-0000-0000-0000-\(String(format: "%012d", seed))")!
+    }
+
+    @Test("GC-01 noteDeleted 是并集语义：同实体分两笔记，读数仍是合起来的 1 组")
+    func noteDeletedUnions() {
+        var c = GraphChange()
+        c.noteDeleted([uuid(1), uuid(2)], of: .segment)
+        c.noteDeleted([uuid(2), uuid(3)], of: .segment)
+        #expect(c.idsDeleted(of: .segment) == [uuid(1), uuid(2), uuid(3)])
+        #expect(c.deleted.count == 1, "同一实体不该占两个键")
+        c.noteDeleted([uuid(4)], of: .video)
+        #expect(c.deleted.count == 2)
+        #expect(c.idsDeleted(of: .video) == [uuid(4)])
+    }
+
+    @Test("GC-02 空集不落键：空删除必须 isEmpty 且不可剪枝（回落全量重载）")
+    func emptyDeletesDoNotCreateKeys() {
+        var c = GraphChange()
+        c.noteDeleted([], of: .project)
+        #expect(c.deleted.isEmpty, "空集不该造出一个值为 [] 的键")
+        #expect(c.isEmpty)
+        #expect(!c.isPrunable, "空变更不可剪枝 ⇒ 发布口会按无载荷发，走旧的全量重载")
+        var mixed = GraphChange()
+        mixed.noteDeleted([uuid(9)], of: .segment)
+        mixed.noteDeleted([], of: .video)
+        #expect(!mixed.isEmpty)
+        #expect(mixed.idsDeleted(of: .video).isEmpty)
+    }
+
+    @Test("GC-03 未登记的实体读数为空集而不是崩（观察者按 id 剪枝前先问有没有）")
+    func unrecordedEntityReadsEmpty() {
+        var c = GraphChange()
+        c.noteDeleted([uuid(1)], of: .project)
+        #expect(c.idsDeleted(of: .scheme).isEmpty)
+        #expect(c.idsDeleted(of: .strategy).isEmpty)
+    }
+
+    @Test("GC-04 有直接消费者的实体单独成变更即可剪枝")
+    func prunableRosterAllCount() {
+        // `.video` 不在这一档：它没有直接消费者，判据见 GC-07
+        for entity: GraphEntity in [.project, .segment] {
+            var c = GraphChange()
+            c.noteDeleted([uuid(7)], of: entity)
+            #expect(c.isPrunable, "\(entity) 有 VM 侧剪枝入口，单独出现就该能剪")
+        }
+    }
+
+    @Test("GC-07 视频是「条件可剪」：跟着项目走才有人接得住，单独出现必须整条降级")
+    func videoIsConditionallyPrunable() {
+        var solo = GraphChange()
+        solo.noteDeleted([uuid(1)], of: .video)
+        #expect(GraphEntity.prunable.contains(.video))
+        #expect(!solo.isPrunable, "只删视频没有剪枝入口 ⇒ 必须降级为全量重载，不许半剪")
+
+        var withProject = GraphChange()
+        withProject.noteDeleted([uuid(2)], of: .project)
+        withProject.noteDeleted([uuid(3), uuid(4)], of: .video)
+        #expect(withProject.isPrunable, "视频投影随所属项目一起摘 ⇒ 这一档可以剪")
+
+        var withSegmentOnly = GraphChange()
+        withSegmentOnly.noteDeleted([uuid(5)], of: .segment)
+        withSegmentOnly.noteDeleted([uuid(6)], of: .video)
+        #expect(!withSegmentOnly.isPrunable, "有 segment 消费者不代表接得住 video")
+
+        var throatShape = GraphChange()
+        throatShape.noteDeleted([uuid(7)], of: .project)
+        throatShape.noteDeleted([uuid(8)], of: .video)
+        throatShape.noteDeleted([uuid(9), uuid(10)], of: .segment)
+        #expect(throatShape.isPrunable, "咽喉现在的真实形状必须能剪")
+    }
+
+    @Test("GC-05 混入一类不可剪枝 ⇒ 整个变更降级（不许半剪半不剪）")
+    func mixedChangeDowngradesWholesale() {
+        var c = GraphChange()
+        c.noteDeleted([uuid(1), uuid(2)], of: .project)   // 会剪
+        c.noteDeleted([uuid(3)], of: .scheme)             // UI 不认得
+        #expect(!c.isPrunable)
+        #expect(c.idsDeleted(of: .project) == [uuid(1), uuid(2)],
+                "降级只该关掉剪枝资格，台账本身不能丢内容")
+        var schemeOnly = GraphChange()
+        schemeOnly.noteDeleted([uuid(4)], of: .schemeSegment)
+        #expect(!schemeOnly.isPrunable)
+    }
+
+    @Test("GC-06 prunable 名册逐字对账：改动必须过一次 review")
+    func prunableRosterIsExact() {
+        #expect(GraphEntity.prunable == [.project, .video, .segment],
+                "prunable 名册变了：实得 \(GraphEntity.prunable.map(\.rawValue).sorted())")
+        // 全表 10 类，且与 prunable 无重名漂移（新增实体时两处要一起想清楚）
+        #expect(GraphEntity.allCases.count == 10)
+        #expect(Set(GraphEntity.allCases).isSuperset(of: GraphEntity.prunable))
+        let notPrunable = Set(GraphEntity.allCases).subtracting(GraphEntity.prunable)
+        #expect(notPrunable == [.projectVideo, .scheme, .strategy, .schemeSegment,
+                                .segmentDub, .physicalShot, .shotVariant])
+    }
+}
+
