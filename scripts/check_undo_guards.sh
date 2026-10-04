@@ -5,7 +5,8 @@
 # 为什么要有这条：A 方案的全部收益挂在一个不变量上 ——
 #   **撤销浮条的可见性只来自 PendingDeletionCenter（状态机 armed），不经过 ToastCenter。**
 # 一旦有人图省事把 `actionTitle` 加回 `ToastCenter.show`，撤销条就又会被任意一条 2.2 秒提示顶掉，
-# 而 5 分钟的宽限期在界面上仍然是"看起来有 5 分钟"的装饰 —— 正是本轮审查判为表面修补的那个形状。
+# 而宽限期在界面上仍然是"看起来在倒计时"的装饰 —— 正是本轮审查判为表面修补的那个形状。
+# （时长本身是产品档位，现 5 秒；这颗门钉的是**可见性来源**，与档位无关，换档不影响它承重。）
 #
 # 纪律照本项目既有守卫：
 #   · 取样面只点名源文件，**不扫 `MixCut/Resources/bin`**（包内二进制会冒充源码让判据恒红）
@@ -134,14 +135,16 @@ if hits:
 else:
     ok("UG-G03 无任何 ToastCenter.show 调用传 actionTitle")
 
-# UG-G04：宽限期必须是 300（槽位语义已按"撤销条常驻"设计，改回 5 就是半吊子状态）
+# UG-G04：撤销宽限期必须是 5 秒。这颗门钉的是「别被顺手改」，不是「5 秒永恒正确」——
+# 档位本身 2026-10-03 拍回 5 秒（撤销条已搬进专用槽位 UndoSlot，「被普通提示顶掉」那半病因治好了，
+# 时长就退回纯产品档位）。改这个数必须同批改这里的期望值 + selftest_undo_guards.sh 的 M4 变异方向。
 g = re.search(r"static let graceSeconds:\s*Double\s*=\s*([0-9.]+)", center)
 if not g:
     bad("UG-G04 取不出 PendingDeletionCenter.graceSeconds", "判据失效")
-elif float(g.group(1)) != 300:
-    bad("UG-G04 撤销宽限期不是 300 秒", g.group(1))
+elif float(g.group(1)) != 5:
+    bad("UG-G04 撤销宽限期不是 5 秒", g.group(1))
 else:
-    ok("UG-G04 撤销宽限期 = 300 秒")
+    ok("UG-G04 撤销宽限期 = 5 秒")
 
 # UG-G05：ToastOverlay 必须同时读两个槽（撤销槽绑 PendingDeletionCenter，提示槽绑 ToastCenter）
 # 结构体到"顶格 }"才结束 —— 用 \n\s*} 会在第一个 if 的收尾处截断，把下面的槽漏掉。
@@ -173,7 +176,7 @@ else:
     else:
         ok("UG-G07 浮条可见性只来自状态机")
 
-# UG-G08：宽限期 300 秒 ⇒ "删完马上退程序"会把未真删的项留在库里，正常退出前必须 flushNow()
+# UG-G08：只要退出时还有未到点的宽限期 ⇒ "删完马上退程序"会把未真删的项留在库里，正常退出前必须 flushNow()
 app = strip_comments(read(os.path.join(src, "App", "MixCutApp.swift")))
 hook = app.find("willTerminateNotification")
 tail = app[hook:hook + 400] if hook >= 0 else ""
@@ -181,6 +184,26 @@ if hook < 0 or "PendingDeletionCenter.shared.flushNow()" not in tail:
     bad("UG-G08 退出钩子缺失或没接 flushNow", "willTerminate 附近取不到收口调用")
 else:
     ok("UG-G08 正常退出前收口 pending")
+
+# UG-G09：真删义务落地后必须广播，且广播只由中心做（前案刀 2 的"谁删谁广播"不许散回各条链）
+#   钉三处承重：① commit 闭包的**返回类型**是 GraphChange（台账由链交回，中心才知道该剪谁）；
+#   ② 两处真删落地点（finish / settle）都走同一个 broadcast helper；③ helper 里空台账不发、
+#   中心只有一处 GraphBroadcast.post（否则"不发"这条规则就有了第二份实现）。
+sig_commit = re.search(r"commit:\s*@escaping\s*\(\)\s*->\s*GraphChange\b", center)
+if not sig_commit:
+    bad("UG-G09 schedule 的 commit 闭包不再交回 GraphChange", "台账没人生产，广播必然空转")
+else:
+    n_bcast = center.count("Self.broadcast(ifNeeded:")
+    n_post = center.count("GraphBroadcast.post(")
+    no_empty = re.search(r"guard\s*!change\.isEmpty\s*else\s*\{\s*return\s*\}", center)
+    if n_bcast != 2:
+        bad(f"UG-G09 广播点应为 2 处（finish + settle），实得 {n_bcast}", "少一处就是那条链真删后界面不认识")
+    elif n_post != 1:
+        bad(f"UG-G09 中心里 GraphBroadcast.post 应为 1 处，实得 {n_post}", "多一处=「空台账不发」就有了第二份实现")
+    elif not no_empty:
+        bad("UG-G09 空台账不发的规则被摘掉", "否则每条删除都会退化成无载荷全量重载（切页骨架闪烁回归）")
+    else:
+        ok("UG-G09 真删落地即由中心广播（2 点 1 post，空台账不发）")
 
 sys.exit(fail)
 PY

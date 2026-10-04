@@ -453,7 +453,7 @@ enum SegmentBatchActions {
             seconds: 5
         ) {
             var restored = 0
-            for item in snapshot where item.seg.modelContext != nil {
+            for item in snapshot where !item.seg.isDroppedFromContext {
                 item.seg.subtitleFontRatio = item.ratio
                 restored += 1
             }
@@ -495,7 +495,7 @@ enum SegmentBatchActions {
             seconds: 5
         ) {
             var restored = 0
-            for item in snapshot where item.seg.modelContext != nil {
+            for item in snapshot where !item.seg.isDroppedFromContext {
                 item.seg.hasHardSubtitle = item.hasSub
                 item.seg.maskRect = item.rect
                 item.seg.maskStyle = item.style

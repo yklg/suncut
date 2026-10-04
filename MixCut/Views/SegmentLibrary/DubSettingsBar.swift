@@ -7,6 +7,11 @@ import SwiftUI
 /// 解析后作为入参传入，本组件只做展示，不做集合运算、不出现 scope 逻辑分支。
 struct DubSettingsBar: View {
     let video: Video
+    /// 本视频的**全部**分镜（由调用方从 VM 的未筛选全域投影传入）。
+    ///
+    /// ⚠️ 刻意不做成「组件自己去读 `video.segments`」：那是一次 SwiftData 关系 fault，
+    /// 已真删的分镜可能仍挂在这个内存对象上，读到就 SIGTRAP（见 SegmentLibraryView 同处注释）。
+    let videoSegments: [Segment]
     @Bindable var dubVM: DubbingViewModel
     /// 作用域解析结果（决定按钮文案与禁用态）
     let scope: DubRewriteScopeResolution
@@ -46,7 +51,9 @@ struct DubSettingsBar: View {
     @State private var variantCount: Int = 0
 
     private func refreshVariantCount() {
-        variantCount = video.segments.reduce(0) { $0 + $1.segmentDubs.count }
+        // 吃传入的投影数组，不 fault `video.segments`；元素本身仍是模型对象，
+        // 这里的 `$1.segmentDubs` 是对**存活投影元素**的一次计数，规模与危险度都远低于遍历整条视频关系。
+        variantCount = videoSegments.reduce(0) { $0 + $1.segmentDubs.count }
     }
 
     /// 仅反映本视频的忙碌状态（不同视频互不联动）。

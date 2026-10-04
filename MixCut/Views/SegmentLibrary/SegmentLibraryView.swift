@@ -563,7 +563,7 @@ struct SegmentLibraryView: View {
 
     private var libraryRows: [LibraryRow] {
         let refs = viewModel.groupedSegments.map {
-            LibraryGroupRef(id: $0.id, segmentIDs: $0.segments.map(\.id))
+            LibraryGroupRef(id: $0.id, segmentIDs: $0.visibleSegments.map(\.id))
         }
         return LibraryRowLayout.rows(for: refs,
                                     columnCount: gridColumnCount,
@@ -613,8 +613,21 @@ struct SegmentLibraryView: View {
         project.videoNoByVideoID
     }
 
-    /// 分组标题行（自建分镜聚合组 vs 普通视频分组）
+    /// 分组标题行的渲染门：载体视频已被 `context.delete` 摘除时不渲染。
+    ///
+    /// 剪枝拦不住这一层 —— 变更通知先到、投影剪枝后到，「正在被移除的视图自己」必然还会重算一次
+    /// body（本仓 `ImportView` 的卡片早已踩过同一个时序）。判据真源见 `PersistentModel.isDroppedFromContext`。
+    @ViewBuilder
     private func sectionHeader(_ group: VideoSegmentGroup) -> some View {
+        if group.video?.isDroppedFromContext == true {
+            Color.clear.frame(height: 0)
+        } else {
+            sectionHeaderContent(group)
+        }
+    }
+
+    /// 分组标题行（自建分镜聚合组 vs 普通视频分组）
+    private func sectionHeaderContent(_ group: VideoSegmentGroup) -> some View {
         HStack(spacing: 10) {
             if group.isSelfBuilt {
                 RoundedRectangle(cornerRadius: 5, style: .continuous)
@@ -629,7 +642,7 @@ struct SegmentLibraryView: View {
                     Text("自建分镜")
                         .font(DesignTokens.Typography.labelStrong)
                         .lineLimit(1)
-                    Text("\(group.segments.count) 个分镜 · 我上传的")
+                    Text("\(group.visibleSegments.count) 个分镜 · 我上传的")
                         .font(DesignTokens.Typography.microRegular)
                         .foregroundStyle(.tertiary)
                 }
@@ -674,7 +687,7 @@ struct SegmentLibraryView: View {
                             .font(DesignTokens.Typography.labelStrong)
                             .lineLimit(1)
                     }
-                    Text("\(group.segments.count) 个分镜 · \(String(format: "%.0f", video.duration))s")
+                    Text("\(group.visibleSegments.count) 个分镜 · \(String(format: "%.0f", video.duration))s")
                         .font(DesignTokens.Typography.microRegular)
                         .foregroundStyle(.tertiary)
                 }
@@ -684,19 +697,28 @@ struct SegmentLibraryView: View {
                 // 视频专属「配音」栏（自建分镜组由多个载体视频组成，不显示视频级批量栏，逐卡各自配音）
                 // 放进分组标题行：这些控件作用于「这个视频」，单独占一行浮在右侧看不出归属。
                 // 作用域以本视频分镜为定义域解析，跨视频勾选经交集剔除；targets 稳定排序。
+                //
+                // ⚠️ 定义域**只吃 VM 的未筛选全域投影，绝不吃 `video.segments`**：
+                // 后者每次布局都要 fault 一次 SwiftData 关系数组，而库里已真删的分镜可能还挂在这个
+                // 内存对象上 —— 2026-10-03 那次 EXC_BREAKPOINT（SIGTRAP）就崩在这一行，
+                // 且它落在 LazyVStack 的 measure 热路径上，滚动/重绘随时触发。
+                // 口径 = 未筛选全域（与 `video_no` 编号同源），不是 `group.visibleSegments`：
+                // 用筛选结果当定义域会让批量范围悄悄缩窄，而文案仍写着「本视频 N 个分镜」。
+                let domain = viewModel.unfilteredSegmentsByGroupID[group.id] ?? group.visibleSegments
                 let scope = DubRewriteScopeResolver.resolve(
-                    domainIDs: Set(video.segments.map(\.id)),
+                    domainIDs: Set(domain.map(\.id)),
                     isSelectionMode: viewModel.isSelectionMode,
                     selectedSegmentIDs: viewModel.selectedSegmentIDs,
                     singleSegmentID: viewModel.selectedSegment?.id)
                 let mapped: [Segment] = {
-                    guard let ids = scope.targetIDs else { return video.segments }
+                    guard let ids = scope.targetIDs else { return domain }
                     return ids.compactMap { viewModel.segmentByID[$0] }
                 }()
                 let targets = DubTargetOrdering.ordered(mapped) {
                     ($0.startTime, $0.startFrame)
                 }
                 DubSettingsBar(video: video,
+                               videoSegments: domain,
                                dubVM: dubVM,
                                scope: scope,
                                targets: targets,
@@ -711,6 +733,9 @@ struct SegmentLibraryView: View {
     /// 性能关键（沿袭旧实现）：父视图一次性算好 isChecked / sequenceNumber 等 props 下发，
     /// 卡片 Equatable + .equatable() 后，选中变化只重绘对应卡片。模型按 id 从 VM 字典回查，
     /// 禁止强解（重认台词/删除撤销等异步回写可能让行投影与字典短暂跨相位）。
+    ///
+    /// `liveSegment(_:)` 是卡片侧的渲染门：分镜已被 `context.delete` 摘除就不再进 body，
+    /// 否则 `SegmentCard` 里任何一次持久属性读取都会命中 SwiftData 的已删对象断言。
     @ViewBuilder
     private func cardsRow(groupID: UUID, segmentIDs: [UUID]) -> some View {
         let selectionMode = viewModel.isSelectionMode
@@ -721,7 +746,7 @@ struct SegmentLibraryView: View {
         if viewModel.isGridView {
             HStack(alignment: .top, spacing: DesignTokens.Spacing.normal) {
                 ForEach(segmentIDs, id: \.self) { segmentID in
-                    if let segment = viewModel.segmentByID[segmentID] {
+                    if let segment = liveSegment(segmentID) {
                         SegmentCard(
                             segment: segment,
                             isChecked: selectedIDs.contains(segment.id),
@@ -737,7 +762,7 @@ struct SegmentLibraryView: View {
                     }
                 }
             }
-        } else if let segment = segmentIDs.first.flatMap({ viewModel.segmentByID[$0] }) {
+        } else if let segment = segmentIDs.first.flatMap(liveSegment) {
             SegmentRow(
                 segment: segment,
                 isChecked: selectedIDs.contains(segment.id),
@@ -748,6 +773,12 @@ struct SegmentLibraryView: View {
             )
             .equatable()
         }
+    }
+
+    /// 从 VM 投影回查分镜，并挡掉「图已经不认它」的那一批。
+    /// 判据走 `ModelContextExtension` 的 `live` 门（与跨 to-one 边同一处真源），别再在这里各写一遍。
+    private func liveSegment(_ id: UUID) -> Segment? {
+        viewModel.segmentByID[id]?.live
     }
 
     // MARK: - 空状态

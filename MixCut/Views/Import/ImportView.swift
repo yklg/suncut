@@ -415,7 +415,7 @@ struct ImportedVideoCard: View {
         // 删除视频时，@Observable 的 Video 被 context.delete 后仍会向「正在被移除的本卡片」
         // 发出变更通知，触发 body 重算；此时读 video.status 等持久属性会命中 SwiftData
         // 已删除对象断言（EXC_BREAKPOINT）。故先判断对象是否已从上下文摘除，已删则不渲染。
-        if video.modelContext == nil {
+        if video.isDroppedFromContext {
             Color.clear.frame(width: 0, height: 0)
         } else {
             cardBody

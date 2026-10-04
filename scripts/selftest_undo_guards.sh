@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # check_undo_guards.sh 的自证：在合成违规树上跑**同一判据**，必须逐条变红。
-# 没跑过这一轮，就不能说那 8 条判据是防线 —— 恒绿的守卫比没有守卫更糟。
+# 没跑过这一轮，就不能说那 9 条判据是防线 —— 恒绿的守卫比没有守卫更糟。
 set -uo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -22,9 +22,14 @@ fresh() {
   cp "$ROOT/Sources/MixCutCore/UndoGraceMachine.swift" "$case_dir/Sources/MixCutCore/"
 }
 
-# mutate <file> <old> <new> —— 旧串必须存在，否则这次变异根本没落地，测的是空气
+# mutate <file> <old> <new> —— 旧串必须存在且唯一，否则这次变异根本没落地，测的是空气。
+# ⚠️ 未落地/有歧义必须自己登记成失败：调用形状是 `mutate … && check_case …`，
+#    短路会让那条腿一声不响地没跑而脚本仍 rc=0（M3 就被这样静默吞过一轮 —— 靶文案在
+#    `a06361d` 改名后原串已不存在）。判据缺席比判据变红危险。
+# ⚠️ 别写成 `local rc` 再 `rc=$?`：`local` 自己返回 0 会把上一条命令的退出码抹掉
+#    （探针实测过一次 —— 变异失败却当成成功往下跑，check_case 在没改过的副本上测空气）。
 mutate() {
-  python3 - "$1" "$2" "$3" <<'PY'
+  if python3 - "$1" "$2" "$3" <<'PY'
 import sys
 path, old, new = sys.argv[1], sys.argv[2], sys.argv[3]
 s = open(path, encoding="utf-8").read()
@@ -36,6 +41,12 @@ if s.count(old) > 1:
     sys.exit(3)
 open(path, "w", encoding="utf-8").write(s.replace(old, new))
 PY
+  then
+    return 0
+  fi
+  fail=1
+  echo "  判据失效：本条变异没落地 ⇒ 这条腿根本没跑，不许算通过"
+  return 3
 }
 
 run_guard() {
@@ -79,15 +90,17 @@ mutate "$D/MixCut/Views/Shared/Toast.swift" '    let style: InlineBanner.Style
   && check_case "M2 ToastPayload 塞回 action 字段" "UG-G02" "$D" "$WORK/m2.log"
 
 D="$WORK/m3"; fresh "$D"
+# 靶必须是**现在还活着**的调用点：旧靶「台词已更新」那句文案已在 a06361d 改名，
+# 那条腿因此静默空转过一轮（现在 mutate 会把这种空转判成失败，不会再混过 rc=0）。
 mutate "$D/MixCut/Views/SegmentLibrary/SegmentLibraryView.swift" \
-  'ToastCenter.shared.show("台词已更新", icon: "checkmark.circle.fill")' \
-  'ToastCenter.shared.show("台词已更新", icon: "checkmark.circle.fill", actionTitle: "撤销")' \
+  'ToastCenter.shared.show("自定义方案已生成", icon: "checkmark.circle.fill", style: .success)' \
+  'ToastCenter.shared.show("自定义方案已生成", icon: "checkmark.circle.fill", style: .success, actionTitle: "撤销")' \
   && check_case "M3 调用点把撤销按钮交回 ToastCenter" "UG-G03" "$D" "$WORK/m3.log"
 
 D="$WORK/m4"; fresh "$D"
 mutate "$D/MixCut/Views/Shared/PendingDeletionCenter.swift" \
-  'static let graceSeconds: Double = 300' 'static let graceSeconds: Double = 5' \
-  && check_case "M4 宽限期退回 5 秒" "UG-G04" "$D" "$WORK/m4.log"
+  'static let graceSeconds: Double = 5' 'static let graceSeconds: Double = 300' \
+  && check_case "M4 宽限期被顺手改回 300 秒（档位漂移）" "UG-G04" "$D" "$WORK/m4.log"
 
 D="$WORK/m5"; fresh "$D"
 mutate "$D/MixCut/Views/Shared/Toast.swift" 'if let payload = toastCenter.current {' 'if let payload = toastCenter.currentHidden {' \
@@ -107,9 +120,15 @@ mutate "$D/MixCut/App/MixCutApp.swift" \
   'forName: NSApplication.willTerminateNotification,' 'forName: NSApplication.didBecomeActiveNotification,' \
   && check_case "M8 退出钩子被摘掉" "UG-G08" "$D" "$WORK/m8.log"
 
+D="$WORK/m9"; fresh "$D"
+# 把 commit 闭包的返回类型退回 `() -> Void`：链不再交台账 ⇒ 中心的广播永远空转
+mutate "$D/MixCut/Views/Shared/PendingDeletionCenter.swift" \
+  'commit: @escaping () -> GraphChange' 'commit: @escaping () -> Void' \
+  && check_case "M9 删除链不再交回被删 id 台账" "UG-G09" "$D" "$WORK/m9.log"
+
 echo
 if [ "$fail" = "0" ]; then
-  echo "全部自证通过：8 条判言逐条可被对应违规变红"
+  echo "全部自证通过：9 条判言逐条可被对应违规变红"
 else
   echo "有自证未通过 —— 那几条判据不算防线"
 fi
