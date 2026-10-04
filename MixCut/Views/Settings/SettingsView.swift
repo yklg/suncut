@@ -4,9 +4,9 @@ struct SettingsView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var selectedProvider: AIProviderType = KeychainHelper.activeProvider
     @State private var apiKey: String = ""
-    @State private var isTestingConnection = false
-    /// 测试连接结果：(是否成功, 展示给用户的一句话)
-    @State private var connectionTestResult: (ok: Bool, message: String)?
+    /// 文本智能卡的操作结果（保存/测试连接），只在本卡操作行内显示——
+    /// 禁止再与千问卡共享状态（曾导致千问保存失败的错误显示到文本卡）。
+    @State private var apiKeyNotice: (ok: Bool, message: String)?
     @State private var isAPIKeySaved = false
     @State private var showAPIKey = false
     @State private var selectedModel: String = ""
@@ -19,7 +19,9 @@ struct SettingsView: View {
     // 语音与画面服务（千问 DashScope）独立于上方「文本智能」选择器的编辑状态
     @State private var qwenAPIKey: String = ""
     @State private var showQwenKey: Bool = false
-    @State private var isQwenKeySaved: Bool = false
+    @State private var isQwenKeySaved = false
+    /// 语音与画面卡的操作结果，只在本卡操作行内显示（与 apiKeyNotice 物理隔离）。
+    @State private var qwenSaveNotice: (ok: Bool, message: String)?
     @State private var isDownloadingModel = false
     @State private var modelDownloadError: String?
     @State private var downloadProgress: DownloadProgress?
@@ -246,54 +248,28 @@ struct SettingsView: View {
                     }
                 }
 
-                HStack(spacing: DesignTokens.Spacing.compact) {
-                    if isAPIKeySaved {
-                        HStack(spacing: DesignTokens.Spacing.tight) {
-                            Image(systemName: "checkmark.circle.fill")
-                                .font(DesignTokens.Typography.label)
-                                .foregroundStyle(.green)
-                            Text("已保存")
-                                .font(DesignTokens.Typography.caption)
-                                .foregroundStyle(.green)
-                        }
-                    }
-
-                    Spacer()
-
-                    Button("保存") {
-                        saveAPIKey()
-                    }
-                    .controlSize(.small)
-                    // Key 已保存（显示为掩码）时**仍可保存**——因为接口地址 / 模型名是独立可改的。
-                    // 原先掩码态一律禁用，导致自定义提供商存过 Key 后再也改不了地址和模型名。
-                    .disabled(
-                        (apiKey.isEmpty && !isAPIKeySaved) ||
-                        (selectedProvider == .custom && (customBaseURL.isEmpty || customModelName.isEmpty)) ||
-                        (selectedProvider == .claudeRelay && relayBaseURL.isEmpty) ||
-                        endpointURLProblem != nil
-                    )
-
+                KeyManagementActionBar(
+                    saveTitle: "保存",
+                    isSaved: isAPIKeySaved,
+                    canSave:
+                        // Key 已保存（显示为掩码）时**仍可保存**——接口地址 / 模型名是独立可改的。
+                        // 原先掩码态一律禁用，导致自定义提供商存过 Key 后再也改不了地址和模型名。
+                        !(apiKey.isEmpty && !isAPIKeySaved)
+                        && !(selectedProvider == .custom && (customBaseURL.isEmpty || customModelName.isEmpty))
+                        && !(selectedProvider == .claudeRelay && relayBaseURL.isEmpty)
+                        && endpointURLProblem == nil,
+                    onSave: saveAPIKey,
+                    onClear: clearAPIKey,
                     // 测试连接：Key 填错 / 过期 / 没开通模型权限，以前要等导入流水线跑到
                     // 第 5 步 AI 分析（十几分钟后）才暴露。这里花 1 秒当场验明。
-                    Button {
-                        Task { await testConnection() }
-                    } label: {
-                        if isTestingConnection {
-                            ProgressView().controlSize(.small)
-                        } else {
-                            Text("测试连接")
-                        }
-                    }
-                    .controlSize(.small)
-                    .disabled(isTestingConnection || !isAPIKeySaved)
-
-                    if isAPIKeySaved {
-                        Button("清除", role: .destructive) {
-                            clearAPIKey()
-                        }
-                        .controlSize(.small)
-                    }
-                }
+                    onTest: {
+                        let started = Date()
+                        let provider = AIProviderManager.createProvider(for: selectedProvider)
+                        _ = try await provider.generateText(prompt: "ping")
+                        let ms = Int(Date().timeIntervalSince(started) * 1000)
+                        return "连接正常 · \(selectedProvider.displayName) · \(ms)ms"
+                    },
+                    notice: $apiKeyNotice)
 
                 // 地址填错时**当场说明为什么不能保存**，而不是把保存按钮灰掉让用户干瞪眼
                 if let problem = endpointURLProblem {
@@ -303,18 +279,6 @@ struct SettingsView: View {
                         Text(problem)
                             .font(DesignTokens.Typography.caption)
                             .fixedSize(horizontal: false, vertical: true)
-                        Spacer()
-                    }
-                }
-
-                if let result = connectionTestResult {
-                    HStack(spacing: 6) {
-                        Image(systemName: result.ok ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
-                            .foregroundStyle(result.ok ? DesignTokens.Palette.Status.success : DesignTokens.Palette.Status.warning)
-                        Text(result.message)
-                            .font(DesignTokens.Typography.caption)
-                            .foregroundStyle(result.ok ? .secondary : .primary)
-                            .textSelection(.enabled)
                         Spacer()
                     }
                 }
@@ -370,26 +334,22 @@ struct SettingsView: View {
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
 
-                // 操作行
-                HStack(spacing: DesignTokens.Spacing.compact) {
-                    if isQwenKeySaved {
-                        HStack(spacing: DesignTokens.Spacing.tight) {
-                            Image(systemName: "checkmark.circle.fill")
-                                .font(DesignTokens.Typography.label)
-                                .foregroundStyle(.green)
-                            Text("已保存").font(DesignTokens.Typography.caption).foregroundStyle(.green)
-                        }
-                    }
-                    Spacer()
-                    if isQwenKeySaved {
-                        Button("清除", role: .destructive) { clearQwenKey() }
-                            .controlSize(.small)
-                    }
-                    Button("保存千问 Key") { saveQwenKey() }
-                        .controlSize(.small)
-                        .buttonStyle(.borderedProminent)
-                        .disabled(qwenAPIKey.isEmpty || qwenAPIKey.starts(with: "•"))
-                }
+                // 操作行（与上方文本智能卡共用同一组件：顺序/样式/结果行单一真源）
+                KeyManagementActionBar(
+                    saveTitle: "保存千问 Key",
+                    isSaved: isQwenKeySaved,
+                    canSave: !qwenAPIKey.isEmpty && !qwenAPIKey.starts(with: "•"),
+                    onSave: saveQwenKey,
+                    onClear: clearQwenKey,
+                    // 媒体 Key 与文本「千问」是同一把钥匙，ping DashScope 即验证账户 Key 有效性
+                    onTest: {
+                        let started = Date()
+                        let provider = AIProviderManager.createProvider(for: .qwen)
+                        _ = try await provider.generateText(prompt: "ping")
+                        let ms = Int(Date().timeIntervalSince(started) * 1000)
+                        return "连接正常 · 千问 DashScope · \(ms)ms"
+                    },
+                    notice: $qwenSaveNotice)
             }
         }
         .formStyle(.grouped)
@@ -416,16 +376,18 @@ struct SettingsView: View {
     // MARK: - 千问 Key 操作
 
     private func saveQwenKey() {
-        // 与上方 saveAPIKey 同口径：trim 防复制带入空格/换行导致每次调用 401。
+        // 与 saveAPIKey 同口径：trim 防复制带入空格/换行导致每次调用 401。
         let trimmed = qwenAPIKey.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty, !trimmed.starts(with: "•") else { return }
         do {
             try KeychainHelper.saveAPIKey(trimmed, for: .qwen)
             isQwenKeySaved = true
             qwenAPIKey = "••••••••••••••••••••"
+            qwenSaveNotice = nil
             MixLog.info("千问 API Key 已保存（语音与画面服务）")
         } catch {
-            connectionTestResult = (false, "保存失败：\(FriendlyError.reason(for: error))")
+            // 结果只进本卡，禁止再写共享变量（曾串到上方文本卡显示）
+            qwenSaveNotice = (false, "保存失败：\(FriendlyError.reason(for: error))")
         }
     }
 
@@ -434,23 +396,7 @@ struct SettingsView: View {
         isQwenKeySaved = false
         qwenAPIKey = ""
         showQwenKey = false
-    }
-
-    /// 发一次最小请求验证 Key 是否真的可用，把错误提前到"填 Key 的当下"。
-    private func testConnection() async {
-        isTestingConnection = true
-        connectionTestResult = nil
-        defer { isTestingConnection = false }
-
-        let started = Date()
-        do {
-            let provider = AIProviderManager.createProvider(for: selectedProvider)
-            _ = try await provider.generateText(prompt: "ping")
-            let ms = Int(Date().timeIntervalSince(started) * 1000)
-            connectionTestResult = (true, "连接正常 · \(selectedProvider.displayName) · \(ms)ms")
-        } catch {
-            connectionTestResult = (false, FriendlyError.reason(for: error))
-        }
+        qwenSaveNotice = nil
     }
 
     // MARK: - 通用设置
@@ -946,10 +892,10 @@ struct SettingsView: View {
             isAPIKeySaved = true
             MixLog.info("API Key 已保存: provider=\(selectedProvider.displayName)")
             apiKey = "••••••••••••••••••••"
-            connectionTestResult = nil
+            apiKeyNotice = nil
         } catch {
             // 保存失败以前只写日志，界面上「已保存」的绿标不出现但没有任何原因
-            connectionTestResult = (false, "保存失败：\(FriendlyError.reason(for: error))")
+            apiKeyNotice = (false, "保存失败：\(FriendlyError.reason(for: error))")
         }
     }
 
@@ -1008,5 +954,106 @@ struct SettingsView: View {
     /// 把字节数格式化为 KB / MB / GB
     private func formatBytes(_ bytes: Int64) -> String {
         ByteCountFormatter.string(fromByteCount: bytes, countStyle: .binary)
+    }
+}
+
+// MARK: - Key 管理操作行（两张 Key 卡片唯一真源）
+
+/// 「已保存 + 保存/测试连接/清除 + 结果提示」操作行。
+///
+/// 文本智能卡与语音画面卡必须共用本组件：此前两处手写复制后各自演化，出现按钮顺序相反、
+/// 蓝底/白底不一、其中一卡缺测试连接，且共享 @State 导致错误串卡显示。
+/// 顺序与样式契约恒定，由 SettingsKeyActionBarGuardTests 源码守卫健在。
+fileprivate struct KeyManagementActionBar: View {
+    typealias Notice = (ok: Bool, message: String)
+
+    let saveTitle: String
+    let isSaved: Bool
+    let canSave: Bool
+    let onSave: () -> Void
+    let onClear: () -> Void
+    /// 返回成功文案；nil = 本卡不提供「测试连接」。
+    var onTest: (() async throws -> String)?
+    /// 父视图持有的保存结果（按卡各自一份 @State，禁止跨卡共享）。
+    @Binding var notice: Notice?
+
+    /// 测试过程与结果由组件自持，不上升到父视图。
+    @State private var isTesting = false
+    @State private var testResult: Notice?
+
+    /// 保存类提示优先；无保存提示时显示最近一次测试结果。
+    private var shown: Notice? { notice ?? testResult }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: DesignTokens.Spacing.compact) {
+                if isSaved {
+                    HStack(spacing: DesignTokens.Spacing.tight) {
+                        Image(systemName: "checkmark.circle.fill")
+                            .font(DesignTokens.Typography.label)
+                            .foregroundStyle(.green)
+                        Text("已保存")
+                            .font(DesignTokens.Typography.caption)
+                            .foregroundStyle(.green)
+                    }
+                }
+
+                Spacer()
+
+                // 顺序恒定：保存 → 测试连接 → 清除；统一白底 bordered/small（不依赖 Form 默认样式）
+                Button(saveTitle, action: onSave)
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                    .disabled(!canSave)
+
+                if isSaved, let onTest {
+                    Button {
+                        Task { await runTest(onTest) }
+                    } label: {
+                        if isTesting {
+                            ProgressView().controlSize(.small)
+                        } else {
+                            Text("测试连接")
+                        }
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                    .disabled(isTesting)
+                }
+
+                if isSaved {
+                    Button("清除", role: .destructive, action: onClear)
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                }
+            }
+
+            if let shown {
+                HStack(spacing: 6) {
+                    Image(systemName: shown.ok ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
+                        .foregroundStyle(shown.ok
+                                         ? DesignTokens.Palette.Status.success
+                                         : DesignTokens.Palette.Status.warning)
+                    Text(shown.message)
+                        .font(DesignTokens.Typography.caption)
+                        .foregroundStyle(shown.ok ? .secondary : .primary)
+                        .textSelection(.enabled)
+                    Spacer()
+                }
+            }
+        }
+    }
+
+    private func runTest(_ work: () async throws -> String) async {
+        isTesting = true
+        // 开测先清旧提示：保存提示与测试结果同槽，避免上一条结果误导本次判定
+        notice = nil
+        testResult = nil
+        do {
+            testResult = (true, try await work())
+        } catch {
+            testResult = (false, FriendlyError.reason(for: error))
+        }
+        isTesting = false
     }
 }
