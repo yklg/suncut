@@ -244,7 +244,7 @@ final class ShotEditViewModel {
         for idx in [b, b + 1] where idx >= 0 && idx < sorted.count {
             let s = sorted[idx]
             discardedCount += purgeVariantFiles(of: s)
-            for v in s.variants { modelContext.delete(v) }
+            modelContext.delete(s.variants)
             s.selectedVariantID = nil
             s.thumbnailPath = nil
         }
@@ -424,7 +424,7 @@ final class ShotEditViewModel {
     /// 设计成 `static` 且直接收变体对象：调用方是 service 的回调，可能在 VM 已释放后才执行，
     /// 走实例方法会因 `self == nil` 而**静默丢掉 taskId**（等于丢掉已付费任务的唯一凭据）。
     private static func persistTaskID(_ taskId: String, to variant: ShotVariant, modelContext: ModelContext) {
-        guard variant.modelContext != nil else { return }   // 变体已被删除则跳过，避免写已删对象崩溃
+        guard !variant.isDroppedFromContext else { return }   // 变体已被删除则跳过，避免写已删对象崩溃
         variant.taskId = taskId
         modelContext.safeSave()
     }
@@ -435,7 +435,7 @@ final class ShotEditViewModel {
     /// （cascade 删掉 ShotVariant）。往已删对象写属性会触发 SwiftData 断言、直接崩溃。
     /// 同 `persistTaskID` 的守卫，之前只防住了那一处，这里漏了。
     private func apply(_ outcome: ShotVariantService.Outcome, to variant: ShotVariant, modelContext: ModelContext) {
-        guard variant.modelContext != nil else {
+        guard !variant.isDroppedFromContext else {
             // 变体已不在了：云端若已出片，落盘文件没人引用得到，顺手清掉免得堆垃圾
             if case .completed(let r) = outcome {
                 try? FileManager.default.removeItem(atPath: r.resultVideoPath)

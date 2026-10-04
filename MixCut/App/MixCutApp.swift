@@ -91,6 +91,12 @@ struct MixCutApp: App {
         // 仅当旧库确实是本 app 的数据时才搬迁 —— 必须赶在开库之前。
         Self.migrateDefaultStoreToDedicated()
 
+        // 容器打开前修复盘上悬空 to-one 边（此刻无任何容器连接；失败只记日志，不阻断开库）。
+        // 库文件尚不存在（全新安装）⇒ 无悬空可修；不预先创建空文件，保持开库流程原状。
+        if FileManager.default.fileExists(atPath: storeURL.path) {
+            DanglingEdgeRepair.run(at: storeURL)
+        }
+
         // 开库必须走 SchemaGuard：门（指纹比对 + 变更分类）→ 改前备份 → 才建 ModelContainer。
         // 三种结果分开处理，尤其**不**把"门拦住"与"库坏了"合并回同一条 catch —— 既有 catch 的文案
         // 会叫用户删库，被这道防线拦下的那次启动若复用它，等于教用户删掉它正保护的库。
@@ -128,8 +134,9 @@ struct MixCutApp: App {
             // —— 这两颗不是 fixup，是运行时接线，故意不进清单：清单作废时界面仍要能用 MCP 排查。
             AgentGateway.shared.configure(container: modelContainer)
 
-            // 退出钩子：宽限期已拉长到 5 分钟，"删完马上退程序"会把**界面已隐藏、库里还没真删**
-            // 的项原样留在盘上，下次启动它又冒出来。正常退出前一律 flushNow() 收口。
+            // 退出钩子：只要宽限期还没到点，"删完马上退程序"就会把**界面已隐藏、库里还没真删**
+            // 的项原样留在盘上，下次启动它又冒出来（时长本身是产品档位，见 `PendingDeletionCenter.graceSeconds`）。
+            // 正常退出前一律 flushNow() 收口。
             // 被强杀 / 崩溃救不了 —— 那种情况读作"没来得及删"，是这条机制的已知边界，写在这不当秘密。
             NotificationCenter.default.addObserver(
                 forName: NSApplication.willTerminateNotification,
@@ -225,7 +232,7 @@ struct MixCutApp: App {
         guard appUndoManager.canUndo else { return }
         appUndoManager.undo()
         try? modelContainer.mainContext.save()
-        NotificationCenter.default.post(name: .mixCutDataDidUndo, object: nil)
+        GraphBroadcast.post()
     }
 
     /// 执行重做：重放 → 落盘 → 通知当前视图重载
@@ -233,7 +240,7 @@ struct MixCutApp: App {
         guard appUndoManager.canRedo else { return }
         appUndoManager.redo()
         try? modelContainer.mainContext.save()
-        NotificationCenter.default.post(name: .mixCutDataDidUndo, object: nil)
+        GraphBroadcast.post()
     }
 
     // MARK: - 数据修复
@@ -1378,3 +1385,149 @@ struct MixCutApp: App {
         FileHelper.collectOrphanFiles(referencedPaths: referenced)
     }
 }
+
+// MARK: - 盘上悬空 to-one 边修复（容器打开前唯一入口）
+
+/// 一条裸 to-one 边的存储映射（owner 表.外键列 → 目标表 Z_PK）。
+///
+/// 13 条与 `ToOneReadScan.toOneEdgeDeclarations`（模型源码派生）同源 ——
+/// G-对账用例按三元组逐条核对，多、少、改名、列名拼错皆红。
+struct DanglingToOneEdge: Hashable {
+    let ownerTable: String
+    let column: String
+    let destinationTable: String
+
+    static let registry: [DanglingToOneEdge] = [
+        .init(ownerTable: "ZPROJECT", column: "ZPRODUCT", destinationTable: "ZPRODUCT"),
+        .init(ownerTable: "ZVIDEO", column: "ZOWNERPROJECT", destinationTable: "ZPROJECT"),
+        .init(ownerTable: "ZPROJECTVIDEO", column: "ZPROJECT", destinationTable: "ZPROJECT"),
+        .init(ownerTable: "ZPROJECTVIDEO", column: "ZVIDEO", destinationTable: "ZVIDEO"),
+        .init(ownerTable: "ZSEGMENT", column: "ZVIDEO", destinationTable: "ZVIDEO"),
+        .init(ownerTable: "ZSCHEMESEGMENT", column: "ZSCHEME", destinationTable: "ZMIXSCHEME"),
+        .init(ownerTable: "ZSCHEMESEGMENT", column: "ZSEGMENT", destinationTable: "ZSEGMENT"),
+        .init(ownerTable: "ZMIXSCHEME", column: "ZSTRATEGY", destinationTable: "ZMIXSTRATEGY"),
+        .init(ownerTable: "ZMIXSCHEME", column: "ZPROJECT", destinationTable: "ZPROJECT"),
+        .init(ownerTable: "ZMIXSTRATEGY", column: "ZPROJECT", destinationTable: "ZPROJECT"),
+        .init(ownerTable: "ZSEGMENTDUB", column: "ZSEGMENT", destinationTable: "ZSEGMENT"),
+        .init(ownerTable: "ZPHYSICALSHOT", column: "ZPARENTSEGMENT", destinationTable: "ZSEGMENT"),
+        .init(ownerTable: "ZSHOTVARIANT", column: "ZSHOT", destinationTable: "ZPHYSICALSHOT"),
+    ]
+}
+
+/// 开容器前对关闭的 store 做悬空 to-one 边扫描与置空。
+///
+/// 为什么只能在容器打开前用 SQL：fault 复活的失效空壳 backing 已无效，
+/// SwiftData 内对其置 `relationship = nil` 会抛错（外部实测）。
+/// 失败隔离：任何步骤出错只记日志并返回 —— 修复绝不阻断开库。
+enum DanglingEdgeRepair {
+    /// 读数（key = "\(ownerTable).\(column)"）；-1 = 该边扫描失败（不计入总数）。
+    struct Report: Equatable {
+        var counts: [String: Int32] = [:]
+        var repaired: [String: Int32] = [:]
+        var backupPath: String?
+        var aborted: Bool = false
+    }
+
+    private static func key(_ edge: DanglingToOneEdge) -> String {
+        "\(edge.ownerTable).\(edge.column)"
+    }
+
+    private static func errmsg(_ db: OpaquePointer?) -> String {
+        String(cString: sqlite3_errmsg(db))
+    }
+
+    static func run(at storeURL: URL) -> Report {
+        var report = Report()
+        var db: OpaquePointer?
+        guard sqlite3_open(storeURL.path, &db) == SQLITE_OK else {
+            MixLog.error("[DanglingEdgeRepair] 打不开库，本次跳过：\(storeURL.path)")
+            if db != nil { sqlite3_close(db) }
+            report.aborted = true
+            return report
+        }
+        defer { sqlite3_close(db) }
+
+        // ① 逐边计数
+        var danglingTotal: Int32 = 0
+        for edge in DanglingToOneEdge.registry {
+            let sql = """
+                SELECT COUNT(*) FROM \(edge.ownerTable)
+                WHERE \(edge.column) IS NOT NULL
+                  AND \(edge.column) NOT IN (SELECT Z_PK FROM \(edge.destinationTable))
+                """
+            var stmt: OpaquePointer?
+            guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else {
+                MixLog.error("[DanglingEdgeRepair] 计数语句失败（\(key(edge))）：\(errmsg(db))")
+                report.counts[key(edge)] = -1
+                continue
+            }
+            defer { sqlite3_finalize(stmt) }
+            let n: Int32 = sqlite3_step(stmt) == SQLITE_ROW ? sqlite3_column_int(stmt, 0) : -1
+            report.counts[key(edge)] = n
+            if n > 0 { danglingTotal += n }
+        }
+
+        guard danglingTotal > 0 else {
+            let scanned = report.counts.values.filter { $0 >= 0 }.count
+            MixLog.info("[DanglingEdgeRepair] \(scanned)/\(DanglingToOneEdge.registry.count) 边完成扫描，无悬空")
+            return report
+        }
+
+        // ② 修复前自备份（store + -wal + -shm）
+        let stamp = Int(Date().timeIntervalSinceReferenceDate)
+        let fm = FileManager.default
+        for suffix in ["", "-wal", "-shm"] {
+            // appendingPathExtension 处理不了 "-wal" 前缀；直接拼路径。
+            let srcURL = suffix.isEmpty ? storeURL
+                : URL(fileURLWithPath: storeURL.path + suffix)
+            guard fm.fileExists(atPath: srcURL.path) else { continue }
+            let destURL = URL(fileURLWithPath: storeURL.path + ".pre-dangling-\(stamp).bak\(suffix)")
+            do {
+                try fm.copyItem(at: srcURL, to: destURL)
+                report.backupPath = destURL.path
+            } catch {
+                MixLog.error("[DanglingEdgeRepair] 备份失败，本次不修（\(srcURL.lastPathComponent)）：\(error.localizedDescription)")
+                report.aborted = true
+                return report
+            }
+        }
+
+        // ③ 单事务逐条置空
+        guard execute(db, "BEGIN IMMEDIATE") else {
+            MixLog.error("[DanglingEdgeRepair] 开事务失败：\(errmsg(db))")
+            report.aborted = true
+            return report
+        }
+        for edge in DanglingToOneEdge.registry where (report.counts[key(edge)] ?? 0) > 0 {
+            let sql = """
+                UPDATE \(edge.ownerTable) SET \(edge.column) = NULL
+                WHERE \(edge.column) IS NOT NULL
+                  AND \(edge.column) NOT IN (SELECT Z_PK FROM \(edge.destinationTable))
+                """
+            guard execute(db, sql) else {
+                _ = execute(db, "ROLLBACK")
+                MixLog.error("[DanglingEdgeRepair] 置空失败已回滚（\(key(edge))）：\(errmsg(db))")
+                report.aborted = true
+                return report
+            }
+            report.repaired[key(edge)] = Int32(sqlite3_changes(db))
+        }
+        guard execute(db, "COMMIT") else {
+            _ = execute(db, "ROLLBACK")
+            MixLog.error("[DanglingEdgeRepair] 提交失败已回滚：\(errmsg(db))")
+            report.aborted = true
+            return report
+        }
+
+        let repairedTotal = report.repaired.values.reduce(0, +)
+        MixLog.info("[DanglingEdgeRepair] 悬空 \(danglingTotal)、置空 \(repairedTotal)；"
+                    + "备份：\(report.backupPath ?? "无（WAL 空）")")
+        return report
+    }
+
+    /// 无结果集单语句执行。
+    private static func execute(_ db: OpaquePointer?, _ sql: String) -> Bool {
+        sqlite3_exec(db, sql, nil, nil, nil) == SQLITE_OK
+    }
+}
+

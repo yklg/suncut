@@ -27,6 +27,15 @@ final class SchemeViewModel {
     }
     var failedStrategies: [FailedStrategy] = []
 
+    /// 会话内真删分镜的剪枝信号（状态机本体在 MixCutCore，纯值类型 + PS-1~5 单测）。
+    /// ContentView 唯一广播路由分发已删 id；持有快照的抽屉按 version 变化本地剪枝。
+    private var pruneSignals = SegmentPruneSignals()
+    var pruneVersion: Int { pruneSignals.version }
+    var prunedSegmentIDs: Set<UUID> { pruneSignals.ids }
+    func notePrunedSegments(_ ids: Set<UUID>) {
+        pruneSignals.note(ids)
+    }
+
     private var modelContext: ModelContext?
     private let schemeService = SchemeGenerationService()
 
@@ -380,9 +389,14 @@ final class SchemeViewModel {
         PendingDeletionCenter.shared.schedule(
             message: "已删除策略",
             commit: { [weak self] in
-                guard let context = self?.modelContext else { return }
+                guard let context = self?.modelContext else { return GraphChange() }
                 context.delete(strategy)
                 context.safeSave()
+                // 交回空台账 = 不广播：本 VM 的 `strategies` 已在 schedule 前摘掉这一项，
+                // 而 `.strategy` 目前**没有第二双手**可剪（没登记进 `GraphEntity.prunable`，
+                // 真记了反而会让每次删策略整页全量重载）。级联带走的 MixScheme/SchemeSegment 同理。
+                // ⇒ 在册欠账见台账 §25「仍未闭合」第 1 条。
+                return GraphChange()
             },
             undo: { [weak self] in
                 guard let self else { return }
@@ -404,9 +418,11 @@ final class SchemeViewModel {
         PendingDeletionCenter.shared.schedule(
             message: "已删除方案",
             commit: { [weak self] in
-                guard let context = self?.modelContext else { return }
+                guard let context = self?.modelContext else { return GraphChange() }
                 context.delete(scheme)
                 context.safeSave()
+                // 同 deleteStrategy：`strategies` 里的内存关系已在 schedule 前摘除，`.scheme` 尚无剪枝消费者
+                return GraphChange()
             },
             undo: { [weak self] in
                 guard let self else { return }

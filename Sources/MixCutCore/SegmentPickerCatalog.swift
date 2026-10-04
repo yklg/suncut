@@ -201,3 +201,30 @@ public enum SegmentPickerCatalog {
         + "\(row.projectID?.uuidString ?? "")|\(row.videoID?.uuidString ?? "")"
     }
 }
+
+// MARK: - 跨关系边的结构化解边索引
+
+/// 跨关系边的**结构化解边索引**（泛型值类型，零 SwiftData 依赖）。
+///
+/// Key = 目标的结构性标识（App 侧为 `PersistentIdentifier`，FK 自身即可推导、
+/// 无需加载 backing）；索引本体从**活 fetch 结果**构建 Key → 业务 UUID。
+/// 跨边读取时只取目标的结构性标识再查索引：查不到 = 目标行已不在 store ⇒ nil
+/// （R4 语义，C3/C5 已测），从 API 形状上杜绝「fault 复活的失效空壳」读业务列。
+public struct LiveIDIndex<Key: Hashable>: Equatable, Sendable where Key: Sendable {
+    private var uuidByKey: [Key: UUID] = [:]
+
+    public init() {}
+
+    /// 同 Key 重复登记先到先得（不覆盖）。
+    public mutating func reserve(_ key: Key, uuid: UUID) {
+        if uuidByKey[key] == nil { uuidByKey[key] = uuid }
+    }
+
+    public func uuid(for key: Key?) -> UUID? { key.flatMap { uuidByKey[$0] } }
+
+    /// 会话内真删后本地摘除（只接收广播路由分发的 id，不自行 fetch）。
+    public mutating func invalidate(uuids gone: Set<UUID>) {
+        guard !gone.isEmpty else { return }
+        uuidByKey = uuidByKey.filter { !gone.contains($0.value) }
+    }
+}

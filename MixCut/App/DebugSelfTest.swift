@@ -1,6 +1,7 @@
 #if DEBUG
 import Foundation
 import SwiftData
+import SQLite3
 
 /// DEBUG-only 自检入口（环境变量 MIXCUT_SELFTEST=1 触发）。
 /// 在真实库上跑通 G2 分镜库变体导出全链路 + G3 组合数学，产出真实文件并写报告。
@@ -10,6 +11,11 @@ enum DebugSelfTest {
     @MainActor
     static func runIfRequested(container: ModelContainer) {
         let env = ProcessInfo.processInfo.environment
+        if env["MIXCUT_SELFTEST_TOMBSTONE"] == "1" {
+            runTombstoneMatrix(single: env["MIXCUT_SELFTEST_TOMBSTONE_GRID"].flatMap(Int.init),
+                               grid16: env["MIXCUT_SELFTEST_GRID16"])
+            return
+        }
         if let s = env["MIXCUT_SELFTEST_SHORTREF"], let secs = Double(s) { runShortRef(container: container, refSecs: secs); return }
         if env["MIXCUT_SELFTEST_REGENDUB"] == "1" { runRegenDub(container: container); return }
         if env["MIXCUT_SELFTEST_TTSX"] == "1" { runTTSx(container: container); return }
@@ -763,6 +769,897 @@ enum DebugSelfTest {
 
     private static func write(_ path: String, _ lines: [String]) {
         try? lines.joined(separator: "\n").write(toFile: path, atomically: true, encoding: .utf8)
+    }
+
+    // MARK: 判据五格矩阵（本案 🔴 前置）
+    //
+    // 见 docs/superpowers/plans/2026-10-04-toone-crossing-real-delete.md §4。
+    // 要回答的问题只有一个：`isGoneFromGraph`（= `isDeleted || modelContext == nil`）
+    // 在五种相位下会不会**两信号都说活着、而读 `.id` 其实要 trap**。
+    // 那一读可能直接命中 SwiftData 内部断言把进程带走，所以：
+    // ① 自建**内存容器**，绝不碰用户的库；② 每格**先落盘再读**，报告最后一行停在「即将读」= 该格会崩，
+    // 读到值 = 该格不崩。判据值本身也写进报告，好分辨「过严（少画）」与「不足（仍崩）」。
+
+    /// 造一格的现场：A/B 两个项目共享一颗 Video，Video 的 `ownerProject` 指向 A（本案崩点的那条边）。
+    /// `storeURL != nil` ⇒ 用**有盘** store（第⑨格用，路径一律由调用方给临时目录，绝不指用户库）。
+    @MainActor
+    private static func tombstoneGrid(storeURL: URL? = nil) throws -> (container: ModelContainer, ctx: ModelContext,
+                                                   a: Project, b: Project, v: Video, pvA: ProjectVideo) {
+        let schema = Schema(versionedSchema: AppSchemaV1.self)
+        let config: ModelConfiguration
+        if let storeURL {
+            config = ModelConfiguration(schema: schema, url: storeURL)
+        } else {
+            config = ModelConfiguration(schema: schema, isStoredInMemoryOnly: true)
+        }
+        let container = try ModelContainer(for: schema, configurations: [config])
+        let ctx = container.mainContext
+        let a = Project(name: "IT-A")
+        let b = Project(name: "IT-B")
+        let v = Video(name: "IT-shared", localPath: "/tmp/it-shared.mov")
+        ctx.insert(a); ctx.insert(b); ctx.insert(v)
+        v.ownerProject = a
+        // 关联行一律走 `associate` 工厂（TC-19a 钉着"全仓只许工厂本体裸构造 1 处"）：
+        // 自检现场跟着生产走同一条路，既不开豁免口子，测到的也是真实挂载语义（含幂等判重）。
+        let pvA = ProjectVideo.associate(project: a, video: v, in: ctx)
+        ProjectVideo.associate(project: b, video: v, in: ctx)
+        // 一颗真实分镜挂在 v 上：⑯c/d 的卡片快照断言需要 fetched segments，
+        // 否则现场零分镜、快照恒为 0。只写自有列 + 同视频边。
+        let s = Segment(segmentIndex: "IT-1", startTime: 0, endTime: 1,
+                        text: "IT-seg", semanticTypes: [.transition],
+                        positionType: .middle)
+        s.video = v
+        ctx.insert(s)
+        try ctx.save()
+        return (container, ctx, a, b, v, pvA)
+    }
+
+    @MainActor
+    private static func runTombstoneMatrix(single: Int?, grid16: String?) {
+        let outPath = ProcessInfo.processInfo.environment["MIXCUT_SELFTEST_OUT"]
+            ?? NSTemporaryDirectory() + "\(Brand.shortName)_tombstone_matrix.txt"
+
+        // ⑯ 子档：MIXCUT_SELFTEST_GRID16 = a/b/c/d/e/f/all。
+        // "all" 只跑 b-f（a 会 trap 带走进程；a 必须单独指定）。
+        if let grid16 {
+            runGrid16(which: grid16, outBase: outPath)
+            return
+        }
+        let titles = ["① delete 未 save", "② delete + safeSave", "③ cascade 摘除（ProjectVideo）",
+                      "④ 跨 to-one 边（delete+save 之后）", "⑤ 子 context 删 + save（mainContext 已 fault）",
+                      "⑥ 跨 to-one 边（delete 未 save，本案候选相位）", "⑦ 存储层批删 delete(model:where:) 后跨边读",
+                      "⑧ 通知驱动的重算相位（读数另见 <报告>.grid8.txt）",
+                      "⑨ 有盘 store 四相位（读数另见 <报告>.grid9.txt）",
+                      "⑪ save 失败的半完成态（读数另见 <报告>.grid11.txt）",
+                      "⑬ 驱逐/重开后重新 fault（读数另见 <报告>.grid13.txt）",
+                      "⑭ 刀 9 咽喉的功能验证（读数另见 <报告>.grid14.txt）",
+                      "⑮ 唯一发布口 + 中心广播的功能验证（读数另见 <报告>.grid15.txt）",
+                      "⑯a 旧读法 trap 证据（<报告>.grid16a.txt；必须单独运行）",
+                      "⑯b 悬空 ⇒ 索引 nil（.grid16b.txt）",
+                      "⑯c 活边正向 UUID（.grid16c.txt）",
+                      "⑯d 修复→重开端到端 + 幂等（.grid16d.txt）",
+                      "⑯e 13 边参数化（.grid16e.txt）",
+                      "⑯f 修复失败隔离（.grid16f.txt）"]
+        var lines: [String] = ["# 判据矩阵（内存容器，不碰用户库）"]
+        func commit() { write(outPath, lines) }
+
+        if single == nil || single == 8 { runObservationGrid(outPath: outPath) }
+        if single == nil || single == 9 { runDiskGrids(outPath: outPath) }
+        if single == nil || single == 11 { runFailedSaveGrid(outPath: outPath) }
+        if single == nil || single == 13 { runReopenGrid(outPath: outPath) }
+        if single == nil || single == 14 { runSettleGrid(outPath: outPath) }
+        if single == nil || single == 15 { runBroadcastGrid(outPath: outPath) }
+        for g in (single.map { [$0] } ?? Array(1...7)) {
+            guard (1...7).contains(g) else { continue }
+            lines.append("")
+            lines.append("## 格 \(g) \(titles[g - 1])")
+            commit()
+            guard let scene = try? tombstoneGrid() else {
+                lines.append("- 内存容器建不起来 ⇒ 本格无读数")
+                commit(); continue
+            }
+            // 施加删除，并取出「本格要读的那颗对象」。④ 特意从**活**对象身上跨边去拿，正是崩点的形状。
+            var target: (any PersistentModel)?
+            var setup = ""
+            switch g {
+            case 1:
+                scene.ctx.delete(scene.a); target = scene.a
+                setup = "已 delete(A)，未 save"
+            case 2:
+                scene.ctx.delete(scene.a); _ = scene.ctx.safeSave(); target = scene.a
+                setup = "已 delete(A) + safeSave"
+            case 3:
+                scene.ctx.delete(scene.a); _ = scene.ctx.safeSave(); target = scene.pvA
+                setup = "delete(A) + save 后看被级联的 ProjectVideo（A→B 的关联行应仍在世）"
+            case 4:
+                scene.ctx.delete(scene.a); _ = scene.ctx.safeSave()
+                target = scene.v.ownerProject
+                setup = "delete(A) + save；从活着的 Video 跨 ownerProject 边取目标"
+                lines.append("- Video.ownerProject 是否仍非 nil = \(scene.v.ownerProject != nil)")
+            case 6:
+                // 崩点日志的相位候选：真删已发出、save 还没走，边上的指针可能还指着那颗 isDeleted 的对象。
+                scene.ctx.delete(scene.a)
+                target = scene.v.ownerProject
+                setup = "delete(A) 未 save；从活着的 Video 跨 ownerProject 边取目标"
+                lines.append("- Video.ownerProject 是否仍非 nil = \(scene.v.ownerProject != nil)")
+            case 7:
+                // 前案 §3 刀 3 说过这条 API「不动内存里已 materialize 的对象 ⇒ 只会制造更多待读的死对象」，
+                // 所以它是最可能造出真相位的那一种删法。
+                let aid = scene.a.id
+                // 上一版这里写的是 `(try? …) != nil`，把错误整个吞掉 ⇒ 只报出"成功=false"却答不出为什么。
+                // 这恰是本仓明令禁止的静默忽略，改成显式捕获，把抛因原样落进报告。
+                do {
+                    try scene.ctx.delete(model: Project.self,
+                                         where: #Predicate<Project> { $0.id == aid })
+                    setup = "存储层批删成功（未 save）⇒ 跨边读目标对象"
+                    target = scene.v.ownerProject
+                    lines.append("- 批删后跨边取 ownerProject：非 nil = \(scene.v.ownerProject != nil)")
+                } catch {
+                    setup = "存储层批删抛错 ⇒ \(type(of: error))：\(error.localizedDescription)"
+                }
+            case 5:
+                let sub = ModelContext(scene.container)
+                let aName = scene.a.name
+                if let copy = (try? sub.fetch(FetchDescriptor<Project>()))?.first(where: { $0.name == aName }) {
+                    sub.delete(copy); try? sub.save()
+                    setup = "子 context 删 A + save（照 MixCutApp.swift:354/398/427 那颗独立 context 的形状）"
+                } else { setup = "子 context 里没找到 A ⇒ 本格无读数" }
+                target = scene.a
+            default: break
+            }
+            lines.append("- 现场：\(setup)")
+            commit()
+            guard let t = target else {
+                lines.append("- 判定：目标已不在内存里（跨边读到 nil）⇒ 无 `.id` 可读，门槛不会拦到活对象")
+                commit(); continue
+            }
+            let gone = t.isGoneFromGraph
+            lines.append("- isDeleted = \(t.isDeleted)")
+            lines.append("- modelContext == nil = \(t.modelContext == nil)")
+            lines.append("- modelContext === 本格 mainContext = \(t.modelContext === scene.ctx)")
+            lines.append("- isGoneFromGraph（两信号析取）= \(gone)")
+            lines.append("- 即将读 .id …（若报告停在这一行，说明该格读持久属性会 trap ⇒ 判据不足）")
+            commit()
+            let id = t.id
+            lines.append("- .id 读到 = \(id) ⇒ 本格不崩。判据 = \(gone)："
+                         + (gone ? "门槛会拦住这颗（若它其实能读，代价是界面少画一条 ⇒ 判据偏严，可接受但要记着）"
+                                 : "门槛放行且实测能读 ⇒ 该格判据充分"))
+            commit()
+        }
+    }
+
+    // MARK: - 格 ⑯ a–f（悬空 fault 现场：SQL 直接造悬空外键）
+
+    /// ⑯ 派发。`all` 只跑 b–f（a 会 trap 带走进程）。
+    @MainActor
+    private static func runGrid16(which: String, outBase: String) {
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("grid16-\(UUID().uuidString)", isDirectory: true)
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+
+        // 每格必须使用**独立子目录**：各格内部都读写 `<dir>/g.store`，
+        // 共用目录会让 b 删过 A 的库被 c/d 二次 seed（数据叠加、fetch 取到上一格残留行）。
+        func sub(_ name: String) -> URL {
+            let u = dir.appendingPathComponent(name, isDirectory: true)
+            try? FileManager.default.createDirectory(at: u, withIntermediateDirectories: true)
+            return u
+        }
+
+        switch which {
+        case "a": grid16a(dir: sub("a"), out: outBase + ".grid16a.txt")
+        case "b": grid16b(dir: sub("b"), out: outBase + ".grid16b.txt")
+        case "c": grid16c(dir: sub("c"), out: outBase + ".grid16c.txt")
+        case "d": grid16d(dir: sub("d"), out: outBase + ".grid16d.txt")
+        case "e": grid16e(dir: sub("e"), out: outBase + ".grid16e.txt")
+        case "f": grid16f(out: outBase + ".grid16f.txt")
+        case "all":
+            grid16b(dir: sub("b"), out: outBase + ".grid16b.txt")
+            grid16c(dir: sub("c"), out: outBase + ".grid16c.txt")
+            grid16d(dir: sub("d"), out: outBase + ".grid16d.txt")
+            grid16e(dir: sub("e"), out: outBase + ".grid16e.txt")
+            grid16f(out: outBase + ".grid16f.txt")
+        default:
+            write(outBase + ".grid16.txt", ["未知子档：\(which)（可用 a/b/c/d/e/f/all；a 必须单独运行）"])
+        }
+    }
+
+    /// 有盘 store 路径。
+    private static func gridStoreURL(_ dir: URL) -> URL {
+        dir.appendingPathComponent("g.store")
+    }
+
+    /// 造满数据现场（A/B 项目 + 共享 Video，ownerProject=A）并落盘；
+    /// 函数返回即随 `scene` 释放容器（identity map 消失）。
+    @MainActor
+    private static func seedPopulatedStore(_ url: URL) -> Bool {
+        guard let scene = try? tombstoneGrid(storeURL: url) else { return false }
+        return scene.ctx.safeSave()
+    }
+
+    /// 悬空现场：先造满现场，再用 SQL 直接删 A 行（模拟漏边的生产删除；
+    /// ZVIDEO.ZOWNERPROJECT 保持指向被删行 = 永久悬空）。
+    @MainActor
+    private static func makeDanglingOwnerEdge(_ dir: URL) -> URL? {
+        let url = gridStoreURL(dir)
+        guard seedPopulatedStore(url) else { return nil }
+        let r = sqlExec(at: url, "DELETE FROM ZPROJECT WHERE ZNAME='IT-A';")
+        if !r.ok { MixLog.error("[Grid16] 造悬空失败：\(r.msg)") }
+        return r.ok ? url : nil
+    }
+
+    /// 用指定 store 重开容器（全新 identity map）。
+    private static func openContainer(_ url: URL) throws -> ModelContainer {
+        let schema = Schema(versionedSchema: AppSchemaV1.self)
+        return try ModelContainer(for: schema,
+                                 configurations: [ModelConfiguration(schema: schema, url: url)])
+    }
+
+    /// 五类模型全量 fetch。
+    @MainActor
+    private static func fetchAll(_ ctx: ModelContext)
+        -> (products: [Product], projects: [Project], pvs: [ProjectVideo],
+            videos: [Video], segments: [Segment]) {
+        ((try? ctx.fetch(FetchDescriptor<Product>())) ?? [],
+         (try? ctx.fetch(FetchDescriptor<Project>())) ?? [],
+         (try? ctx.fetch(FetchDescriptor<ProjectVideo>())) ?? [],
+         (try? ctx.fetch(FetchDescriptor<Video>())) ?? [],
+         (try? ctx.fetch(FetchDescriptor<Segment>())) ?? [])
+    }
+
+    /// 从五类活 fetch 结果构建解边索引。
+    @MainActor
+    private static func buildIndex(_ all: (products: [Product], projects: [Project],
+                                          pvs: [ProjectVideo], videos: [Video],
+                                          segments: [Segment])) -> LiveModelIDIndex {
+        var index = LiveModelIDIndex()
+        index.insert(all.products, id: \.id)
+        index.insert(all.projects, id: \.id)
+        index.insert(all.pvs, id: \.id)
+        index.insert(all.videos, id: \.id)
+        index.insert(all.segments, id: \.id)
+        return index
+    }
+
+    /// ⑯a 旧读法（trap 证据；必须单独运行）。
+    @MainActor
+    private static func grid16a(dir: URL, out: String) {
+        let probe = MatrixProbe(path: out)
+        probe.emit("# ⑯a 旧读法 trap 证据")
+        guard let url = makeDanglingOwnerEdge(dir) else { probe.emit("- 造现场失败"); return }
+        do {
+            let container = try openContainer(url)
+            let ctx = container.mainContext
+            let videos = try ctx.fetch(FetchDescriptor<Video>())
+            probe.keepAlive(container: container, ctx: ctx, video: videos.first)
+            guard let video = videos.first else { probe.emit("- 无 Video ⇒ 无读数"); return }
+            let target = video.ownerProject
+            probe.emit("- ownerProject 非 nil = \(target != nil)")
+            guard let target else {
+                probe.emit("- 边已被框架置 nil ⇒ 本相位无空壳，旧读法未 trap（假设证伪）")
+                return
+            }
+            probe.emit("- isDeleted=\(target.isDeleted) modelContext==nil=\(target.modelContext == nil)")
+            probe.emit("- 即将读旧读法 ownerProject?.id …（报告停在本行 = trap 机理坐实）")
+            let id = target.id
+            probe.emit("- 读到 = \(id)（未 trap，旧读法假设证伪）")
+        } catch {
+            probe.emit("- 开容器失败：\(error)")
+        }
+    }
+
+    /// ⑯b 悬空 ⇒ 索引解析 nil、不 trap。
+    @MainActor
+    private static func grid16b(dir: URL, out: String) {
+        let probe = MatrixProbe(path: out)
+        probe.emit("# ⑯b 悬空边经 LiveIDIndex 解析")
+        guard let url = makeDanglingOwnerEdge(dir) else { probe.emit("- 造现场失败"); return }
+        do {
+            let container = try openContainer(url)
+            let ctx = container.mainContext
+            probe.keepAlive(container: container, ctx: ctx, video: nil)
+            let all = fetchAll(ctx)
+            let index = buildIndex(all)
+            guard let video = all.videos.first else { probe.emit("- FAIL：无 Video"); return }
+            let resolved = index.uuid(for: video.ownerProject)
+            let cards = all.segments.map(SegmentCardSnapshot.init)
+            probe.emit("- 悬空边解析 = \(String(describing: resolved))（预期 nil）")
+            probe.emit("- 快照构建 \(cards.count) 张，零 trap")
+            probe.emit(resolved == nil ? "PASS" : "FAIL：预期 nil")
+        } catch {
+            probe.emit("- FAIL：\(error)")
+        }
+    }
+
+    /// ⑯c 活边正向解析业务 UUID。
+    @MainActor
+    private static func grid16c(dir: URL, out: String) {
+        let probe = MatrixProbe(path: out)
+        probe.emit("# ⑯c 活边正向 UUID")
+        let url = gridStoreURL(dir)
+        guard seedPopulatedStore(url) else { probe.emit("- FAIL：造现场失败"); return }
+        do {
+            let container = try openContainer(url)
+            let ctx = container.mainContext
+            probe.keepAlive(container: container, ctx: ctx, video: nil)
+            let all = fetchAll(ctx)
+            let index = buildIndex(all)
+            guard let video = all.videos.first,
+                  let a = all.projects.first(where: { $0.name == "IT-A" }) else {
+                probe.emit("- FAIL：现场缺 Video/IT-A"); return
+            }
+            let ownerResolved = index.uuid(for: video.ownerProject)
+            // ProjectVideo 边：关联行的 project 解析必须走索引，**不许读 `$0.project?.name`**
+            // （那会跨边 fault 业务列，与生产崩点同形）。A 由 fetched projects 直接定位，
+            // 再比对解析出的 UUID 集合。
+            let aIDSet: Set<UUID> = [a.id]
+            let pvResolved = all.pvs
+                .map { index.uuid(for: $0.project) }
+                .filter { $0.map { aIDSet.contains($0) } ?? false }
+            let ownerOK = ownerResolved == a.id
+            let pvOK = !pvResolved.isEmpty && pvResolved.allSatisfy { $0 == a.id }
+            probe.emit("- ownerProject 解析 = \(String(describing: ownerResolved))（应 \(a.id)）")
+            probe.emit("- A 的 \(pvResolved.count) 关联行 project 边解析全部 == A.id")
+            probe.emit(ownerOK && pvOK ? "PASS" : "FAIL")
+        } catch {
+            probe.emit("- FAIL：\(error)")
+        }
+    }
+
+    /// ⑯d 修复 → 重开端到端 + 二次修复幂等。
+    @MainActor
+    private static func grid16d(dir: URL, out: String) {
+        let probe = MatrixProbe(path: out)
+        probe.emit("# ⑯d 修复→重开端到端")
+        guard let url = makeDanglingOwnerEdge(dir) else { probe.emit("- FAIL：造现场失败"); return }
+
+        let danglingSQL = """
+            SELECT COUNT(*) FROM ZVIDEO
+            WHERE ZOWNERPROJECT IS NOT NULL
+              AND ZOWNERPROJECT NOT IN (SELECT Z_PK FROM ZPROJECT)
+            """
+        let before = sqlInt(at: url, danglingSQL)
+        let report = DanglingEdgeRepair.run(at: url)
+        let after = sqlInt(at: url, danglingSQL)
+        let firstKey = "ZVIDEO.ZOWNERPROJECT"
+        let firstChanges = report.repaired[firstKey] ?? 0
+        probe.emit("- 修复前悬空=\(before ?? -1)（应 ≥1）；修复该边 changes=\(firstChanges)；修复后悬空=\(after ?? -1)（应 0）")
+        probe.emit("- 备份路径：\(report.backupPath ?? "无")")
+
+        // 二次修复：幂等
+        let second = DanglingEdgeRepair.run(at: url)
+        let secondTotal = second.repaired.values.reduce(Int32(0), +)
+        probe.emit("- 二次修复：changes 合计=\(secondTotal)（应 0）")
+
+        // 重开容器，索引/快照全程不 trap；B 侧活边仍可正向解析
+        var reopenOK = false
+        do {
+            let container = try openContainer(url)
+            let ctx = container.mainContext
+            probe.keepAlive(container: container, ctx: ctx, video: nil)
+            let all = fetchAll(ctx)
+            let index = buildIndex(all)
+            guard let video = all.videos.first,
+                  let b = all.projects.first(where: { $0.name == "IT-B" }) else {
+                probe.emit("- FAIL：重开后现场缺 Video/IT-B"); return
+            }
+            let ownerNil = index.uuid(for: video.ownerProject) == nil
+            // B 的关联行：解析走索引，不读 `$0.project?.name`（跨边业务列 = 同形崩点）。
+            let bIDSet: Set<UUID> = [b.id]
+            let bPV = all.pvs
+                .map { index.uuid(for: $0.project) }
+                .filter { $0.map { bIDSet.contains($0) } ?? false }
+            let bOK = !bPV.isEmpty && bPV.allSatisfy { $0 == b.id }
+            let cards = all.segments.map(SegmentCardSnapshot.init)
+            probe.emit("- 重开后悬空边 nil=\(ownerNil)；B 的 \(bPV.count) 关联行正向解析=\(bOK)；快照 \(cards.count) 张")
+            reopenOK = ownerNil && bOK
+        } catch {
+            probe.emit("- FAIL：重开容器失败：\(error)")
+        }
+        let pass = before == 1 && firstChanges >= 1 && after == 0
+            && secondTotal == 0 && reopenOK && !report.aborted
+        probe.emit(pass ? "PASS" : "FAIL")
+    }
+
+    /// ⑯e 13 边参数化：SQL 造悬空 ⇒ count=1 ⇒ 修复 changes≥1 ⇒ count=0。
+    @MainActor
+    private static func grid16e(dir: URL, out: String) {
+        let probe = MatrixProbe(path: out)
+        probe.emit("# ⑯e 13 边参数化")
+        var allPass = true
+        for (i, edge) in DanglingToOneEdge.registry.enumerated() {
+            let edgeDir = dir.appendingPathComponent("e\(i)", isDirectory: true)
+            try? FileManager.default.createDirectory(at: edgeDir, withIntermediateDirectories: true)
+            let url = edgeDir.appendingPathComponent("e.store")
+            guard seedPopulatedStore(url) else {
+                probe.emit("- 边 \(i) \(edge.ownerTable).\(edge.column)：FAIL 造现场失败")
+                allPass = false; continue
+            }
+            let testPK = 900_000 + i
+            let insertSQL = """
+                INSERT INTO \(edge.ownerTable) (Z_PK,\(edge.column))
+                VALUES (\(testPK),999999)
+                """
+            var made = sqlExec(at: url, insertSQL)
+            if !made.ok {
+                // 退路：UPDATE 既有行该列为悬空值
+                let updateSQL = """
+                    UPDATE \(edge.ownerTable) SET \(edge.column)=999999
+                    WHERE Z_PK=(SELECT Z_PK FROM \(edge.ownerTable) LIMIT 1)
+                    """
+                made = sqlExec(at: url, updateSQL)
+            }
+            guard made.ok else {
+                probe.emit("- 边 \(i) \(edge.ownerTable).\(edge.column)：FAIL 造悬空失败（\(made.msg)）")
+                allPass = false; continue
+            }
+            let countSQL = """
+                SELECT COUNT(*) FROM \(edge.ownerTable)
+                WHERE \(edge.column) IS NOT NULL
+                  AND \(edge.column) NOT IN (SELECT Z_PK FROM \(edge.destinationTable))
+                """
+            let before = sqlInt(at: url, countSQL)
+            let rep = DanglingEdgeRepair.run(at: url)
+            let after = sqlInt(at: url, countSQL)
+            let key = "\(edge.ownerTable).\(edge.column)"
+            let changes = rep.repaired[key] ?? 0
+            let ok = (before ?? 0) >= 1 && changes >= 1 && after == 0
+            probe.emit("- 边 \(i) \(key)：before=\(before ?? -1) repaired=\(changes) "
+                       + "after=\(after ?? -1) \(ok ? "PASS" : "FAIL")")
+            if !ok { allPass = false }
+        }
+        probe.emit(allPass ? "PASS 13/13" : "FAIL（见上；失败边不伪装通过）")
+    }
+
+    /// ⑯f 修复失败隔离：不可打开路径不阻断，后续正常开库流程继续。
+    @MainActor
+    private static func grid16f(out: String) {
+        let probe = MatrixProbe(path: out)
+        probe.emit("# ⑯f 修复失败隔离")
+        let badURL = URL(fileURLWithPath: "/nonexistent-dir-\(UUID().uuidString)/x.store")
+        let rep = DanglingEdgeRepair.run(at: badURL)
+        // sqlite 可能延迟到 prepare 才报错：aborted 或全部计数 -1 都算「没修成且未阻断」。
+        let isolated = rep.aborted || rep.counts.values.allSatisfy { $0 == -1 }
+        probe.emit("- 不可打开路径：aborted=\(rep.aborted)；isolated=\(isolated)")
+
+        // 后续流程继续：正常开一个内存容器
+        let schema = Schema(versionedSchema: AppSchemaV1.self)
+        var flowContinues = false
+        do {
+            _ = try ModelContainer(for: schema, configurations: [
+                ModelConfiguration(schema: schema, isStoredInMemoryOnly: true)])
+            flowContinues = true
+        } catch {
+            flowContinues = false
+        }
+        probe.emit("- 正常开库流程继续 = \(flowContinues)")
+        probe.emit(isolated && flowContinues ? "PASS" : "FAIL")
+    }
+
+    // MARK: - ⑯ 共用 SQL 小工具
+
+    /// 无结果集语句。
+    private static func sqlExec(at url: URL, _ sql: String) -> (ok: Bool, msg: String) {
+        var db: OpaquePointer?
+        guard sqlite3_open(url.path, &db) == SQLITE_OK else {
+            if db != nil { sqlite3_close(db) }
+            return (false, "open failed")
+        }
+        defer { sqlite3_close(db) }
+        var msg: UnsafeMutablePointer<CChar>?
+        if sqlite3_exec(db, sql, nil, nil, &msg) == SQLITE_OK { return (true, "") }
+        return (false, msg.map { String(cString: $0) } ?? "unknown")
+    }
+
+    /// 单 Int 读数。
+    private static func sqlInt(at url: URL, _ sql: String) -> Int32? {
+        var db: OpaquePointer?
+        guard sqlite3_open(url.path, &db) == SQLITE_OK else {
+            if db != nil { sqlite3_close(db) }
+            return nil
+        }
+        defer { sqlite3_close(db) }
+        var stmt: OpaquePointer?
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return nil }
+        defer { sqlite3_finalize(stmt) }
+        return sqlite3_step(stmt) == SQLITE_ROW ? sqlite3_column_int(stmt, 0) : nil
+    }
+
+    /// 格 ⑧：通知驱动的那一拍。
+    ///
+    /// 为什么非要有这一格：`ModelContextExtension.swift:8-9` 记着的机制是「删除时 SwiftData 会给**仍存活的
+    /// 内存对象**发变更通知 ⇒ 那个视图在消失前又被求值一遍，此时读任何持久属性都命中内部断言」。
+    /// ①-⑦ 全是**我们主动去读**，同步排出来一格都不崩 ⇒ 唯一还没排除的相位就是「被通知叫回来读」。
+    ///
+    /// ⚠️ 这格第一版给出过「onChange 压根没触发」的读数，那是**harness 自己的两个缺陷**造成的假阴性，
+    ///    不是这一拍的性质，别拿它当证据：
+    ///    ① `scene`（连带 container）随函数返回就被释放，容器一没，通知自然不会来；
+    ///    ② `fired` 是在 `safeSave()` 之后**同步**读的，异步派发的通知来不及落。
+    ///    现在容器与对象由 `MatrixProbe` 强持有，并在收尾前跑一段 runloop 等通知。
+    /// 报告单独落盘（`<out>.grid8.txt`）：这一读可能直接把进程带走，不能拖累其它格的读数。
+    @MainActor
+    private static func runObservationGrid(outPath: String) {
+        let probe = MatrixProbe(path: outPath + ".grid8.txt")
+        probe.emit("# 格 ⑧ 通知驱动的重算相位（内存容器，不碰用户库）")
+        guard let scene = try? tombstoneGrid() else { probe.emit("- 内存容器建不起来 ⇒ 无读数"); return }
+        probe.keepAlive(container: scene.container, ctx: scene.ctx, video: scene.v)
+        withObservationTracking {
+            _ = scene.v.ownerProject            // 把观察挂在这条 to-one 边上，等同 body 里的那一行
+        } onChange: {
+            probe.fired = true
+            probe.emit("- onChange 进来了 ⇒ 通知确实把『消失前那一次求值』叫回来了")
+            probe.readAcrossEdgeAndID()
+        }
+        probe.emit("- 观察已挂好（容器与对象由探针强持有）；现在 delete(A) + safeSave 触发变更")
+        scene.ctx.delete(scene.a)
+        _ = scene.ctx.safeSave()
+        // 给异步派发留一拍：转到下一个 runloop tick 再看 fired
+        RunLoop.current.run(until: Date().addingTimeInterval(1.0))
+        probe.emit("- 收尾（已等过 1s runloop）：onChange 是否触发 = \(probe.fired)"
+                   + (probe.fired ? "" : " ⇒ 通知仍没来：这一拍在**纯 SwiftData 层**复现不出来，"
+                                       + "它依赖 SwiftUI 的 body 求值路径（本 harness 不是 SwiftUI 视图，测不到；"
+                                       + "也不构成『这一拍安全』的证据）"))
+    }
+
+    /// 格 ⑨：有盘 store（临时目录，绝不指用户库）。
+    /// 崩点发生在装了用户数据的**磁盘库**上，而 ①-⑧ 全在内存库里排 —— WAL 与 save 过程中
+    /// 「先清存储行、再改写仍存活对象的关系」这一相位，内存库构造不出来，只能单独测。
+    /// 三个相位各起一个新库：②′ 直接读、④′ 跨边读（save 之后）、⑥′ 跨边读（未 save）。
+    @MainActor
+    private static func runDiskGrids(outPath: String) {
+        let probe = MatrixProbe(path: outPath + ".grid9.txt")
+        probe.emit("# 格 ⑨ 有盘 store（临时目录，不碰用户库）")
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("tombstone-it-\(UUID().uuidString)", isDirectory: true)
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        for phase in ["②′ delete+save 后直接读", "④′ delete+save 后跨边读", "⑥′ delete 未 save 跨边读",
+                      "⑩′ **新 context 重新 fetch** 后跨边读（悬空 FK 的 fault 路径）",
+                      "⑫′ 有盘库上跑**存储层批删** delete(model:where:)（⑦ 的候选真相位）"] {
+            probe.emit("")
+            probe.emit("## \(phase)")
+            let url = dir.appendingPathComponent("g\(UUID().uuidString).store")
+            guard let scene = try? tombstoneGrid(storeURL: url) else {
+                probe.emit("- 有盘库建不起来（路径 \(url.path)）⇒ 本相位无读数")
+                continue
+            }
+            probe.keepAlive(container: scene.container, ctx: scene.ctx, video: scene.v)
+            if phase.hasPrefix("⑩") {
+                // 本案崩点不是"拿着旧引用读"：`rebuild()` 每次都**重新 fetch 全库**，
+                // 再由 SwiftData 去 fault 那条指向已删行的 to-one 边。所以必须换一个**新 context** 才测得到这条路。
+                scene.ctx.delete(scene.a)
+                _ = scene.ctx.safeSave()
+                probe.emit("- 已 delete(A) + safeSave；开一个**新 ModelContext** 重新 fetch Video")
+                let fresh = ModelContext(scene.container)
+                let fetched = (try? fresh.fetch(FetchDescriptor<Video>())) ?? []
+                probe.emit("- 新 context fetch 到 Video \(fetched.count) 颗")
+                let crossed = fetched.first?.ownerProject
+                probe.emit("- 跨边取 ownerProject：非 nil = \(crossed != nil)"
+                           + (crossed.map { "；isDeleted=\($0.isDeleted) modelContext==nil=\($0.modelContext == nil)" } ?? ""))
+                probe.emit("- 即将读 .id …（报告停在这一行 = **悬空 FK 的 fault 解析**才是真相位）")
+                if let crossed { probe.emit("- .id 读到 = \(crossed.id) ⇒ 新 fetch + 悬空边也不崩") }
+                continue
+            }
+            if phase.hasPrefix("⑫") {
+                // 前案 §3 刀 3 说这条 API「不动内存里已 materialize 的对象 ⇒ 只会制造更多待读的死对象」，
+                // 而 ⑦（内存库）报的是"抛错"却没答出为什么 ⇒ 在有盘库上重做一遍，把错误原样落进报告。
+                let aid = scene.a.id
+                do {
+                    try scene.ctx.delete(model: Project.self,
+                                         where: #Predicate<Project> { $0.id == aid })
+                    probe.emit("- 批删调用**没抛错**（此刻还没 save）")
+                } catch {
+                    probe.emit("- 批删抛错 ⇒ \(type(of: error))：\(error.localizedDescription)")
+                }
+                probe.emit("- 未 save 时跨边取 ownerProject：非 nil = \(scene.v.ownerProject != nil)")
+                let saved = scene.ctx.safeSave()
+                probe.emit("- safeSave = \(saved)；save 后跨边取 ownerProject：非 nil = \(scene.v.ownerProject != nil)")
+                let crossed = scene.v.ownerProject
+                if let crossed {
+                    probe.emit("- 目标 isDeleted=\(crossed.isDeleted) modelContext==nil=\(crossed.modelContext == nil)")
+                }
+                probe.emit("- 即将读 .id …（报告停在这一行 = 批删留下的死对象才是本案真相位）")
+                if let crossed { probe.emit("- .id 读到 = \(crossed.id) ⇒ 批删相位也不崩") }
+                let fresh = ModelContext(scene.container)
+                let projects = (try? fresh.fetch(FetchDescriptor<Project>()))?.count ?? -1
+                probe.emit("- 新 context fetch Project 数 = \(projects)（2 ⇒ 批删压根没生效；1 ⇒ 行确实被清了）")
+                continue
+            }
+            let saveFirst = !phase.hasPrefix("⑥")
+            scene.ctx.delete(scene.a)
+            if saveFirst { _ = scene.ctx.safeSave() }
+            probe.emit("- 已 delete(A)，\(saveFirst ? "并 safeSave" : "未 save")")
+            let target: (any PersistentModel)? = phase.hasPrefix("②") ? scene.a : scene.v.ownerProject
+            probe.emit("- 跨边取到对象 = \(target != nil)；"
+                       + (target.map { "isDeleted=\($0.isDeleted) modelContext==nil=\($0.modelContext == nil) isGoneFromGraph=\($0.isGoneFromGraph)" } ?? "无目标"))
+            probe.emit("- 即将在**有盘 store** 上读 .id …（报告停在这一行 = 这一相位会 trap ⇒ 才是本案真相位）")
+            if let target {
+                let id = target.id
+                probe.emit("- .id 读到 = \(id) ⇒ 本相位不崩")
+            }
+        }
+    }
+
+    /// 格 ⑪：**save 失败的半完成态**（`ModelContextExtension.safeSave` 返回 false 那一支）。
+    ///
+    /// 为什么单独测它：十格里唯一没覆盖的、又能解释「backing 被清了但内存标记没走完」的成因，
+    /// 就是删除已在内存里生效、而落盘失败这一刻 —— 本仓 `safeSave` 明确会返回 false 并只记一条日志，
+    /// 界面却已经看不见那一项了（投影在删除时就剪掉），于是内存与库**各说一套**。
+    /// 造法：有盘库先正常 save，再把**所在目录改成只读**，然后 delete + safeSave ⇒ save 必然失败。
+    /// 目录权限收尾改回可写，免得临时目录里留一堆删不掉的东西。全程只写 `NSTemporaryDirectory()`。
+    @MainActor
+    private static func runFailedSaveGrid(outPath: String) {
+        let probe = MatrixProbe(path: outPath + ".grid11.txt")
+        probe.emit("# 格 ⑪ save 失败的半完成态（临时目录，不碰用户库）")
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("tombstone-fail-\(UUID().uuidString)", isDirectory: true)
+        do {
+            try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+            guard let scene = try? tombstoneGrid(
+                storeURL: dir.appendingPathComponent("it.store")) else {
+                probe.emit("- 有盘库建不起来 ⇒ 无读数"); return
+            }
+            probe.keepAlive(container: scene.container, ctx: scene.ctx, video: scene.v)
+            let fm = FileManager.default
+            try? fm.setAttributes([.posixPermissions: 0o555], ofItemAtPath: dir.path)
+            probe.emit("- 已把 store 所在目录改成只读（0555），现在 delete(A) + safeSave")
+            scene.ctx.delete(scene.a)
+            let saved = scene.ctx.safeSave()
+            probe.emit("- safeSave 返回 = \(saved)"
+                       + (saved ? " ⇒ 只读没拦住（本格读数不代表半完成态，别当结论用）" : " ⇒ 落盘失败，正是要测的那一刻"))
+            probe.emit("- 死对象 A：isDeleted=\(scene.a.isDeleted) modelContext==nil=\(scene.a.modelContext == nil) isGoneFromGraph=\(scene.a.isGoneFromGraph)")
+            probe.emit("- 活对象 V 跨边取 ownerProject：非 nil = \(scene.v.ownerProject != nil)")
+            if let crossed = scene.v.ownerProject {
+                probe.emit("- 跨边目标：isDeleted=\(crossed.isDeleted) modelContext==nil=\(crossed.modelContext == nil) isGoneFromGraph=\(crossed.isGoneFromGraph)")
+            }
+            probe.emit("- 即将读 A.id …（报告停在这一行 = 半完成态会 trap）")
+            let idA = scene.a.id
+            probe.emit("- A.id 读到 = \(idA) ⇒ 半完成态直接读不崩")
+            probe.emit("- 即将跨边读 V.ownerProject?.id …")
+            let crossedID = scene.v.ownerProject?.id
+            probe.emit("- 跨边读到 = \(String(describing: crossedID)) ⇒ 半完成态跨边读也不崩")
+            try? fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: dir.path)
+            _ = scene.ctx.safeSave()               // 恢复可写后补一次，让这次实验别把库留在坏状态
+            try? fm.removeItem(at: dir)
+            probe.emit("- 收尾：目录权限已还原、临时库已删")
+        } catch {
+            try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: dir.path)
+            try? FileManager.default.removeItem(at: dir)
+            probe.emit("- 造环境失败：\(error.localizedDescription)")
+        }
+    }
+
+    /// 格 ⑬：把对象**驱逐出 identity map 之后重新 fault** —— 排除法剩下的最后一条候选。
+    ///
+    /// 为什么 ⑩′ 不够：它换的是新 `ModelContext`，但**同一个 container 的 identity map 还在**，
+    /// fetch 回来的还是那颗内存对象，压根没走"从盘上解析那条边"的路。
+    /// 而两份崩溃报告都是长会话（进程活了约 12 小时 / 开机 42000s），SwiftData 会驱逐空闲对象、
+    /// 之后再从 store 重新 fault —— 那一拍才是 ④′/⑩′ 都没碰到的相位。
+    /// 造法：第一程建库 + delete(A) + save 后**彻底释放 container**，第二程用同一个 store URL 重开一个 container，
+    /// 全新 identity map 里 fetch Video 再跨边读 —— 等价于"下次启动后第一次读那颗悬空边"。
+    @MainActor
+    private static func runReopenGrid(outPath: String) {
+        let probe = MatrixProbe(path: outPath + ".grid13.txt")
+        probe.emit("# 格 ⑬ 驱逐/重开后重新 fault（临时目录，不碰用户库）")
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("tombstone-reopen-\(UUID().uuidString)", isDirectory: true)
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let url = dir.appendingPathComponent("it.store")
+        // 第一程：造现场并落盘；函数一返回，container 就随 `scene` 一起释放（identity map 消失）
+        func seedAndDelete() -> Bool {
+            guard let scene = try? tombstoneGrid(storeURL: url) else {
+                probe.emit("- 第一程：建库失败 ⇒ 无读数"); return false
+            }
+            probe.emit("- 第一程：A/B 两项目 + 共享 Video，ownerProject=A，已 save")
+            scene.ctx.delete(scene.a)
+            let ok = scene.ctx.safeSave()
+            probe.emit("- 第一程：delete(A) + safeSave = \(ok)；本程结束即释放 container")
+            return ok
+        }
+        _ = seedAndDelete()
+        // 第二程：重开同一个 store —— 全新 container、全新 identity map
+        do {
+            let schema = Schema(versionedSchema: AppSchemaV1.self)
+            let reopened = try ModelContainer(for: schema,
+                                              configurations: [ModelConfiguration(schema: schema, url: url)])
+            let ctx = ModelContext(reopened)
+            let videos = (try? ctx.fetch(FetchDescriptor<Video>())) ?? []
+            let projects = (try? ctx.fetch(FetchDescriptor<Project>()))?.count ?? -1
+            probe.emit("- 第二程：重开成功。Project 数 = \(projects)（1 ⇒ A 确实被清掉）、Video 数 = \(videos.count)")
+            let crossed = videos.first?.ownerProject
+            probe.emit("- 重开后跨边取 ownerProject：非 nil = \(crossed != nil)")
+            if let crossed {
+                probe.emit("- 目标 isDeleted=\(crossed.isDeleted) modelContext==nil=\(crossed.modelContext == nil) isGoneFromGraph=\(crossed.isGoneFromGraph)")
+            }
+            probe.emit("- 即将读重开后的 .id …（报告停在这一行 = **悬空边重 fault 才是真相位**）")
+            let id = videos.first?.ownerProject?.id
+            probe.emit("- 读到 = \(String(describing: id)) ⇒ 重开后再 fault 也不崩")
+        } catch {
+            probe.emit("- 第二程：重开失败 ⇒ \(type(of: error))：\(error.localizedDescription)")
+        }
+        try? FileManager.default.removeItem(at: dir)
+    }
+
+    /// 格 ⑭：刀 9 咽喉的**功能验证**。编译门证明不了"结算到底做了什么"，所以在这里真跑一遍：
+    /// 共享视频必须被改指仍在世的合作项目 B（而不是留给框架置 nil），
+    /// 只有 A 引用的视频必须连带删掉，且对已删对象重复调用必须**全零返回**（幂等）。
+    @MainActor
+    private static func runSettleGrid(outPath: String) {
+        let probe = MatrixProbe(path: outPath + ".grid14.txt")
+        probe.emit("# 格 ⑭ 删项目咽喉的功能验证（内存容器，不碰用户库）")
+        guard let scene = try? tombstoneGrid() else { probe.emit("- 建库失败 ⇒ 无读数"); return }
+        let ctx = scene.ctx
+        let solo = Video(name: "IT-solo", localPath: "/tmp/it-solo.mov")
+        ctx.insert(solo)
+        solo.ownerProject = scene.a
+        ProjectVideo.associate(project: scene.a, video: solo, in: ctx)
+        // 必须先落盘：生产里 ProjectVideo 是导入时就建好并保存的，而咽喉第①步读的是 `project.videos`
+        // 这条关系 —— 不 save 就调，测的是"关系还没 materialize"的人造态，不是真实链路。
+        _ = ctx.safeSave()
+        let ownedCount = ((try? ctx.fetch(FetchDescriptor<Video>())) ?? [Video]())
+            .filter { $0.ownerProject === scene.a }.count
+        probe.emit("- 删前：A.videos 数 = \(scene.a.videos.count)（应 2：共享 + solo）、"
+                   + "ownerProject===A 的视频数 = \(ownedCount)")
+        let outcome = ctx.deleteProjectSettlingOwnerEdges(scene.a)
+        probe.emit("- 咽喉返回：改指 \(outcome.repointedVideos) 颗、置空 \(outcome.clearedOwners) 颗、"
+                   + "连带删视频 \(outcome.deletedVideoNames)、saveFailed=\(outcome.saveFailed)")
+        probe.emit("- 删后：共享视频 ownerProject === B = \(scene.v.ownerProject === scene.b)")
+        let reloaded = ModelContext(scene.container)
+        let videos = (try? reloaded.fetch(FetchDescriptor<Video>()))?.count ?? -1
+        let projects = (try? reloaded.fetch(FetchDescriptor<Project>()))?.count ?? -1
+        probe.emit("- 落盘复核：Video \(videos) 颗（应 1：solo 被连带删）、Project \(projects) 颗（应 1）")
+        let second = ctx.deleteProjectSettlingOwnerEdges(scene.a)
+        probe.emit("- 幂等复核（对已删的 A 再调一次）：改指 \(second.repointedVideos)、"
+                   + "置空 \(second.clearedOwners)、连带删 \(second.deletedVideoNames.count) 颗（应全 0）")
+        let pass = outcome.repointedVideos == 1 && outcome.clearedOwners == 1
+            && outcome.deletedVideoNames == ["IT-solo"]
+            && scene.v.ownerProject === scene.b && videos == 1 && projects == 1
+            && second.repointedVideos == 0 && second.deletedVideoNames.isEmpty
+        let verdict = pass ? "通过 —— 归属改指在世项目、无引用视频连带删、重复调用不再删"
+                          : "不通过 —— 按上面逐项读数定位"
+        probe.emit("- 结论：\(verdict)")
+    }
+
+    /// 格 ⑮：刀 2 广播链的**功能验证**。编译门与源码扫描都证明不了"台账到底投不投得出去"，
+    /// 而这一族里有两条恰恰是**只在运行时才成立**的判据：
+    ///   ① 不可剪枝的变更集必须在发布口被降成 nil（观察者因此走全量重载）；
+    ///   ② 嵌套那次**不许被丢弃**（外层剪 A、内层是顺带真删的 B，丢 B 就是回到"库里删了、投影还握着"）；
+    ///   ③ 顶掉上一枚时，广播必须发生在新事务**登记之后** —— 否则观察者里一句 `flushNow()`
+    ///      就会把还没登记 commit 的新事务"了结"成一次空调用，用户刚点的删除既不真删也不可撤销。
+    /// 本格不建库（纯 App 层投递计数），因此不受 SwiftData 相位影响，读数可直接引用。
+    @MainActor
+    private static func runBroadcastGrid(outPath: String) {
+        let probe = MatrixProbe(path: outPath + ".grid15.txt")
+        probe.emit("# 格 ⑮ 发布口 + 中心广播的功能验证（不建库，只看投递）")
+
+        var seen: [String] = []
+        var reentry: (() -> Void)?
+        let token = NotificationCenter.default.addObserver(
+            forName: .mixCutDataDidUndo, object: nil, queue: nil) { note in
+            let shape = (note.object as? GraphChange).map {
+                "prune(proj=\($0.idsDeleted(of: .project).count),seg=\($0.idsDeleted(of: .segment).count))"
+            } ?? "full"
+            seen.append(shape)
+            if let fire = reentry { reentry = nil; fire() }   // 一次性的重入装置
+        }
+        defer { NotificationCenter.default.removeObserver(token) }
+
+        let segChange: GraphChange = {
+            var c = GraphChange(); c.noteDeleted([UUID()], of: .segment); return c
+        }()
+        let mixedChange: GraphChange = {
+            var c = GraphChange()
+            c.noteDeleted([UUID()], of: .segment)
+            c.noteDeleted([UUID()], of: .scheme)   // 观察者不认得这类 ⇒ 整条该降级
+            return c
+        }()
+
+        seen.removeAll()
+        GraphBroadcast.post(segChange)
+        let aDeliveries = seen.count, aShape = seen.first ?? "-"
+        probe.emit("- A 可剪枝载荷：投递 \(aDeliveries) 次 \(seen)（应 1 次 prune(seg=1)）")
+
+        seen.removeAll()
+        GraphBroadcast.post(mixedChange)
+        let bShape = seen.first ?? "-"
+        probe.emit("- B 混入 .scheme：投递 \(seen.count) 次 \(seen)（应 1 次 full —— 降级生效，不许半剪）")
+
+        seen.removeAll()
+        let innerChange: GraphChange = {
+            var c = GraphChange(); c.noteDeleted([UUID()], of: .segment); return c
+        }()
+        reentry = { GraphBroadcast.post(innerChange) }
+        GraphBroadcast.post(segChange)
+        let cDeliveries = seen.count
+        probe.emit("- C 嵌套广播：投递 \(cDeliveries) 次 \(seen)"
+                   + "（应 2 次，第二条是内层那次；只 1 次就是把它丢了 ⇒ 内层的 id 再没人剪）")
+
+        seen.removeAll()
+        var dCommitted = 0
+        PendingDeletionCenter.shared.schedule(
+            message: "自检验证：删除分镜",
+            commit: { dCommitted += 1; return segChange },
+            undo: {})
+        PendingDeletionCenter.shared.flushNow()
+        let dDeliveries = seen.count
+        probe.emit("- D 中心代广播：commit 执行 \(dCommitted) 次、投递 \(dDeliveries) 次 \(seen)（应 1 / 1）")
+
+        seen.removeAll()
+        var eCommitted = 0
+        PendingDeletionCenter.shared.schedule(
+            message: "自检验证：空台账",
+            commit: { eCommitted += 1; return GraphChange() },
+            undo: {})
+        PendingDeletionCenter.shared.flushNow()
+        let eDeliveries = seen.count
+        probe.emit("- E 空台账不发：commit \(eCommitted) 次、投递 \(eDeliveries) 次（应 1 / 0，"
+                   + "否则每条删除都退化成全量重载 = 切页骨架闪烁回归）")
+
+        seen.removeAll()
+        var aCommitted = 0, bCommitted = 0
+        reentry = { PendingDeletionCenter.shared.flushNow() }   // 观察者里重入中心（selectedProject.didSet 那条形状）
+        PendingDeletionCenter.shared.schedule(
+            message: "自检验证 A", commit: { aCommitted += 1; return segChange }, undo: {})
+        PendingDeletionCenter.shared.schedule(
+            message: "自检验证 B", commit: { bCommitted += 1; return segChange }, undo: {})
+        PendingDeletionCenter.shared.flushNow()   // 若 F 的重入没把 B 收掉，这里补收尾，别把事务留在屏上
+        let fDeliveries = seen.count
+        probe.emit("- F 顶掉顺序（广播晚于登记）：A commit \(aCommitted) 次、B commit \(bCommitted) 次、"
+                   + "投递 \(fDeliveries) 次（判据 a==1 且 b==1；b==0 意味着 B 的真删义务被一次空调用吃掉）")
+
+        let pass = aShape.contains("seg=1") && aDeliveries == 1
+            && bShape == "full"
+            && cDeliveries == 2
+            && dCommitted == 1 && dDeliveries == 1
+            && eCommitted == 1 && eDeliveries == 0
+            && aCommitted == 1 && bCommitted == 1
+        let verdict = pass ? "通过 —— 投递/降级/不丢弃/中心代广播/顶掉顺序五条都成立"
+                           : "不通过 —— 按上面逐项读数定位"
+        probe.emit("- 结论：\(verdict)")
+    }
+}
+
+/// 格 ⑧/⑨ 的载体。`withObservationTracking` 的 `onChange` 是 `@Sendable`，只能捕获 Sendable 的东西
+/// ⇒ 报告缓冲、容器与被观察对象都塞进这个盒；字段只在主 actor 的一串调用里碰，故 `@unchecked`。
+/// 容器/上下文/对象**必须强持有**：它们一旦释放，通知与 backing 都会先消失，读数就变成假阴性（第一版就栽在这）。
+final class MatrixProbe: @unchecked Sendable {
+    let path: String
+    var lines: [String] = []
+    var video: Video?
+    var fired = false
+    private var keepContainer: ModelContainer?
+    private var keepContext: ModelContext?
+
+    init(path: String) { self.path = path }
+
+    func keepAlive(container: ModelContainer, ctx: ModelContext, video: Video?) {
+        self.keepContainer = container
+        self.keepContext = ctx
+        self.video = video
+    }
+
+    /// 落盘即写：这一族读数全靠"进程被带走时最后一行是什么"来判读，
+    /// 所以每行都必须立刻写到盘上，不能等收尾。
+    func emit(_ s: String) {
+        lines.append(s)
+        flush()
+    }
+
+    /// 把当前缓冲写盘。收尾处显式调一次：万一 `readAcrossEdgeAndID` 里读到一半 trap，
+    /// 最后一行「即将读」必须已经在盘上 —— 那正是这一格要的证据。
+    func flush() {
+        try? lines.joined(separator: "\n").write(toFile: path, atomically: true, encoding: .utf8)
+    }
+
+    /// 崩点那一读：跨边拿目标，再 fault 它的持久标量。
+    /// 若进程停在这儿，上一条「即将读」就是报告的最后一行 ⇒ 该相位确实会 trap。
+    func readAcrossEdgeAndID() {
+        guard let video else { emit("- 载体里的 Video 已释放 ⇒ 无对象可跨，本格无读数"); return }
+        let target = video.ownerProject
+        emit("- 跨边取 ownerProject：非 nil = \(target != nil)")
+        guard let target else { emit("- 目标已是 nil ⇒ 框架先把边置空了，没有死对象可读"); return }
+        emit("- 目标 isDeleted = \(target.isDeleted)；modelContext == nil = \(target.modelContext == nil)")
+        emit("- 即将读 .id …（若报告停在这一行 = 这一拍会 trap ⇒ 门槛必须覆盖通知路径）")
+        let id = target.id
+        emit("- .id 读到 = \(id) ⇒ 这一拍不崩（门槛在这里拦住属多余，但方向保守）")
     }
 }
 #endif

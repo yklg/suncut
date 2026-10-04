@@ -66,4 +66,46 @@ final class SegmentSelectionStateTests: XCTestCase {
         XCTAssertNil(s.resolvedID)
         XCTAssertNil(s.hoveredID)
     }
+
+    // MARK: PS-1~5 SegmentPruneSignals（剪枝信号状态机）
+
+    private let c = UUID()
+
+    func testPSEmptyNoteIsNoOp() {
+        var s = SegmentPruneSignals()
+        XCTAssertFalse(s.note([]))
+        XCTAssertTrue(s.ids.isEmpty)
+        XCTAssertEqual(s.version, 0)
+    }
+
+    func testPSNewIDsUnionAndBump() {
+        var s = SegmentPruneSignals()
+        XCTAssertTrue(s.note([a, b]))
+        XCTAssertEqual(s.ids, [a, b])
+        XCTAssertEqual(s.version, 1)
+    }
+
+    func testPSSameBatchIdempotent() {
+        var s = SegmentPruneSignals()
+        s.note([a])
+        XCTAssertFalse(s.note([a]))
+        XCTAssertEqual(s.ids, [a])
+        XCTAssertEqual(s.version, 1)
+    }
+
+    func testPSDisjointBatchesUnion() {
+        var s = SegmentPruneSignals()
+        s.note([a])
+        XCTAssertTrue(s.note([b, c]))
+        XCTAssertEqual(s.ids, [a, b, c])
+        XCTAssertEqual(s.version, 2)
+    }
+
+    func testPSPartialOverlapAddsOnlyNew() {
+        var s = SegmentPruneSignals()
+        s.note([a, b])
+        XCTAssertTrue(s.note([b, c]))
+        XCTAssertEqual(s.ids, [a, b, c])
+        XCTAssertEqual(s.version, 2)
+    }
 }

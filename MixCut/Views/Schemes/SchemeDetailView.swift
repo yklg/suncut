@@ -36,11 +36,15 @@ struct SchemeDetailView: View {
             }
             .frame(maxWidth: .infinity)
 
-            if let op = drawerOperation, let project = scheme.project {
+            // `scheme.project` 是一次跨 to-one 边的读取：项目被真删后这条方案可能还挂在界面上，
+            // 而抽屉拿着那颗死归属去拍全库目录正是 2026-10-04 那起 SIGTRAP 的上游。
+            // 门后取不到 ⇒ 抽屉整体收起，不新造「任务取消」语义。
+            if let op = drawerOperation, let project = scheme.project.live {
                 Divider()
                 SegmentPickerDrawer(
                     project: project,
                     scheme: scheme,
+                    schemeVM: viewModel,
                     operation: op,
                     onPick: { segment in handlePick(segment, operation: op) },
                     onClose: { drawerOperation = nil }
@@ -49,7 +53,7 @@ struct SchemeDetailView: View {
             }
         }
         .animation(DesignTokens.Motion.transition, value: drawerOperation)
-        .task(id: scheme.id) { cleanupStaleDubs() }
+        .task(id: scheme.live?.id) { cleanupStaleDubs() }
     }
 
     /// 清理废弃的旧克隆变体：架构为「只克隆原声」，每个视频当前仅一个有效克隆声 ID

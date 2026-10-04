@@ -376,9 +376,7 @@ final class ImportViewModel {
         if let analysisResult {
             phase = .optimizing
 
-            for oldSeg in video.segments {
-                context.delete(oldSeg)
-            }
+            context.delete(video.segments)   // 快照由 API 保证（见 ModelContextExtension）
 
             createSegments(
                 from: analysisResult,
@@ -794,7 +792,8 @@ final class ImportViewModel {
         PendingDeletionCenter.shared.schedule(
             message: "已删除视频",
             commit: { [weak self] in
-                self?.commitDelete(video: video, pendingPVs: pvsToHide)
+                guard let self else { return GraphChange() }
+                return self.commitDelete(video: video, pendingPVs: pvsToHide).change
             },
             undo: { [weak self] in
                 guard let self else { return }
@@ -808,19 +807,24 @@ final class ImportViewModel {
     }
 
     /// 真删除：删关联 pv；若视频已无任何项目引用，连分镜与视频记录一起删（磁盘文件交孤儿 GC）
-    /// 返回 true 表示视频全局记录已删除
-    @discardableResult
-    private func commitDelete(video: Video, pendingPVs: [ProjectVideo]) -> Bool {
-        guard let context = modelContext else { return false }
+    /// - Returns: `globallyDeleted` = 视频全局记录是否已删；`change` = **在 delete 之前**取到的被删分镜 id
+    ///   （`PendingDeletionCenter` 据此广播；分镜库另有一份数组，不剪就是死投影）
+    private func commitDelete(video: Video, pendingPVs: [ProjectVideo])
+        -> (globallyDeleted: Bool, change: GraphChange) {
+        guard let context = modelContext else { return (false, GraphChange()) }
         // 先真删关联 pv，再判断该视频是否还被其它项目引用
         for pv in pendingPVs { context.delete(pv) }
         context.safeSave()
         guard video.projectVideos.isEmpty else {
             MixLog.info(" 视频仍被其它项目引用，仅解除关联: \(video.name)")
-            return false
+            return (false, GraphChange())
         }
         // 无任何项目引用，删除视频 + 分镜 + SchemeSegment「记录」；磁盘文件交孤儿 GC
         let segmentsToDelete = Array(video.segments)
+        // id 必须在 delete 之前收齐：删完再从关系数组里读 `.id` 本身就是一次墓碑读（前案 §3 刀 2）。
+        // `ProjectVideo` / `SchemeSegment` 不记：界面里没有握着这两类数组的消费者（见台账 §25）。
+        var change = GraphChange()
+        change.noteDeleted(Set(segmentsToDelete.map(\.id)), of: .segment)
         for segment in segmentsToDelete {
             for ss in Array(segment.schemeSegments) { context.delete(ss) }
             context.delete(segment)
@@ -828,7 +832,7 @@ final class ImportViewModel {
         context.delete(video)
         context.safeSave()
         MixLog.info(" 视频无引用，已删除记录: \(video.name)")
-        return true
+        return (true, change)
     }
 
     /// Agent 立即删除路径：与 deleteVideo 等价但立即生效、无撤销
@@ -839,7 +843,10 @@ final class ImportViewModel {
         let pvsToRemove = project.projectVideos.filter { $0.video?.id == video.id }
         let pvIDs = Set(pvsToRemove.map(\.id))
         project.projectVideos.removeAll { pvIDs.contains($0.id) }
-        return commitDelete(video: video, pendingPVs: pvsToRemove)
+        let outcome = commitDelete(video: video, pendingPVs: pvsToRemove)
+        // Agent 链的调用方随后会走 `notifyUIReload()` 的**无载荷**广播（全量重载，比按 id 剪枝更保守），
+        // 所以这里交回的台账不必再发一次 —— 但也不能当没发生：全量重载覆盖了同一批 id。
+        return outcome.globallyDeleted
     }
 
     // MARK: - 全局视频查找
@@ -1243,8 +1250,8 @@ final class ImportViewModel {
         }
 
         // 1) 清空原 seg（将成为 A 段）的衍生物 —— 两段视为全新分镜，不可恢复
-        for dub in seg.segmentDubs { context.delete(dub) }          // cascade 删逐句字幕
-        for shot in seg.physicalShots { context.delete(shot) }      // cascade 删 ShotVariant
+        context.delete(seg.segmentDubs)     // cascade 删逐句字幕
+        context.delete(seg.physicalShots)   // cascade 删 ShotVariant
         seg.invalidateReplacedPicture()
 
         // 2) A = 原 seg 缩为 [origStart, cutFrame]

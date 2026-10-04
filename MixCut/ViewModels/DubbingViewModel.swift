@@ -315,11 +315,14 @@ final class DubbingViewModel {
         if let playing = playingDubID, dubs.contains(where: { $0.id == playing }) {
             stopDubPlayback()
         }
+        let doomedIDs = Set(dubs.map(\.id))
         for d in dubs {
             if let path = d.audioFilePath { try? FileManager.default.removeItem(atPath: path) }
-            segment.segmentDubs.removeAll { $0.id == d.id }
-            context.delete(d)
         }
+        // 顺序是真约束：先从**还活着**的关系数组里按 id 摘掉，再整批删。
+        // 反过来（先 delete 再按 id 摘）等于对已删对象读 `.id` —— 就是这次崩溃那一类。
+        segment.segmentDubs.removeAll { doomedIDs.contains($0.id) }
+        context.delete(dubs)
         try? context.save()
     }
 

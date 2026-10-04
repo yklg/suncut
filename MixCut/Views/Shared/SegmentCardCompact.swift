@@ -1,9 +1,28 @@
 import SwiftUI
 
+/// 分镜卡片的展示快照（值类型；构建于活模型之上，之后不 fault 任何模型）。
+struct SegmentCardSnapshot: Identifiable, Hashable {
+    let id: UUID
+    let text: String
+    let duration: Double
+    let semanticTypes: [SemanticType]
+    let thumbnailPath: String?
+
+    /// 从活模型同步转换；**只读取自有列、不跨 video 边**（G20 守卫钉住此契约）。
+    init(_ segment: Segment) {
+        self.id = segment.id
+        self.text = segment.text
+        self.duration = segment.duration
+        self.semanticTypes = segment.semanticTypes
+        self.thumbnailPath = segment.pictureShowsReplaced
+            ? segment.replacedPictureThumbnailPath : segment.thumbnailPath
+    }
+}
+
 /// 紧凑分镜卡片（用于抽屉/选择器场景）
 /// 包含缩略图、语义类型标签、台词预览、时长
 struct SegmentCardCompact: View {
-    let segment: Segment
+    let card: SegmentCardSnapshot
     let isDisabled: Bool          // true 时整卡片置灰禁用
     let disabledReason: String?   // 置灰原因 tooltip
     let onTap: () -> Void
@@ -13,6 +32,27 @@ struct SegmentCardCompact: View {
     private let cardWidth: CGFloat = 140
     // 信息流广告 9:16 手机端比例（见 CLAUDE.md）
     private var imageHeight: CGFloat { cardWidth * 16.0 / 9.0 }
+
+    init(card: SegmentCardSnapshot,
+         isDisabled: Bool,
+         disabledReason: String?,
+         onTap: @escaping () -> Void) {
+        self.card = card
+        self.isDisabled = isDisabled
+        self.disabledReason = disabledReason
+        self.onTap = onTap
+    }
+
+    /// 合法持有活模型场景（如 ArrangeOrderSheet 排序面板）的便捷入口：同步转快照。
+    init(segment: Segment,
+         isDisabled: Bool,
+         disabledReason: String?,
+         onTap: @escaping () -> Void) {
+        self.init(card: SegmentCardSnapshot(segment),
+                  isDisabled: isDisabled,
+                  disabledReason: disabledReason,
+                  onTap: onTap)
+    }
 
     var body: some View {
         Button(action: { if !isDisabled { onTap() } }) {
@@ -34,13 +74,13 @@ struct SegmentCardCompact: View {
 
                 semanticTags
 
-                Text(segment.text.isEmpty ? "—" : segment.text)
+                Text(card.text.isEmpty ? "—" : card.text)
                     .font(DesignTokens.Typography.microRegular)
                     .foregroundStyle(.secondary)
                     .lineLimit(2)
                     .frame(width: cardWidth, alignment: .leading)
 
-                Text(String(format: "%.1fs", segment.duration))
+                Text(String(format: "%.1fs", card.duration))
                     .font(DesignTokens.Typography.microMono)
                     .foregroundStyle(.tertiary)
             }
@@ -65,7 +105,7 @@ struct SegmentCardCompact: View {
                 isHovering = hovering
             }
         }
-        .help(isDisabled ? (disabledReason ?? "已禁用") : segment.text)
+        .help(isDisabled ? (disabledReason ?? "已禁用") : card.text)
     }
 
     /// 语义类型标签行（semanticTypes 只解码一次，避免同一卡片 body 内 3 次 JSON 解码）
@@ -74,7 +114,7 @@ struct SegmentCardCompact: View {
     /// （素材库列表行就是这么坏的，见 `SegmentLibraryView` 的标签行注释）。这里只放 2 颗标签，
     /// 今天量不出问题，但契约要一致 —— 否则守卫只能靠"我记得每一处"。
     private var semanticTags: some View {
-        let types = segment.semanticTypes
+        let types = card.semanticTypes
         return FlowLayout(spacing: 3) {
             ForEach(Array(types.prefix(2)), id: \.self) { type in
                 SemanticTypeTag(type: type)
@@ -92,7 +132,7 @@ struct SegmentCardCompact: View {
     private var thumbnail: some View {
         // 异步缩略图：命中缓存直出；未命中后台降采样解码、淡入（见 AsyncCachedImage 契约）。
         AsyncCachedImage(
-            path: segment.effectivePicture.thumbnailPath,
+            path: card.thumbnailPath,
             placeholder: {
                 Rectangle()
                     .fill(.quaternary)

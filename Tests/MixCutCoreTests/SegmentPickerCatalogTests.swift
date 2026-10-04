@@ -204,4 +204,54 @@ struct SegmentPickerCatalogTests {
         #expect(r0.counts[.curated] == 1)
         #expect(r0.counts[.aiGenerated] == 0)
     }
+
+    // MARK: LI-1~6 LiveIDIndex（结构化解边索引，String 作 Key）
+
+    @Test("LI-1 空索引 + nil key ⇒ nil")
+    func liveIndexEmptyAndNilKey() {
+        let index = LiveIDIndex<String>()
+        #expect(index.uuid(for: nil) == nil)
+        #expect(index.uuid(for: "anything") == nil)
+    }
+
+    @Test("LI-2 未命中 ⇒ nil")
+    func liveIndexMiss() {
+        var index = LiveIDIndex<String>()
+        index.reserve("a", uuid: id(200))
+        #expect(index.uuid(for: "b") == nil)
+    }
+
+    @Test("LI-3 命中 ⇒ 正确业务 UUID")
+    func liveIndexHit() {
+        var index = LiveIDIndex<String>()
+        index.reserve("a", uuid: id(200))
+        #expect(index.uuid(for: "a") == id(200))
+    }
+
+    @Test("LI-4 同 Key 重复 reserve 先到先得")
+    func liveIndexFirstWriteWins() {
+        var index = LiveIDIndex<String>()
+        index.reserve("a", uuid: id(200))
+        index.reserve("a", uuid: id(201))
+        #expect(index.uuid(for: "a") == id(200))
+    }
+
+    @Test("LI-5 invalidate 只摘除指定 UUID、余者保留")
+    func liveIndexInvalidateOnlyGone() {
+        var index = LiveIDIndex<String>()
+        index.reserve("a", uuid: id(200))
+        index.reserve("b", uuid: id(201))
+        index.invalidate(uuids: [id(200)])
+        #expect(index.uuid(for: "a") == nil)
+        #expect(index.uuid(for: "b") == id(201))
+    }
+
+    @Test("LI-6 invalidate 空集 ⇒ 状态不变")
+    func liveIndexInvalidateEmptyNoChange() {
+        var index = LiveIDIndex<String>()
+        index.reserve("a", uuid: id(200))
+        let snapshot = index
+        index.invalidate(uuids: [])
+        #expect(index == snapshot)
+    }
 }

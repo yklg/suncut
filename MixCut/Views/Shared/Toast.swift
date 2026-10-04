@@ -4,7 +4,7 @@ import SwiftUI
 ///
 /// 撤销浮条不在这里：它的事务生命周期归 `PendingDeletionCenter`（判据是 `UndoGraceMachine` 的
 /// `armed`），经由 `UndoSlot` 上屏。以前两者抢同一个 `current`，任何一条 2.2 秒的普通提示
-/// 都会把正在倒计时的撤销条顶掉，5 分钟的宽限期就成了装饰。
+/// 都会把正在倒计时的撤销条顶掉，宽限期就成了装饰。
 @Observable
 @MainActor
 final class ToastCenter {
@@ -111,7 +111,7 @@ private struct UndoSlotView: View {
         .padding(.top, 50)
     }
 
-    /// mm:ss，向上取整 ⇒ 刚登记显示 5:00，最后一秒显示 0:01 而不是 0:00。
+    /// mm:ss，向上取整 ⇒ 刚登记显示满档（现在 `graceSeconds=5` ⇒ 0:05），最后一秒显示 0:01 而不是 0:00。
     static func countdown(_ seconds: Double) -> String {
         let whole = Int((seconds).rounded(.up))
         return String(format: "%d:%02d", whole / 60, whole % 60)

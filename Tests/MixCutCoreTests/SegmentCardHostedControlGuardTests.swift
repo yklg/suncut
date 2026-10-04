@@ -254,12 +254,13 @@ func compactCardOnlyAllowsButtonWrapper() {
     #expect(heavy.isEmpty, "紧凑卡只允许整卡 Button，实得重宿主：\(heavy)")
 }
 
-@Test("反向对照（真码）：卡片域换回原生 Toggle，守卫必须立刻变红")
+@Test("反向对照（真码）：紧凑卡换回原生 Toggle，守卫必须立刻变红")
 func mutatingCardBackToNativeTurnsItRed() {
-    let src = hostRead("MixCut/Views/SegmentLibrary/SegmentLibraryView.swift")
-    // 在 SegmentCard 的 body 内植入一颗原生 Toggle（模拟控件回流）
-    guard let range = src.range(of: "struct SegmentCard") else {
-        Issue.record("没找到 struct SegmentCard")
+    let src = hostRead("MixCut/Views/Shared/SegmentCardCompact.swift")
+    // 在 SegmentCardCompact 的 body 内植入一颗原生 Toggle（模拟控件回流）。
+    // 锚点用全名：文件内新增的 SegmentCardSnapshot 与 "struct SegmentCard" 前缀重名。
+    guard let range = src.range(of: "struct SegmentCardCompact") else {
+        Issue.record("没找到 struct SegmentCardCompact")
         return
     }
     let searchRange: Range<String.Index> = range.lowerBound..<src.endIndex
@@ -267,7 +268,61 @@ func mutatingCardBackToNativeTurnsItRed() {
                                            with: "var body: some View {\n Toggle(isOn: .constant(false)) { Text(\"x\") }",
                                            options: [], range: searchRange)
     #expect(mutated != src, "变异没落地，对照作废")
-    let r = HostedControlScan.hits(in: mutated, inside: "struct SegmentCard")
+    let r = HostedControlScan.hits(in: mutated, inside: "struct SegmentCardCompact")
     #expect(r.hits.contains(where: { $0.token == "Toggle" }),
             "回流的 Toggle 必须被抓到，实得 \(r.hits)")
+}
+
+// MARK: G20 快照零跨边
+
+/// 模型 to-one 边名（与 ToOneReadScan 第三来源同源；新增边必须同步）。
+private let snapshotForbiddenEdges =
+    ["product", "ownerProject", "project", "video", "scheme",
+     "segment", "strategy", "parentSegment", "shot"]
+
+/// 取 `struct SegmentCardSnapshot` 的区域（到下一个同级 struct 之前）。
+private func snapshotRegion(_ src: String) -> String? {
+    guard let start = src.range(of: "struct SegmentCardSnapshot") else { return nil }
+    let tail = Substring(src)[start.upperBound...]
+    if let next = tail.range(of: "\nstruct ") {
+        // tail 与 src 共享索引空间
+        return String(src[start.lowerBound..<next.lowerBound])
+    }
+    return String(src[start.lowerBound...])
+}
+
+/// 区域内被访问的边成员（`.edge` 词边界）。
+private func edgeAccesses(in region: String) -> [String] {
+    let code = RelationshipReadScan.codeOnly(region)
+    let alt = snapshotForbiddenEdges.sorted().joined(separator: "|")
+    var found: [String] = []
+    forEachMatch(in: code, pattern: "\\.(" + alt + ")\\b") { g in
+        if let edge = g(1) { found.append(edge) }
+    }
+    return found.sorted()
+}
+
+@Test("G20 SegmentCardSnapshot 体内零 to-one 边访问（快照零跨边）")
+func snapshotAccessesNoEdges() {
+    let src = hostRead("MixCut/Views/Shared/SegmentCardCompact.swift")
+    guard let region = snapshotRegion(src) else {
+        Issue.record("没找到 struct SegmentCardSnapshot ⇒ 判据没跑起来")
+        return
+    }
+    let violations = edgeAccesses(in: region)
+    #expect(violations.isEmpty,
+            "快照内出现跨边读取（应只取自有列）：\(violations)")
+}
+
+@Test("G20 变异腿：快照内注入 `segment.video?.id` 必须被抓到")
+func snapshotEdgeMutationIsDetected() {
+    let src = hostRead("MixCut/Views/Shared/SegmentCardCompact.swift")
+    guard let region = snapshotRegion(src) else {
+        Issue.record("没找到 struct SegmentCardSnapshot ⇒ 变异腿作废")
+        return
+    }
+    let mutated = region + "\nlet leak = segment.video?.id\n"
+    let violations = edgeAccesses(in: mutated)
+    #expect(violations == ["video"],
+            "注入的 video 跨边必须被抓到，实得 \(violations)")
 }

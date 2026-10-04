@@ -5,8 +5,8 @@ import Foundation
 /// `armed` 是**浮条该不该在屏上的唯一判据** —— 这条不变量就是本类型存在的全部理由。
 /// 现状（2026-10-01 之前）是浮条可见性归 `ToastCenter`、事务生命周期归 `PendingDeletionCenter`，
 /// 两者只靠"时长取同一个常量"偶然对齐，于是「切项目把事务 flush 掉了、屏上撤销条还活着且可点」
-/// 这条路能让 `undo()` 把**已经真删的对象**放回界面。宽限期从 5 秒改成 5 分钟后，
-/// 这条路从"几乎撞不到"变成"日常会撞"，所以把不变量搬进类型，而不是在调用处加守卫。
+/// 这条路能让 `undo()` 把**已经真删的对象**放回界面。撞不撞得到这条路取决于宽限期多长（档位改过两次：
+/// 5 秒 → 300 秒 → 5 秒），但不变量搬进类型比在调用处加守卫稳 —— 换档时不需要有人重新想起来加那行。
 public enum UndoPhase: String, Equatable, Sendable {
     /// 没有事务。
     case idle
@@ -95,9 +95,9 @@ public struct UndoGraceMachine: Equatable, Sendable {
     /// 登记新事务。
     /// - Returns: 被顶掉的旧事务；调用方**必须立刻**了结它（`deletion` 类即刻真删）。返回 nil = 之前没挂着的事务。
     ///
-    /// 同一时刻只维护一枚 ticket 是既有设计的延续：宽限期拉长到 5 分钟后，
-    /// "连删两条"从边角变成常态，所以被顶掉的那条必须在文案里交代（见 `armMessage`），
-    /// 不能像现在这样静默消失。
+    /// 同一时刻只维护一枚 ticket 是既有设计的延续：宽限期越长，"连删两条"越接近常态，
+    /// 所以被顶掉的那条必须在文案里交代（见 `armMessage`），不能像现在这样静默消失。
+    /// 短档（如现 5 秒）下它回到边角情况，但这条纪律不随档位撤 —— 撤了就等于换档时重新想一遍。
     public mutating func arm(_ next: UndoTicket) -> UndoTicket? {
         let lost = (phase == .armed) ? ticket : nil
         ticket = next
@@ -142,5 +142,79 @@ public struct UndoGraceMachine: Equatable, Sendable {
         case .batchOverwrite:
             return "\(next.message)（上一条「\(lost.message)」已生效）"
         }
+    }
+}
+
+// MARK: - 图变更集（"谁删了哪些 id"的可测值类型）
+
+/// 被真删的实体类型。
+///
+/// 用枚举而不是字符串：新增一种实体时必须在这里登记一次，而 `GraphChange.isPrunable` 的回落规则
+/// 会让它**默认走旧的全量重载** —— 忘记登记最多是少剪一点投影，不会静默留下指向死对象的引用。
+public enum GraphEntity: String, Equatable, Hashable, Sendable, CaseIterable {
+    case project, video, segment, projectVideo, scheme, strategy, schemeSegment, segmentDub, physicalShot, shotVariant
+
+    /// UI 侧目前**有消费者**的实体。不在这个集合里的，整条变更一律回落到"无载荷 = 全量重载"。
+    /// 之所以先只认这三类：剪枝要复用各 VM 既有的重算入口，而删项目链目前只交得出这三类 id。
+    /// ⚠️ `.video` 的消费者是**间接**的（跟着 `.project` 一起摘），所以 `isPrunable` 对它另加一条判据。
+    public static let prunable: Set<GraphEntity> = [.project, .video, .segment]
+}
+
+/// 一次真删落地后「图上少了哪些 id」。
+///
+/// 为什么要它：本仓早就有一条失效通道（`.mixCutDataDidUndo`），但它只能表达"全部重载"，
+/// 结果是 MCP 链发得出、**UI 自己的每条删除链一次都不发**（两起同族 SIGTRAP 的共同背景：
+/// 库里已真删的对象仍被界面投影持有）。带上 id 之后观察者才能只剪自己认得的投影 ——
+/// 而不能在同步的 post 栈里再走一遍 `loadXXX()`：`loadSegments` 首行是 `flushNow()`，
+/// 它会执行待删事务并再次广播 ⇒ 同栈递归（前案 §10 健壮-1，P0）。
+public struct GraphChange: Equatable, Sendable {
+    public private(set) var deleted: [GraphEntity: Set<UUID>] = [:]
+
+    public init() {}
+
+    /// 记一笔"这些 id 没了"。重复调用同一实体只是并集，不产生第二条事件。
+    public mutating func noteDeleted(_ ids: Set<UUID>, of entity: GraphEntity) {
+        guard !ids.isEmpty else { return }
+        deleted[entity, default: []].formUnion(ids)
+    }
+
+    public func idsDeleted(of entity: GraphEntity) -> Set<UUID> { deleted[entity] ?? [] }
+
+    public var isEmpty: Bool { deleted.values.allSatisfy(\.isEmpty) }
+
+    /// 能不能只靠剪枝收口。假 ⇒ 发布口按无载荷发，观察者走原有的全量重载分支。
+    ///
+    /// 判据是**有没有人接得住**，不是"id 好不好拿"。`.video` 是**条件可剪**：界面里没有独立的
+    /// 视频投影生命周期 —— 视频列表一律从活着的 `Project.videos` 现读，删项目时那份投影随
+    /// `pruneDeletedProjects` 取消选中一起拆掉。所以"带着视频却没有带着项目"的变更没人接得住，
+    /// 必须**整条**降级，而不是剪掉能剪的那半（那正是这条判据存在的唯一意义）。
+    public var isPrunable: Bool {
+        !isEmpty
+            && deleted.keys.allSatisfy { GraphEntity.prunable.contains($0) }
+            && (deleted[.video] == nil || deleted[.project] != nil)
+    }
+}
+
+// MARK: - 会话内真删的分镜剪枝信号
+
+/// 会话内真删的分镜剪枝信号（单调并入；视图按 `version` 变化做本地剪枝，不 fetch）。
+///
+/// 纯值类型状态机：持有快照的视图（如 SegmentPickerDrawer）据此摘除陈旧卡片；
+/// 与 `UndoTicket` 同一范式 —— 可被 `swift test` 直接构造、比较。
+public struct SegmentPruneSignals: Equatable, Sendable {
+    public private(set) var ids: Set<UUID> = []
+    public private(set) var version: Int = 0
+
+    public init() {}
+
+    /// 并入新 id；无新增 ⇒ 幂等不增 version。
+    /// - Returns: 是否发生变化。
+    @discardableResult
+    public mutating func note(_ incoming: Set<UUID>) -> Bool {
+        let before = ids
+        ids.formUnion(incoming)
+        guard ids != before else { return false }
+        version += 1
+        return true
     }
 }

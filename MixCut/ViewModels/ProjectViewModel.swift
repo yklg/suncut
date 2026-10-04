@@ -248,8 +248,9 @@ final class ProjectViewModel {
         selectedProject = project
     }
 
-    /// 删除项目
-    /// ProjectVideo 会级联删除，但 Video 仅在无其他引用时才删除
+    /// 删除项目：界面立刻隐藏（不真删），宽限期到点才走咽喉。
+    /// 真删的全部细节 —— 入边结算、级联、无引用视频补删、落盘 —— 收在
+    /// `ModelContext.deleteProjectSettlingOwnerEdges(_:)` 一处，这里不再摆第二份实现。
     func deleteProject(_ project: Project) {
         guard modelContext != nil else { return }
         let projectID = project.id
@@ -259,21 +260,18 @@ final class ProjectViewModel {
         PendingDeletionCenter.shared.schedule(
             message: "已删除项目",
             commit: { [weak self] in
-                guard let context = self?.modelContext else { return }
-                // 收集该项目引用的视频（在删除关联前）
-                let referencedVideos = project.videos
-                // 删除项目（级联删除 ProjectVideo、MixStrategy、MixScheme、SchemeSegment）
-                context.delete(project)
-                context.safeSave()
-                // 检查每个视频是否还被其他项目引用，无引用则删除视频+分镜「记录」
-                // （磁盘文件交给启动时孤儿 GC）
-                for video in referencedVideos where video.projectVideos.isEmpty {
-                    let segmentSnapshot = Array(video.segments)
-                    for segment in segmentSnapshot { context.delete(segment) }
-                    context.delete(video)
-                    MixLog.info(" 视频无引用，已删除记录: \(video.name)")
+                guard let context = self?.modelContext else { return GraphChange() }
+                let outcome = context.deleteProjectSettlingOwnerEdges(project)
+                if outcome.saveFailed {
+                    ToastCenter.shared.show("删除项目后保存失败，改动可能在重启后丢失。请重试；日志见 \(MixLog.logFileURL.path)",
+                                            icon: "exclamationmark.triangle.fill", style: .warning, duration: 5)
+                    // 内存与库此刻不一致：剪枝会让界面"看起来已经删干净"，而重启后那一项又冒出来。
+                    // 宁可不广播 —— 交回空台账，`PendingDeletionCenter` 就不发（这条判断只有一份，在发布口那里）。
+                    return GraphChange()
                 }
-                context.safeSave()
+                // 谁删谁广播（前案 §2 的不变量）。此前 UI 的每条删除链一次都不发，
+                // 于是"库里真删了、投影还握着"成了两起同族 SIGTRAP 的共同背景。
+                return outcome.change
             },
             undo: { [weak self] in
                 guard let self else { return }
@@ -281,6 +279,22 @@ final class ProjectViewModel {
                 else { self.projects.append(project) }
             }
         )
+    }
+
+    /// 从投影里剪掉已真删的项目 —— 广播带 id 时走这里，**不重新 fetch**。
+    ///
+    /// 为什么不用 `fetchProjects()` 顶替：本方法是 `GraphBroadcast.post` 的**同步栈**里执行的，
+    /// 而重载路径上到处挂着 `flushNow()` —— 再走一次就是自己把自己递归掉（前案 §10 健壮-1，P0）。
+    /// ⚠️ 下面把 `selectedProject` 置 nil 会触发它的 `didSet → flushNow()`（既有语义，:10-15，不改）。
+    ///    递归由 `GraphBroadcast` 的重入闸挡下；被丢弃的那次广播会留 error 日志 ——
+    ///    彻底的做法是把那颗 `flushNow` 从 `didSet` 挪到显式调用点，属独立小批，别记成"这里没有二次删除"。
+    func pruneDeletedProjects(_ ids: Set<UUID>) {
+        guard !ids.isEmpty, projects.contains(where: { ids.contains($0.id) }) else { return }
+        projects.removeAll { ids.contains($0.id) }
+        if let selected = selectedProject, ids.contains(selected.id) {
+            selectedProject = nil
+            overviewSnapshot = OverviewSnapshot()   // 快照里装的是模型对象，项目没了就成了一串死引用
+        }
     }
 
     /// 重命名项目

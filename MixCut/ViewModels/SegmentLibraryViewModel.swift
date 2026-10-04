@@ -15,7 +15,9 @@ struct SegmentFilter {
 /// 按视频分组的分镜；`video == nil` 表示「自建分镜」聚合组（多个自建载体视频合并为一组）
 struct VideoSegmentGroup: Identifiable {
     let video: Video?
-    let segments: [Segment]
+    /// **筛选后**可见的分镜。刻意不叫 `segments` —— 那是 `Video` 上的 SwiftData 关系名，
+    /// 同名会让「读这份投影」与「fault 模型关系」在源码里长得一模一样，守卫分不开、人也会看错。
+    let visibleSegments: [Segment]
     var isSelfBuilt: Bool { video == nil }
     /// 「自建分镜」聚合组的固定 id / 编号 key
     static let selfBuiltID = UUID(uuidString: "5E1FBEE7-0000-0000-0000-000000000001")!
@@ -139,6 +141,20 @@ final class SegmentLibraryViewModel {
         MixLog.info("[Readiness] 分镜数据已就绪 project=\(project.id) segs=\(segments.count)")
     }
 
+    /// 从投影里剪掉已真删的分镜 —— 广播带 id 时走这里，**不重新 fetch**。
+    ///
+    /// 为什么单独开一颗而不是复用 `loadSegments(for:)`：那颗的首行是 `PendingDeletionCenter.shared.flushNow()`，
+    /// 而本方法是在 `GraphBroadcast.post` 的**同步栈**里被调用的 —— 再走一次 flushNow 就会执行下一个待删事务
+    /// 并再次广播，等于自己把自己递归掉（前案 §10 健壮-1，P0）。
+    /// 派生数组一律交给既有的 `applyFilter()`（内部 `recomputeAllDerived`）重算，不在这里另写一套分组。
+    func pruneDeletedSegments(_ ids: Set<UUID>) {
+        guard !ids.isEmpty, segments.contains(where: { ids.contains($0.id) }) else { return }
+        segments.removeAll { ids.contains($0.id) }
+        selectedSegmentIDs.subtract(ids)
+        selectionOrderedIDs.removeAll { ids.contains($0) }
+        applyFilter()
+    }
+
     // MARK: - 批量导出多选
 
     /// 是否处于多选模式
@@ -151,6 +167,27 @@ final class SegmentLibraryViewModel {
     /// 缓存到 stored property，避免 SwiftUI 重绘时反复重算
     private(set) var numberByVideo: [UUID: [UUID: Int]] = [:]
 
+    /// 每个分组**未筛选**的全部分镜（配音批量作用域的定义域）。
+    ///
+    /// ⚠️ 与 `numberByVideo` 必须由**同一次分组**产出（见 `recomputeNumberByVideo`）：
+    /// 分组 key 的口径（自建分镜合并进 `selfBuiltID`）只要两处各算一遍就会分叉，
+    /// 而分叉的表征是「按钮说作用于这个视频，实际改写的是另一批分镜」。
+    /// 刻意不等于筛选结果 —— 用 `visibleSegments` 当定义域会让筛选悄悄缩窄批量范围，
+    /// 而上屏文案仍然写着「本视频 N 个分镜」（会说假话那一类）。
+    private(set) var unfilteredSegmentsByGroupID: [UUID: [Segment]] = [:]
+
+    /// 按界面分组 key 把未筛选的全部分镜归类（编号与定义域共用这一次遍历）。
+    private func groupByDisplayKey(_ segs: [Segment]) -> [UUID: [Segment]] {
+        var byKey: [UUID: [Segment]] = [:]
+        for seg in segs {
+            guard let video = seg.video else { continue }
+            // 自建分镜统一归到「自建分镜」组的 key；其余按各自视频
+            let key = video.isUserUploaded ? VideoSegmentGroup.selfBuiltID : video.id
+            byKey[key, default: []].append(seg)
+        }
+        return byKey
+    }
+
     /// 取得分镜在所属视频内的编号；找不到返回 0
     func number(for segment: Segment) -> Int {
         guard let video = segment.video else { return 0 }
@@ -158,16 +195,11 @@ final class SegmentLibraryViewModel {
         return numberByVideo[key]?[segment.id] ?? 0
     }
 
-    /// 重新计算 numberByVideo（仅在 segments 变化时调用）
+    /// 重新计算 numberByVideo 与未筛选定义域（仅在 segments 变化时调用）
     private func recomputeNumberByVideo() {
+        let byKey = groupByDisplayKey(segments)
+        unfilteredSegmentsByGroupID = byKey
         var result: [UUID: [UUID: Int]] = [:]
-        var byKey: [UUID: [Segment]] = [:]
-        for seg in segments {
-            guard let video = seg.video else { continue }
-            // 自建分镜统一归到「自建分镜」组的 key；其余按各自视频
-            let key = video.isUserUploaded ? VideoSegmentGroup.selfBuiltID : video.id
-            byKey[key, default: []].append(seg)
-        }
         for (key, segs) in byKey {
             // 自建分镜组按创建时间编号（整片 startTime 都是 0），其余按 startTime
             let sorted = key == VideoSegmentGroup.selfBuiltID
@@ -205,7 +237,7 @@ final class SegmentLibraryViewModel {
     /// ⚠️ 不能直接用 `filteredSegments` —— 它是筛选/排序后的**扁平**顺序，
     /// 而界面是按视频分组渲染的，两者不一致会导致 ⇧+点击选到用户看不见的分镜。
     private var visualOrder: [Segment] {
-        groupedSegments.flatMap(\.segments)
+        groupedSegments.flatMap(\.visibleSegments)
     }
 
     /// ⇧+点击：从上次勾选的分镜到当前分镜之间**整段选中**（Finder / 邮件同款手感）。
@@ -342,25 +374,26 @@ final class SegmentLibraryViewModel {
 
     private func recomputeGroupedSegments() {
         var selfBuilt: [Segment] = []
-        var videoMap: [UUID: (video: Video, segments: [Segment])] = [:]
+        var videoMap: [UUID: (video: Video, visible: [Segment])] = [:]
         var videoOrder: [UUID] = []
         for seg in filteredSegments {
             guard let video = seg.video else { continue }
             if video.isUserUploaded { selfBuilt.append(seg); continue }
             if videoMap[video.id] == nil {
-                videoMap[video.id] = (video: video, segments: [])
+                videoMap[video.id] = (video: video, visible: [])
                 videoOrder.append(video.id)
             }
-            videoMap[video.id]?.segments.append(seg)
+            videoMap[video.id]?.visible.append(seg)
         }
         var groups: [VideoSegmentGroup] = []
         // 「自建分镜」聚合组置顶（组内按创建时间）
         if !selfBuilt.isEmpty {
-            groups.append(VideoSegmentGroup(video: nil, segments: selfBuilt.sorted { $0.createdAt < $1.createdAt }))
+            groups.append(VideoSegmentGroup(video: nil,
+                                            visibleSegments: selfBuilt.sorted { $0.createdAt < $1.createdAt }))
         }
         groups += videoOrder.compactMap { id in
             guard let entry = videoMap[id] else { return nil }
-            return VideoSegmentGroup(video: entry.video, segments: entry.segments)
+            return VideoSegmentGroup(video: entry.video, visibleSegments: entry.visible)
         }
         groupedSegments = groups
     }
@@ -545,7 +578,7 @@ final class SegmentLibraryViewModel {
         }
     }
 
-    /// 删除分镜（延迟删除 + 常驻撤销条：先隐藏，`PendingDeletionCenter.graceSeconds`（现 5 分钟）内可撤销，不撤才真删）
+    /// 删除分镜（延迟删除 + 常驻撤销条：先隐藏，`PendingDeletionCenter.graceSeconds`（现 5 秒）内可撤销，不撤才真删）
     func deleteSegment(_ segment: Segment) {
         guard modelContext != nil else { return }
         let id = segment.id
@@ -558,11 +591,15 @@ final class SegmentLibraryViewModel {
         PendingDeletionCenter.shared.schedule(
             message: "已删除分镜",
             commit: { [weak self] in
-                guard let context = self?.modelContext else { return }
+                guard let context = self?.modelContext else { return GraphChange() }
+                // `id` 是删之前就已经拿着的 UUID 值（:584），把它交给台账 ⇒ 广播能剪掉别的 VM 那份副本
+                var change = GraphChange()
+                change.noteDeleted([id], of: .segment)
                 // 手动先删级联子项再删 Segment（避免自动级联的边角问题，与 deleteVideo 同款）
                 for ss in Array(segment.schemeSegments) { context.delete(ss) }
                 context.delete(segment)
                 context.safeSave()
+                return change
             },
             undo: { [weak self] in
                 guard let self else { return }
@@ -607,12 +644,16 @@ final class SegmentLibraryViewModel {
         PendingDeletionCenter.shared.schedule(
             message: "已删除 \(segs.count) 个分镜",
             commit: { [weak self] in
-                guard let context = self?.modelContext else { return }
+                guard let context = self?.modelContext else { return GraphChange() }
+                // id 全部来自 `segs`（schedule 之前就已快照的数组），不在 delete 之后再读对象
+                var change = GraphChange()
+                change.noteDeleted(Set(segs.map(\.id)), of: .segment)
                 for seg in segs {
                     for ss in Array(seg.schemeSegments) { context.delete(ss) }
                     context.delete(seg)
                 }
                 context.safeSave()
+                return change
             },
             undo: { [weak self] in
                 guard let self else { return }

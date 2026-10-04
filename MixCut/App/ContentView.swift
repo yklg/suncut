@@ -12,6 +12,53 @@ extension Notification.Name {
     static let mixCutDataDidUndo = Notification.Name("mixCutDataDidUndo")
 }
 
+/// 「图已变更」的**唯一发布口**。
+///
+/// 为什么需要这么一颗：通道（`.mixCutDataDidUndo`）本身早就在，但**只有 MCP 链发得出**（16 处），
+/// UI 自己的每一条删除链一次都不发 —— 两起同族 SIGTRAP 的共同背景正是"库里真删了、投影还握着"。
+/// 把所有发布收进这里，才有唯一的地方同时管住两件事：
+/// ① 载荷规则：能剪枝就带 id；实体类型 UI 不认得就**自动降级成无载荷**，走旧的"全量重载"语义（一字不改）；
+/// ② **防重入但不丢事件**：`NotificationCenter.post` 是同步的，观察者里只要有人再走 `loadXXX()` → `flushNow()`
+///    → 执行待删事务 → 再 post，就是同栈递归（前案 §10 健壮-1，P0）。
+///    做法是**排空队列**而不是丢弃：嵌套那次带的 id 与外层**不是同一次删除**（外层剪的是 A，
+///    内层那次是 flushNow 顺带真删的 B），丢弃就又回到"库里删了、投影还握着"。
+///    队列在最外层那次 post 返回前逐条补发 ⇒ 栈不增长（是循环不是递归），每条真删都必有一次投递。
+@MainActor
+enum GraphBroadcast {
+    private static var isBroadcasting = false
+    /// 嵌套期间攒下的载荷。`nil`（全量重载）一旦攒到就清空其余 —— 全量重载覆盖任何剪枝。
+    private static var queued: [GraphChange?] = []
+
+    /// `change == nil` = 旧的全量重载语义。不可剪枝的变更集会在这里被降成 nil。
+    static func post(_ change: GraphChange? = nil) {
+        if isBroadcasting {
+            enqueue(change)
+            return
+        }
+        isBroadcasting = true
+        defer { isBroadcasting = false }
+        deliver(change)
+        while !queued.isEmpty {
+            deliver(queued.removeFirst())
+        }
+    }
+
+    private static func enqueue(_ change: GraphChange?) {
+        if change == nil {
+            MixLog.info("[GraphPrune] 嵌套广播入队：全量重载覆盖此前攒下的剪枝项")
+            queued = [nil]
+            return
+        }
+        if queued.count == 1, queued.first == nil { return }   // 已有全量重载 ⇒ 这条剪枝被它覆盖
+        queued.append(change)
+    }
+
+    private static func deliver(_ change: GraphChange?) {
+        let payload: Any? = (change?.isPrunable ?? false) ? change : nil
+        NotificationCenter.default.post(name: .mixCutDataDidUndo, object: payload)
+    }
+}
+
 enum NavigationItem: String, Hashable, CaseIterable, Identifiable {
     case overview = "项目概览"
     case importMedia = "素材导入"
@@ -114,8 +161,8 @@ struct ContentView: View {
         .onReceive(NotificationCenter.default.publisher(for: .mixCutShowShortcuts)) { _ in
             showShortcuts = true
         }
-        .onReceive(NotificationCenter.default.publisher(for: .mixCutDataDidUndo)) { _ in
-            reloadAfterUndo()
+        .onReceive(NotificationCenter.default.publisher(for: .mixCutDataDidUndo)) { note in
+            reloadAfterUndo(change: note.object as? GraphChange)
         }
         .background(
             VStack(spacing: 0) {
@@ -154,7 +201,23 @@ struct ContentView: View {
     /// 全局单一撤销栈：⌘Z 可能回滚任意项目的改动，所以统一重建项目列表 +
     /// 重载持有自身快照数组（不随 SwiftData Observation 自动刷新）的各 VM。
     /// 复用「切换项目」同款 loadXXX(for:) 路径，遵守切换项目铁律。
-    private func reloadAfterUndo() {
+    /// 图变更后的收口。两条路，分叉必须在**第一行**：
+    /// - 带 `GraphChange`（发布口已保证它可剪枝）⇒ 只剪投影。**一条都不许碰** `fetchProjects` /
+    ///   `loadSegments` / `loadSchemes`：`loadSegments` 首行是 `flushNow()`，会在同一个同步广播栈里
+    ///   再执行一遍待删事务并再次广播 ⇒ 递归（前案 §10 健壮-1）。
+    /// - 无载荷（⌘Z、MCP 链、不可剪枝的变更）⇒ 旧的全量重载语义，行为一字未改。
+    private func reloadAfterUndo(change: GraphChange?) {
+        if let change {
+            let goneSegments = change.idsDeleted(of: .segment)
+            let goneProjects = change.idsDeleted(of: .project)
+            segmentLibraryVM.pruneDeletedSegments(goneSegments)
+            projectVM.pruneDeletedProjects(goneProjects)
+            // 分发给持有快照的抽屉（剪枝信号状态机，不新增观察者/post）。
+            schemeVM.notePrunedSegments(goneSegments)
+            MixLog.info("[GraphPrune] 剪枝 projects=\(goneProjects.count) videos=\(change.idsDeleted(of: .video).count) "
+                        + "segs=\(goneSegments.count) 剩余 segs=\(segmentLibraryVM.segments.count)")
+            return
+        }
         // 1) 项目列表可能因删除/恢复项目而变化；产品列表一并刷（MCP create_project 可能新建产品）
         projectVM.fetchProducts()
         projectVM.fetchProjects()
