@@ -124,7 +124,7 @@ struct SegmentVariantInspector<PropertiesContent: View>: View {
         .background(Color(nsColor: .windowBackgroundColor))
         // 换分镜 / 关掉检查器 → 取消还没跑完的付费任务，别继续烧配额。
         // 已经跑到一半的 API 调用无法退款，但至少不会把后续步骤（多套改写 + 多段 TTS）全部做完。
-        .onChange(of: segment.id) { cancelRunningTasks() }
+        // 宿主以 .id(segment.id) 绑定视图身份，换分镜=旧子树 onDisappear，故取消清理只此一个真源。
         .onDisappear { cancelRunningTasks() }
         .sheet(item: $captionEditDub) { d in
             CaptionTimingEditorSheet(dub: d, dubVM: dubVM)

@@ -17,13 +17,15 @@ final class DubbingViewModel {
         return min(max(n, Self.variantCountRange.lowerBound), Self.variantCountRange.upperBound)
     }
 
-    /// 差异化改写风格池（支持最多 5 套变体；不足时按取模复用）。
+    /// 差异化改写风格池（支持最多 5 套变体；不足时由 RewriteStylePlan 显式回绕）。
+    /// 每条都是「定位 + 可执行手法」，手法维度互不重叠——只给一句"口语化"式定位，
+    /// 在字数/语义紧约束下拉不动措辞，多版必然雷同。
     private static let rewriteStyles = [
-        "口语化、活泼带感叹词，适合年轻受众的信息流广告",
-        "干练直接、强调卖点与行动号召，适合效果类信息流广告",
-        "场景化讲述、先痛点后给解决方案，代入感强的信息流广告",
-        "突出信任与专业、强调品质与口碑背书的信息流广告",
-        "限时促销、紧迫感强、强促单转化的信息流广告"
+        "短句快节奏、设问开场的口语化风格：多用 8–15 字短句，以一句与痛点或好奇相关的设问开场，随后直接给答案；语气年轻有活力，可用感叹句式但禁用句末语气助词，适合面向年轻受众的信息流广告",
+        "结论前置、强行动号召的干练风格：第一句就抛核心卖点或利益结论，再用一两句补证据，结尾给明确命令式号召（点击、下单、抢）；不铺垫、不绕弯，适合效果转化类信息流广告",
+        "痛点场景化、先问题后方案的代入风格：先描述目标用户的具体使用场景与痛点困扰，再把产品作为解决方案自然带出，形成问题—转机—获益的讲述节奏；画面感强、像真人分享，适合种草类信息流广告",
+        "数据与口碑背书的专业信任风格：用销量、复购率、检测结果、用户评价等具体数字与事实做支撑，措辞克制专业、少夸张，强调品质、资质与口碑，适合高客单价或决策谨慎品类的信息流广告",
+        "限时限量、损失厌恶的紧迫促销风格：强调优惠的时间或库存边界与错过的损失（不得改写任何价格数字与现价/恢复价指向），节奏紧凑、句句推动决策，适合大促与清仓类信息流广告"
     ]
     private static let auditionText = "这款产品真的很好用，喜欢的话点击下方链接了解一下吧。"
 
@@ -210,6 +212,20 @@ final class DubbingViewModel {
         let segById = Dictionary(uniqueKeysWithValues: reconfigurable.map { ($0.id.uuidString, $0) })
 
         let n = variantCount
+        // 首轮互斥：把库里**存量**改写版作为历史注入——覆盖重写时第一轮不再盲写，
+        // 否则「重新改写本分镜」结果仍和旧版雷同。收集为空（首次改写）自然降级为无 prior，
+        // 任何异常都不得阻断本可正常进行的付费改写链路。
+        let (seedIndices, seedRounds) = existingPriorRounds(for: reconfigurable)
+        // 本次管线已产出的新轮次（逐轮累积，作为后续轮次互斥输入）
+        var freshRounds: [[RewritePriorVersion]] = []
+
+        // 风格起点每次随机（随机源仅此一行），轮次编排走可测纯函数；
+        // 同一分镜重复改写不再恒定从池首开始。
+        let poolCount = Self.rewriteStyles.count
+        let styleBase = Int.random(in: 0..<poolCount)
+        let styleIndices = RewriteStylePlan.roundIndices(base: styleBase, rounds: n, poolCount: poolCount)
+        MixLog.info("[Rewrite] 开始 video=\(vid) targets=\(reconfigurable.count) rounds=\(n) styleBase=\(styleBase) styleIndices=\(styleIndices) seedPriorRounds=\(seedIndices.count)")
+
         var completedRounds = 0
         for k in 0..<n {
             // ⚠️ 取消检查：这条链路每轮都在花钱（AI 改写 + 后续 TTS）。
@@ -220,10 +236,17 @@ final class DubbingViewModel {
                 return
             }
             setProgress(vid, "改写第 \(k + 1)/\(n) 套…")
+            // 轮次组装保「将被本轮覆盖的旧 k 版」与「同次新产出」在截断窗口尾部，
+            // 避免变体数调小后首轮恰好丢了要覆盖的旧版。
+            let priorsForRound = RewritePromptBuilder.assemblePriors(
+                seedIndices: seedIndices, seedRounds: seedRounds,
+                currentIndex: k, freshRounds: freshRounds)
+            MixLog.info("[Rewrite] 第 \(k + 1)/\(n) 轮 styleIndex=\(styleIndices[k]) priorRounds=\(priorsForRound.count)")
             do {
                 let results = try await rewriteService.rewrite(
                     inputs: inputs,
-                    style: Self.rewriteStyles[k % Self.rewriteStyles.count])
+                    style: Self.rewriteStyles[styleIndices[k]],
+                    priorVersions: priorsForRound)
                 for r in results {
                     guard let seg = segById[r.segmentId] else { continue }
                     for voiceId in voices {
@@ -233,6 +256,11 @@ final class DubbingViewModel {
                 }
                 context.saveOrWarn("改写台词")
                 completedRounds += 1
+                // 本轮非回退结果累积为下一轮的互斥输入（回退原文不是新说法，注入无意义）
+                let roundVersions = results
+                    .filter { !$0.isFallback }
+                    .map { RewritePriorVersion(segmentId: $0.segmentId, rewrittenText: $0.rewrittenText) }
+                if !roundVersions.isEmpty { freshRounds.append(roundVersions) }
             } catch {
                 // ⚠️ 以前这里直接 return：已落库的前几套台词留在库里，但后面的批量合成被整体跳过，
                 // 于是产生一批"有台词、没音频"的变体，用户看不出问题、也没有"只补合成"的入口。
@@ -273,6 +301,36 @@ final class DubbingViewModel {
                                     style: .success,
                                     duration: 3.5)
         }
+    }
+
+    /// 收集 targets 中**存量**改写版，按 variantIndex 分轮，供 assemblePriors 排序组装。
+    ///
+    /// 降级语义（R3）：纯内存读取，空结果即「首轮无历史」，绝不因收集失败阻断付费改写主链路。
+    /// - 手动编辑可能使同一分镜同一 variantIndex 在多 voiceId 上文本分叉：按分镜去重、
+    ///   过滤空白，每个分镜每轮最多保留 2 条分叉文本。
+    /// - 返回：升序 index 列表 + index → 该轮版本（保留 index 语义供「覆盖旧 k 版优先」排序）。
+    private func existingPriorRounds(for targets: [Segment])
+        -> (indices: [Int], rounds: [Int: [RewritePriorVersion]]) {
+        var collected: [Int: [RewritePriorVersion]] = [:]
+        for seg in targets {
+            let sid = seg.id.uuidString
+            var perIndex: [Int: [String]] = [:]
+            for dub in seg.segmentDubs {
+                let text = dub.rewrittenText.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !text.isEmpty else { continue }
+                var texts = perIndex[dub.textVariantIndex] ?? []
+                guard !texts.contains(text) else { continue }
+                texts.append(text)
+                perIndex[dub.textVariantIndex] = texts
+            }
+            for (idx, texts) in perIndex {
+                for text in texts.prefix(2) {
+                    collected[idx, default: []].append(
+                        RewritePriorVersion(segmentId: sid, rewrittenText: text))
+                }
+            }
+        }
+        return (collected.keys.sorted(), collected)
     }
 
     // MARK: - 手动新增一版（用户自己写台词 → 自动克隆配音）

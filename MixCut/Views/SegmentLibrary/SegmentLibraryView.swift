@@ -140,6 +140,11 @@ struct SegmentLibraryView: View {
                     ) {
                         SegmentPropertiesContent(segment: seg, viewModel: viewModel)
                     }
+                    // ⚠️ 实体身份契约：inspector 整棵子树（含台词草稿/边界时间码/改写版行内编辑等
+                    // 所有分镜作用域 @State）的视图身份必须与选中分镜绑定。缺了它，切换分镜时
+                    // SwiftUI 复用同一视图实例、@State 原样保留，台词原文会永远停在第一个分镜。
+                    // 有 InspectorSegmentIdentityGuardTests 守卫，删除前先读那条测试。
+                    .id(seg.id)
                     // R2 · 仅对 inspector 做 120ms opacity 动画（内容快速淡出，无宽度/子树插值）
                     .transition(.opacity)
                     .animation(.easeOut(duration: 0.12), value: viewModel.selectedSegment?.id)

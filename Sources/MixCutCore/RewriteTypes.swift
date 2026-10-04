@@ -15,6 +15,22 @@ public struct RewriteSegmentInput: Equatable, Sendable {
     }
 }
 
+/// 已经产出的某一版改写台词（多轮改写互斥输入）。
+///
+/// 外层 `[ [RewritePriorVersion] ]` 表示「轮次 → 该轮各分镜版本」：
+/// 新一轮改写时把历史版本注入 prompt，要求模型避开它们的开头/句式，
+/// 避免 K 轮互相盲写导致多版雷同。App 层负责从持久化模型映射为本纯值类型，
+/// Core 不认识任何数据模型。
+public struct RewritePriorVersion: Equatable, Sendable {
+    public let segmentId: String
+    public let rewrittenText: String
+
+    public init(segmentId: String, rewrittenText: String) {
+        self.segmentId = segmentId
+        self.rewrittenText = rewrittenText
+    }
+}
+
 /// 改写引擎产出的单个分镜结果。
 public struct RewrittenSegment: Equatable, Sendable {
     public let segmentId: String

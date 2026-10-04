@@ -25,17 +25,21 @@ struct SegmentPropertiesContent: View {
 // MARK: - ⓪ 台词原文
 
 /// 台词原文编辑（由卡片内联迁入；Inspector 单实例，按需展开）。
+///
+/// 草稿契约由 ``InspectorDraftMirror`` 承担：宿主以 `.id(segment.id)` 绑定身份，
+/// 切分镜必走 onAppear 重新 reset；同一分镜内模型值被外部流程（边界微调重切、
+/// 重新识别）原地更新时，仅当用户没动过草稿才采纳，脏草稿保留交保存/还原收口。
 private struct TranscriptSection: View {
     let segment: Segment
     @Environment(\.modelContext) private var modelContext
-    @State private var draft: String = ""
+    @State private var mirror = InspectorDraftMirror()
     @FocusState private var focused: Bool
-    @State private var didLoad = false
 
     var body: some View {
         CollapsibleInspectorSection(icon: "text.quote", title: "台词原文") {
             VStack(alignment: .leading, spacing: 7) {
-                TextEditor(text: $draft)
+                TextEditor(text: Binding(get: { mirror.draft },
+                                         set: { mirror.edit($0) }))
                     .font(DesignTokens.Typography.caption)
                     .lineSpacing(3)
                     .focused($focused)
@@ -47,26 +51,20 @@ private struct TranscriptSection: View {
                         RoundedRectangle(cornerRadius: 6, style: .continuous)
                             .stroke(Color.accentColor.opacity(0.5), lineWidth: 1)
                     )
-                    .onAppear {
-                        guard !didLoad else { return }
-                        draft = segment.text
-                        didLoad = true
+                    .onAppear { mirror.reset(to: segment.text) }
+                    // 外部原地更新（边界微调重切台词等）：干净草稿跟随，脏草稿不被吞
+                    .onChange(of: segment.text) { _, newText in
+                        mirror.adoptExternal(newText)
                     }
                 HStack(spacing: 8) {
                     Button {
-                        let trimmed = draft.trimmingCharacters(in: .whitespacesAndNewlines)
-                        if trimmed != segment.text {
-                            segment.setText(trimmed, source: .manualEdit)
-                            try? modelContext.save()
-                            ToastCenter.shared.show("台词已更新",
-                                                    icon: "checkmark.circle.fill")
-                        }
+                        save()
                     } label: {
                         Label("保存", systemImage: "checkmark")
                     }
                     .controlSize(.small)
                     Button {
-                        draft = segment.text
+                        mirror.reset(to: segment.text)
                     } label: {
                         Label("还原", systemImage: "arrow.uturn.backward")
                     }
@@ -79,14 +77,24 @@ private struct TranscriptSection: View {
             }
             .onKeyPress(.return, phases: .down) { press in
                 guard press.modifiers.contains(.command) else { return .ignored }
-                let trimmed = draft.trimmingCharacters(in: .whitespacesAndNewlines)
-                if trimmed != segment.text {
-                    segment.setText(trimmed, source: .manualEdit)
-                    try? modelContext.save()
-                }
+                save()
                 return .handled
             }
         }
+    }
+
+    private func save() {
+        let trimmed = mirror.draft.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed != segment.text else {
+            // 与模型一致（如只敲了空白）：仅对齐镜像，不落库
+            mirror.didCommit(trimmed)
+            return
+        }
+        segment.setText(trimmed, source: .manualEdit)
+        try? modelContext.save()
+        mirror.didCommit(trimmed)
+        ToastCenter.shared.show("台词已更新",
+                                icon: "checkmark.circle.fill")
     }
 }
 
@@ -153,14 +161,18 @@ private struct BoundarySection: View {
 }
 
 /// 边界微调编辑器（由卡片迁入；Inspector 宽度充裕，纵向两行布局）。
+///
+/// 时间码文本框与台词框共用 ``InspectorDraftMirror`` 契约：宿主 `.id(segment.id)`
+/// 保证切实体重新装载；同实体帧被 ±按钮等外部改动时，未聚焦/未手改的镜像跟随，
+/// 手输中的内容不被覆盖。
 struct BoundaryAdjustRow: View {
     let segment: Segment
     @Bindable var viewModel: SegmentLibraryViewModel
 
     private enum TimeField: Hashable { case start, end }
 
-    @State private var startText: String = ""
-    @State private var endText: String = ""
+    @State private var startMirror = InspectorDraftMirror()
+    @State private var endMirror = InspectorDraftMirror()
     @FocusState private var focusedField: TimeField?
 
     private var fps: Double { segment.video?.fps ?? 30 }
@@ -168,12 +180,14 @@ struct BoundaryAdjustRow: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            group(label: "入", text: $startText, focus: .start) {
+            group(label: "入", focus: .start,
+                  text: Binding(get: { startMirror.draft }, set: { startMirror.edit($0) })) {
                 viewModel.adjustStartFrame(for: segment, by: -1)
             } onPlus: {
                 viewModel.adjustStartFrame(for: segment, by: 1)
             }
-            group(label: "出", text: $endText, focus: .end) {
+            group(label: "出", focus: .end,
+                  text: Binding(get: { endMirror.draft }, set: { endMirror.edit($0) })) {
                 viewModel.adjustEndFrame(for: segment, by: -1)
             } onPlus: {
                 viewModel.adjustEndFrame(for: segment, by: 1)
@@ -184,27 +198,35 @@ struct BoundaryAdjustRow: View {
                 .fixedSize(horizontal: false, vertical: true)
         }
         .onChange(of: focusedField) { oldField, newField in
-            if newField == .start { startText = "\(segment.startFrame)" }
-            if newField == .end { endText = "\(segment.endFrame)" }
+            // 进入编辑：装载裸帧号供直接输入
+            if newField == .start { startMirror.reset(to: "\(segment.startFrame)") }
+            if newField == .end { endMirror.reset(to: "\(segment.endFrame)") }
+            // 离开编辑：提交手输
             if oldField == .start { commitStart() }
             if oldField == .end { commitEnd() }
         }
         .onAppear {
-            startText = timecode(segment.startFrame)
-            endText = timecode(segment.endFrame)
+            startMirror.reset(to: timecode(segment.startFrame))
+            endMirror.reset(to: timecode(segment.endFrame))
         }
         .onChange(of: segment.startFrame) { _, newVal in
-            if focusedField != .start { startText = timecode(newVal) }
+            if focusedField != .start { startMirror.adoptExternal(timecode(newVal)) }
         }
         .onChange(of: segment.endFrame) { _, newVal in
-            if focusedField != .end { endText = timecode(newVal) }
+            if focusedField != .end { endMirror.adoptExternal(timecode(newVal)) }
+        }
+        // 兜底：手输时间码未及失焦就切实体（旧子树随即销毁）。commit 内有等值 guard，
+        // 未改动/非法输入都不会触发 setStartFrame 的保存、缩略图重生与播放副作用链。
+        .onDisappear {
+            if focusedField == .start { commitStart() }
+            if focusedField == .end { commitEnd() }
         }
     }
 
     @ViewBuilder
     private func group(label: String,
-                       text: Binding<String>,
                        focus: TimeField,
+                       text: Binding<String>,
                        onMinus: @escaping () -> Void,
                        onPlus: @escaping () -> Void) -> some View {
         HStack(spacing: 5) {
@@ -228,21 +250,21 @@ struct BoundaryAdjustRow: View {
     }
 
     private func commitStart() {
-        guard let f = Int(startText.trimmingCharacters(in: .whitespaces)), f >= 0 else {
-            startText = timecode(segment.startFrame)
+        guard let f = Int(startMirror.draft.trimmingCharacters(in: .whitespaces)), f >= 0 else {
+            startMirror.reset(to: timecode(segment.startFrame))
             return
         }
         if f != segment.startFrame { viewModel.setStartFrame(for: segment, to: f) }
-        startText = timecode(segment.startFrame)
+        startMirror.reset(to: timecode(segment.startFrame))
     }
 
     private func commitEnd() {
-        guard let f = Int(endText.trimmingCharacters(in: .whitespaces)), f > 0 else {
-            endText = timecode(segment.endFrame)
+        guard let f = Int(endMirror.draft.trimmingCharacters(in: .whitespaces)), f > 0 else {
+            endMirror.reset(to: timecode(segment.endFrame))
             return
         }
         if f != segment.endFrame { viewModel.setEndFrame(for: segment, to: f) }
-        endText = timecode(segment.endFrame)
+        endMirror.reset(to: timecode(segment.endFrame))
     }
 
     private func adjustButton(systemName: String, accessibilityLabel: String,

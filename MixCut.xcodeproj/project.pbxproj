@@ -166,6 +166,7 @@
 		C3D20F5E6B782930415C7002 /* PlaybackActivationPolicy.swift in Sources */ = {isa = PBXBuildFile; fileRef = C3D20F5E6B782930415C7001 /* PlaybackActivationPolicy.swift */; };
 		D4E31A6F7C892A31405D8002 /* SegmentHeaderLayout.swift in Sources */ = {isa = PBXBuildFile; fileRef = D4E31A6F7C892A31405D8001 /* SegmentHeaderLayout.swift */; };
 		F0A1B2C3D4E5F60718293A02 /* HoverTipState.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0A1B2C3D4E5F60718293A01 /* HoverTipState.swift */; };
+		AA11BB22CC33DD44EE55F602 /* InspectorDraftMirror.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA11BB22CC33DD44EE55F601 /* InspectorDraftMirror.swift */; };
 		F0A1B2C3D4E5F60718293B02 /* BoundaryAdjustLayout.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0A1B2C3D4E5F60718293B01 /* BoundaryAdjustLayout.swift */; };
 		F0A1B2C3D4E5F60718293C02 /* SegmentSelectionState.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0A1B2C3D4E5F60718293C01 /* SegmentSelectionState.swift */; };
 		F0A1B2C3D4E5F60718293D02 /* InspectorPresentationGating.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0A1B2C3D4E5F60718293D01 /* InspectorPresentationGating.swift */; };
@@ -345,6 +346,7 @@
 		C3D20F5E6B782930415C7001 /* PlaybackActivationPolicy.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = PlaybackActivationPolicy.swift; path = Sources/MixCutCore/PlaybackActivationPolicy.swift; sourceTree = "<group>"; };
 		D4E31A6F7C892A31405D8001 /* SegmentHeaderLayout.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = SegmentHeaderLayout.swift; path = Sources/MixCutCore/SegmentHeaderLayout.swift; sourceTree = "<group>"; };
 		F0A1B2C3D4E5F60718293A01 /* HoverTipState.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = HoverTipState.swift; path = Sources/MixCutCore/HoverTipState.swift; sourceTree = "<group>"; };
+		AA11BB22CC33DD44EE55F601 /* InspectorDraftMirror.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = InspectorDraftMirror.swift; path = Sources/MixCutCore/InspectorDraftMirror.swift; sourceTree = "<group>"; };
 		F0A1B2C3D4E5F60718293B01 /* BoundaryAdjustLayout.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = BoundaryAdjustLayout.swift; path = Sources/MixCutCore/BoundaryAdjustLayout.swift; sourceTree = "<group>"; };
 		F0A1B2C3D4E5F60718293C01 /* SegmentSelectionState.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = SegmentSelectionState.swift; path = Sources/MixCutCore/SegmentSelectionState.swift; sourceTree = "<group>"; };
 		F0A1B2C3D4E5F60718293D01 /* InspectorPresentationGating.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = InspectorPresentationGating.swift; path = Sources/MixCutCore/InspectorPresentationGating.swift; sourceTree = "<group>"; };
@@ -566,6 +568,7 @@
 				C3D20F5E6B782930415C7001 /* PlaybackActivationPolicy.swift */,
 				D4E31A6F7C892A31405D8001 /* SegmentHeaderLayout.swift */,
 				F0A1B2C3D4E5F60718293A01 /* HoverTipState.swift */,
+				AA11BB22CC33DD44EE55F601 /* InspectorDraftMirror.swift */,
 				F0A1B2C3D4E5F60718293B01 /* BoundaryAdjustLayout.swift */,
 				F0A1B2C3D4E5F60718293C01 /* SegmentSelectionState.swift */,
 				F0A1B2C3D4E5F60718293D01 /* InspectorPresentationGating.swift */,
@@ -991,6 +994,7 @@
 				C3D20F5E6B782930415C7002 /* PlaybackActivationPolicy.swift in Sources */,
 				D4E31A6F7C892A31405D8002 /* SegmentHeaderLayout.swift in Sources */,
 				F0A1B2C3D4E5F60718293A02 /* HoverTipState.swift in Sources */,
+				AA11BB22CC33DD44EE55F602 /* InspectorDraftMirror.swift in Sources */,
 				F0A1B2C3D4E5F60718293B02 /* BoundaryAdjustLayout.swift in Sources */,
 				F0A1B2C3D4E5F60718293C02 /* SegmentSelectionState.swift in Sources */,
 				F0A1B2C3D4E5F60718293D02 /* InspectorPresentationGating.swift in Sources */,
