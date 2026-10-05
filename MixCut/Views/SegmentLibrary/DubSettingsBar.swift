@@ -19,6 +19,8 @@ struct DubSettingsBar: View {
     let targets: [Segment]
     /// 作用域呈现文案
     let presentation: DubScopePresentation
+    /// 停止请求上抛到页面顶层（停止确认弹窗统一在 SegmentLibraryView）
+    let onStopRequest: (UUID) -> Void
     @Environment(\.modelContext) private var modelContext
 
     /// 每个非锁定分镜要产出的台词变体数量（全局设置，1...5）。
@@ -62,9 +64,7 @@ struct DubSettingsBar: View {
     var body: some View {
         HStack(spacing: DesignTokens.Spacing.compact) {
             if busy {
-                ProgressView().controlSize(.small)
-                Text(dubVM.progressText(videoID: video.id))
-                    .font(.caption2).foregroundStyle(.secondary).lineLimit(1).fixedSize()
+                DubbingCompactProgress(videoID: video.id, vm: dubVM) { onStopRequest(video.id) }
             } else {
                 if variantCount > 0 {
                     Label("\(variantCount) 个变体", systemImage: "checkmark.seal.fill")
@@ -98,12 +98,11 @@ struct DubSettingsBar: View {
         }
         .confirmationDialog("确定要开始改写台词吗？", isPresented: $showRewriteConfirm) {
             Button("开始（按次计费）") {
-                Task {
-                    await dubVM.rewrite(video: video,
+                // 句柄归视频级注册表：切换分镜/素材不再连带取消。
+                dubVM.startRewriteTask(video: video,
                                        targets: targets,
                                        presentation: presentation,
                                        context: modelContext)
-                }
             }
             Button("取消", role: .cancel) {}
         } message: {

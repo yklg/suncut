@@ -167,6 +167,10 @@
 		D4E31A6F7C892A31405D8002 /* SegmentHeaderLayout.swift in Sources */ = {isa = PBXBuildFile; fileRef = D4E31A6F7C892A31405D8001 /* SegmentHeaderLayout.swift */; };
 		F0A1B2C3D4E5F60718293A02 /* HoverTipState.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0A1B2C3D4E5F60718293A01 /* HoverTipState.swift */; };
 		AA11BB22CC33DD44EE55F602 /* InspectorDraftMirror.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA11BB22CC33DD44EE55F601 /* InspectorDraftMirror.swift */; };
+		A1B2C3D4000000000000A002 /* DubbingPipelineProgress.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4000000000000A001 /* DubbingPipelineProgress.swift */; };
+		A1B2C3D4000000000000A004 /* DemucsProgress.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4000000000000A003 /* DemucsProgress.swift */; };
+		A1B2C3D4000000000000A006 /* DubbingJobRegistry.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4000000000000A005 /* DubbingJobRegistry.swift */; };
+		A1B2C3D4000000000000A008 /* DubbingProgressView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4000000000000A007 /* DubbingProgressView.swift */; };
 		F0A1B2C3D4E5F60718293B02 /* BoundaryAdjustLayout.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0A1B2C3D4E5F60718293B01 /* BoundaryAdjustLayout.swift */; };
 		F0A1B2C3D4E5F60718293C02 /* SegmentSelectionState.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0A1B2C3D4E5F60718293C01 /* SegmentSelectionState.swift */; };
 		F0A1B2C3D4E5F60718293D02 /* InspectorPresentationGating.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0A1B2C3D4E5F60718293D01 /* InspectorPresentationGating.swift */; };
@@ -347,6 +351,10 @@
 		D4E31A6F7C892A31405D8001 /* SegmentHeaderLayout.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = SegmentHeaderLayout.swift; path = Sources/MixCutCore/SegmentHeaderLayout.swift; sourceTree = "<group>"; };
 		F0A1B2C3D4E5F60718293A01 /* HoverTipState.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = HoverTipState.swift; path = Sources/MixCutCore/HoverTipState.swift; sourceTree = "<group>"; };
 		AA11BB22CC33DD44EE55F601 /* InspectorDraftMirror.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = InspectorDraftMirror.swift; path = Sources/MixCutCore/InspectorDraftMirror.swift; sourceTree = "<group>"; };
+		A1B2C3D4000000000000A001 /* DubbingPipelineProgress.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = DubbingPipelineProgress.swift; path = Sources/MixCutCore/DubbingPipelineProgress.swift; sourceTree = "<group>"; };
+		A1B2C3D4000000000000A003 /* DemucsProgress.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = DemucsProgress.swift; path = Sources/MixCutCore/DemucsProgress.swift; sourceTree = "<group>"; };
+		A1B2C3D4000000000000A005 /* DubbingJobRegistry.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = DubbingJobRegistry.swift; path = Sources/MixCutCore/DubbingJobRegistry.swift; sourceTree = "<group>"; };
+		A1B2C3D4000000000000A007 /* DubbingProgressView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DubbingProgressView.swift; sourceTree = "<group>"; };
 		F0A1B2C3D4E5F60718293B01 /* BoundaryAdjustLayout.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = BoundaryAdjustLayout.swift; path = Sources/MixCutCore/BoundaryAdjustLayout.swift; sourceTree = "<group>"; };
 		F0A1B2C3D4E5F60718293C01 /* SegmentSelectionState.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = SegmentSelectionState.swift; path = Sources/MixCutCore/SegmentSelectionState.swift; sourceTree = "<group>"; };
 		F0A1B2C3D4E5F60718293D01 /* InspectorPresentationGating.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = InspectorPresentationGating.swift; path = Sources/MixCutCore/InspectorPresentationGating.swift; sourceTree = "<group>"; };
@@ -452,6 +460,7 @@
 			children = (
 				5D595E4E7B57C7DF05BBB26E /* FlowLayout.swift */,
 				90F2AE8BC32F1C8343785BBE /* InlineVideoPlayer.swift */,
+				A1B2C3D4000000000000A007 /* DubbingProgressView.swift */,
 			);
 			path = Components;
 			sourceTree = "<group>";
@@ -569,6 +578,9 @@
 				D4E31A6F7C892A31405D8001 /* SegmentHeaderLayout.swift */,
 				F0A1B2C3D4E5F60718293A01 /* HoverTipState.swift */,
 				AA11BB22CC33DD44EE55F601 /* InspectorDraftMirror.swift */,
+				A1B2C3D4000000000000A001 /* DubbingPipelineProgress.swift */,
+				A1B2C3D4000000000000A003 /* DemucsProgress.swift */,
+				A1B2C3D4000000000000A005 /* DubbingJobRegistry.swift */,
 				F0A1B2C3D4E5F60718293B01 /* BoundaryAdjustLayout.swift */,
 				F0A1B2C3D4E5F60718293C01 /* SegmentSelectionState.swift */,
 				F0A1B2C3D4E5F60718293D01 /* InspectorPresentationGating.swift */,
@@ -928,6 +940,7 @@
 				7D5E9015AEE9E02EE8211DFF /* SegmentLibraryViewModel.swift in Sources */,
 				BF61B1F09D7771C6EF580BA9 /* FlowLayout.swift in Sources */,
 				311C1EA134CAAC716A27A254 /* InlineVideoPlayer.swift in Sources */,
+				A1B2C3D4000000000000A008 /* DubbingProgressView.swift in Sources */,
 				B111386C5FD3E945A44D4584 /* ExportView.swift in Sources */,
 				F79DA3913A7E11BF687E2C9E /* ImportView.swift in Sources */,
 				24AFC03D4A4D6DBEADD606EB /* OnboardingView.swift in Sources */,
@@ -995,6 +1008,9 @@
 				D4E31A6F7C892A31405D8002 /* SegmentHeaderLayout.swift in Sources */,
 				F0A1B2C3D4E5F60718293A02 /* HoverTipState.swift in Sources */,
 				AA11BB22CC33DD44EE55F602 /* InspectorDraftMirror.swift in Sources */,
+				A1B2C3D4000000000000A002 /* DubbingPipelineProgress.swift in Sources */,
+				A1B2C3D4000000000000A004 /* DemucsProgress.swift in Sources */,
+				A1B2C3D4000000000000A006 /* DubbingJobRegistry.swift in Sources */,
 				F0A1B2C3D4E5F60718293B02 /* BoundaryAdjustLayout.swift in Sources */,
 				F0A1B2C3D4E5F60718293C02 /* SegmentSelectionState.swift in Sources */,
 				F0A1B2C3D4E5F60718293D02 /* InspectorPresentationGating.swift in Sources */,

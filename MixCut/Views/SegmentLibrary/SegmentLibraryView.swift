@@ -13,6 +13,8 @@ struct SegmentLibraryView: View {
     @State private var showBatchDeleteConfirm = false
     @State private var showArrangeSheet = false
     @State private var dubVM = DubbingViewModel()
+    /// 待确认停止的视频作业（标题行/检查器/浮层三个停止入口共用一个确认弹窗）
+    @State private var pendingStopVideoID: UUID?
     /// 搜索防抖任务句柄：新按键到来时取消上一个，避免每敲一个字就全量重算。
     @State private var searchDebounceTask: Task<Void, Never>?
     /// 字幕烧录字号（全局设置，与卡片预览、导出共用同一 UserDefaults 键）
@@ -24,6 +26,11 @@ struct SegmentLibraryView: View {
     /// Inspector 未展开时的内容区宽（门禁判定基准：模拟 inspector 展开后列数是否改变）
     @State private var unconstrainedWidth: CGFloat = 0
     @Environment(\.modelContext) private var modelContext
+
+    /// 三个停止入口统一走这里：只弹确认，确认后才取消（避免手滑中断付费任务）。
+    private func requestStopJob(_ videoID: UUID) {
+        pendingStopVideoID = videoID
+    }
 
     var body: some View {
         // ⚠️ .task(id: project.id) 必须放在 body 最外层，不能放进子分支（见 CLAUDE.md）
@@ -40,6 +47,9 @@ struct SegmentLibraryView: View {
             }
         }
         .task(id: project.id) {
+            // 换项目：旧项目的视频级配音作业不再属于当前界面，静默全部停止（不提示、不报错）。
+            // 必须放在闭包最前面：句柄在注册表中独立于视图存活，不随本页身份变化自动取消。
+            dubVM.cancelAllJobs(reason: .projectSwitch)
             // 上面那个 @State importVM 是本视图私有的实例，这里是它拿到 context 的唯一一处 ——
             // 删不得：自建分镜上传与拆分两条路径都走它。
             importVM.setModelContext(modelContext)
@@ -136,7 +146,8 @@ struct SegmentLibraryView: View {
                         segment: seg,
                         dubVM: dubVM,
                         isPinned: seg.id == viewModel.pinnedSegmentID,
-                        onClose: { viewModel.clearPinned() }
+                        onClose: { viewModel.clearPinned() },
+                        onStopRequest: { requestStopJob($0) }
                     ) {
                         SegmentPropertiesContent(segment: seg, viewModel: viewModel)
                     }
@@ -151,7 +162,27 @@ struct SegmentLibraryView: View {
                 }
             }
         }
+        // 常驻作业浮层：切换素材、滚动、分组标题被 Lazy 回收都不影响进度可见性与停止入口。
+        .overlay(alignment: .bottom) {
+            DubbingJobsOverlay(vm: dubVM) { requestStopJob($0) }
+                // 检查器展开时浮层避开右侧 340pt 栏；收起时在主区底部居中。
+                .padding(.trailing, viewModel.selectedSegment == nil ? 0 : 340)
+        }
         .navigationTitle("分镜素材库")
+        // 停止改写确认（三个入口共用 pendingStopVideoID）
+        .confirmationDialog("停止改写？",
+                            isPresented: Binding(
+                                get: { pendingStopVideoID != nil },
+                                set: { if !$0 { pendingStopVideoID = nil } }),
+                            presenting: pendingStopVideoID) { videoID in
+            Button("停止", role: .destructive) {
+                dubVM.cancelJobs(for: videoID, reason: .userStop)
+                pendingStopVideoID = nil
+            }
+            Button("继续等待", role: .cancel) { pendingStopVideoID = nil }
+        } message: { _ in
+            Text("已完成的改写台词与配音会保留；正在进行的这一步将立即中断（已发起的 API 调用按次计费，无法退回）。")
+        }
         // ⚠️ 配音错误的 alert 必须挂在**页面顶层**。
         // 原先它挂在 DubSettingsBar 里，而那个组件只在「普通视频」分组标题行渲染，
         // 外层还是 LazyVStack —— 于是两种情况下报错完全看不到：
@@ -727,7 +758,8 @@ struct SegmentLibraryView: View {
                                dubVM: dubVM,
                                scope: scope,
                                targets: targets,
-                               presentation: DubScopePresentationMapper.presentation(for: scope.kind))
+                               presentation: DubScopePresentationMapper.presentation(for: scope.kind),
+                               onStopRequest: { requestStopJob($0) })
             }
         }
         .padding(.horizontal, 4)

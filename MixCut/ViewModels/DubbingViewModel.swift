@@ -31,9 +31,42 @@ final class DubbingViewModel {
 
     let topVoices: [TTSVoice] = VoiceCatalog.top(10)
 
-    /// 按视频独立跟踪「正在配音（克隆/改写/合成）」状态与进度——不同视频互不联动。
-    var busyVideoIDs: Set<UUID> = []
-    var videoProgress: [UUID: String] = [:]
+    /// 视频级配音作业注册表：进程级共享单例（Core，可 swift test）。
+    /// 忙碌互斥是进程级语义——UI / MCP 工具 / 导出共用素材与付费音色，
+    /// 任一实例 beginBusy 后其他实例对同一视频必须互斥。
+    /// 任务归属是视频级，生命周期独立于分镜检查器子树——切换分镜/素材不再连带取消。
+    let registry = DubbingJobRegistry.shared
+
+    /// @Observable 投影修订号：registry 自身不是 Observable（Core 零 SwiftUI 依赖），
+    /// 本实例改 registry 后通过 bumpJobs 同步；其他实例（如 MCP）改了 shared registry 时，
+    /// 由浮层 TimelineView 每秒调 syncJobsRevision 把外部变化拉进本 VM 的观察域。
+    private(set) var jobsRevision = DubbingJobRegistry.shared.revision
+    private func bumpJobs() { jobsRevision = registry.revision }
+    /// 轮询入口：仅当 shared registry 被其他实例改动时才写入（写入即触发 UI 刷新）。
+    func syncJobsRevision() {
+        if jobsRevision != registry.revision { jobsRevision = registry.revision }
+    }
+
+    /// 取消原因 → toast 策略。projectSwitch 静默；dataDeleted 提示素材已删；userStop 由管线各检查点提示。
+    enum DubbingCancelReason: Equatable {
+        case userStop
+        case dataDeleted
+        case projectSwitch
+    }
+    /// 按视频记录「本次取消的 toast 策略」，管线抵达取消检查点时消费一次。
+    private var silentCancelVideoIDs: Set<UUID> = []
+    private var dataDeletedCancelVideoIDs: Set<UUID> = []
+
+    /// 广播观察者采用 target-action（不持 token）：
+    /// deinit 可直接 removeObserver(self)，规避 block-token 的跨隔离属性与
+    /// 「init 逃逸闭包捕获未完成初始化的 self」两条 Swift 约束。
+    // （无 graphChangeObserver 存储属性）
+
+    /// 按视频独立跟踪「正在配音（克隆/改写/合成）」状态与进度——派生自 registry，不同视频互不联动。
+    var busyVideoIDs: Set<UUID> {
+        _ = jobsRevision
+        return registry.busyIDs
+    }
     var busyDubIDs: Set<UUID> = []
     var auditioningVoiceId: String?
     var playingDubID: UUID?
@@ -59,41 +92,232 @@ final class DubbingViewModel {
 
     /// 该视频是否正在配音处理中（用于其专属配音条显示忙碌）。
     func isBusy(videoID: UUID?) -> Bool {
+        _ = jobsRevision
         guard let id = videoID else { return false }
-        return busyVideoIDs.contains(id)
+        return registry.isBusy(id)
     }
     /// 该视频当前的进度文案。
     func progressText(videoID: UUID?) -> String {
+        _ = jobsRevision
         guard let id = videoID else { return "" }
-        return videoProgress[id] ?? ""
+        return registry.progressText(id)
     }
-    /// 忙碌**引用计数**。
-    ///
-    /// ⚠️ 不能只用 `busyVideoIDs` 这个 Set：同一视频上可能有两个任务并行
-    /// （例如整视频批量改写正在跑，同时用户在检查器里保存了某一版台词）。
-    /// 先结束的那个会把 id 从 Set 里移除，UI 于是认为已空闲、重新显示
-    /// 「重新改写本分镜」「手动添加一版」等按钮，用户可以再次触发付费链路，
-    /// 而前一个任务其实还在跑。改为计数，归零才真正解除忙碌。
-    private var busyRefCount: [UUID: Int] = [:]
+    /// 该视频的进度槽位快照（浮层/三阶段指示器用）。
+    func jobSlot(videoID: UUID?) -> DubbingJobRegistry.Slot? {
+        _ = jobsRevision
+        guard let id = videoID else { return nil }
+        return registry.slot(id)
+    }
+    /// 当前所有忙碌视频（浮层列表真源，按 id 排序保证渲染顺序稳定）。
+    func activeJobVideoIDs() -> [UUID] {
+        _ = jobsRevision
+        return registry.busyIDs.sorted()
+    }
+    /// 该视频是否存在可由 UI 停止的句柄（MCP 自动化管线无句柄 → 停止键置灰）。
+    func canStopJob(videoID: UUID?) -> Bool {
+        guard let id = videoID else { return false }
+        return registry.canStop(id)
+    }
+
+    init() {
+        // 唯一删除广播的第二消费者：职责仅限「按载荷取消作业」，
+        // 处理函数内严禁 load/fetch/save/flush（同栈递归是前案 P0），由守卫测试 G4 钉死。
+        // target-action 形态：本类全部存储属性均有默认值，init 入口 self 即完成初始化，
+        // 可直接传入；selector 经 nonisolated 跳板显式 hop MainActor。
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleGraphChange(_:)),
+            name: .mixCutDataDidUndo,
+            object: nil)
+    }
+
+    deinit {
+        NotificationCenter.default.removeObserver(self)
+    }
+
+    /// selector 跳板：GraphBroadcast 虽恒在 MainActor 同步投递，这里仍显式 hop，
+    /// 不把「投递线程永远是主线程」的假设埋进观察者机制。
+    @objc private nonisolated func handleGraphChange(_ note: Notification) {
+        let payload: Any? = note.object
+        Task { @MainActor [weak self] in
+            self?.handleDataDeletion(payload)
+        }
+    }
+
+    /// 处理真删广播：仅在有 id 载荷时按纯判据取消；无载荷（MCP 全量重载等）不动作，
+    /// 正确性由管线 isDroppedFromContext 自检兜底。此方法不得触发任何数据加载/保存。
+    private func handleDataDeletion(_ payload: Any?) {
+        guard let change = payload as? GraphChange else { return }
+        let deletedVideos = change.idsDeleted(of: .video)
+        let deletedSegments = change.idsDeleted(of: .segment)
+        guard !(deletedVideos.isEmpty && deletedSegments.isEmpty) else { return }
+        for (videoID, slot) in registry.allSlots() {
+            guard DubbingJobCancellation.shouldCancel(
+                videoID: videoID,
+                targetSegmentIDs: slot.targetSegmentIDs,
+                deletedVideoIDs: deletedVideos,
+                deletedSegmentIDs: deletedSegments) else { continue }
+            cancelJobs(for: videoID, reason: .dataDeleted)
+        }
+    }
+
+    // MARK: - 作业生命周期（UI 发起的可取消任务统一从这里进）
+
+    /// busy 互斥拦截反馈：被 guard 静默拦下时按钮像失灵（空状态 CTA 尤甚），
+    /// 统一给一条中性提示，说明当前视频已有配音作业在跑（可能由 MCP 等其他入口发起）。
+    private static func notifyBusy(videoName: String) {
+        let label = videoName.isEmpty ? "该视频" : "「\(videoName)」"
+        ToastCenter.shared.show("\(label)正在配音处理中，请等待当前任务完成",
+                                icon: "hourglass", style: .info)
+    }
+
+    /// 统一改写入口的任务句柄发起：句柄归视频级注册表，切换分镜/素材不取消。
+    func startRewriteTask(video: Video,
+                          targets: [Segment],
+                          presentation: DubScopePresentation,
+                          context: ModelContext) {
+        let vid = video.id
+        guard !registry.isBusy(vid), !targets.isEmpty else {
+            if registry.isBusy(vid) { Self.notifyBusy(videoName: video.name) }
+            return
+        }
+        let taskID = UUID()
+        let task = Task { @MainActor [weak self] in
+            defer {
+                self?.registry.removeTask(vid, taskID: taskID)
+                self?.bumpJobs()
+            }
+            await self?.rewrite(video: video,
+                                targets: targets,
+                                presentation: presentation,
+                                context: context)
+        }
+        registry.register(vid, taskID: taskID,
+                          targets: Set(targets.map(\.id)),
+                          name: video.name, task: task)
+        bumpJobs()
+    }
+
+    /// 手动新增空白变体的任务发起（收口原 inspector 里的无句柄裸 Task）。
+    func startManualVariantTask(for segment: Segment,
+                                context: ModelContext,
+                                onReady: @escaping @MainActor (Int) -> Void) {
+        guard let video = segment.video else { return }
+        let vid = video.id
+        guard !registry.isBusy(vid) else {
+            Self.notifyBusy(videoName: video.name)
+            return
+        }
+        let taskID = UUID()
+        let task = Task { @MainActor [weak self] in
+            defer {
+                self?.registry.removeTask(vid, taskID: taskID)
+                self?.bumpJobs()
+            }
+            guard let newIndex = await self?.addManualVariant(for: segment, context: context) else { return }
+            if Task.isCancelled { return }
+            onReady(newIndex)
+        }
+        registry.register(vid, taskID: taskID,
+                          targets: [segment.id],
+                          name: video.name, task: task)
+        bumpJobs()
+    }
+
+    /// 单格配音（试听/重试）任务发起：句柄同样入视频级注册表，
+    /// 素材删除/换项目/整视频停止时可被一并取消；不占视频忙碌引用计数（不顶掉主 CTA）。
+    func startDubAudioTask(for dub: SegmentDub, context: ModelContext) {
+        guard let segment = dub.segment, let video = segment.video else { return }
+        let vid = video.id
+        let taskID = UUID()
+        let task = Task { @MainActor [weak self] in
+            defer {
+                self?.registry.removeTask(vid, taskID: taskID)
+                self?.bumpJobs()
+            }
+            _ = await self?.generateAudio(for: dub, context: context)
+        }
+        registry.register(vid, taskID: taskID,
+                          targets: [segment.id],
+                          name: video.name, task: task)
+        bumpJobs()
+    }
+
+    /// 显式停止某视频的作业（用户确认后调用）；管线抵达取消检查点时给中性提示。
+    func cancelJobs(for videoID: UUID, reason: DubbingCancelReason) {
+        switch reason {
+        case .userStop:
+            break
+        case .dataDeleted:
+            dataDeletedCancelVideoIDs.insert(videoID)
+        case .projectSwitch:
+            silentCancelVideoIDs.insert(videoID)
+        }
+        registry.cancel(videoID)
+        bumpJobs()
+    }
+
+    /// 停止全部作业（切换项目时静默调用）。
+    func cancelAllJobs(reason: DubbingCancelReason) {
+        let changed = registry.cancelAll()
+        for id in changed {
+            switch reason {
+            case .userStop: break
+            case .dataDeleted: dataDeletedCancelVideoIDs.insert(id)
+            case .projectSwitch: silentCancelVideoIDs.insert(id)
+            }
+        }
+        bumpJobs()
+    }
+
+    /// 管线抵达取消检查点时统一的中性提示；消费一次取消策略。返回是否已处理取消。
+    @discardableResult
+    private func announceCancellation(videoID: UUID?, completedRounds: Int? = nil) -> Bool {
+        guard let id = videoID, Task.isCancelled else { return false }
+        registry.setProgress(id, .idle)
+        if silentCancelVideoIDs.remove(id) != nil || dataDeletedCancelVideoIDs.contains(id) {
+            if dataDeletedCancelVideoIDs.remove(id) != nil {
+                ToastCenter.shared.show("素材已删除，改写任务已停止",
+                                        icon: "trash", style: .info, duration: 3)
+            }
+            // projectSwitch：静默。
+            return true
+        }
+        if let completedRounds, completedRounds > 0 {
+            ToastCenter.shared.show("已停止改写，前 \(completedRounds) 套已保留",
+                                    icon: "stop.circle.fill", style: .info)
+        } else {
+            ToastCenter.shared.show("已停止", icon: "stop.circle.fill", style: .info)
+        }
+        return true
+    }
 
     private func beginBusy(_ id: UUID?) {
         guard let id else { return }
-        busyRefCount[id, default: 0] += 1
-        busyVideoIDs.insert(id)
+        registry.begin(id)
+        bumpJobs()
     }
 
     private func endBusy(_ id: UUID?) {
         guard let id else { return }
-        let remaining = (busyRefCount[id] ?? 1) - 1
-        if remaining <= 0 {
-            busyRefCount[id] = nil
-            busyVideoIDs.remove(id)
-            videoProgress[id] = nil
-        } else {
-            busyRefCount[id] = remaining
-        }
+        registry.end(id)
+        bumpJobs()
     }
-    private func setProgress(_ id: UUID?, _ text: String) { if let id { videoProgress[id] = text } }
+
+    /// 结构化阶段进度（阶段内 fraction；nil = 不定条）。
+    private func setStage(_ id: UUID?, _ phase: DubbingPhase, _ text: String, fraction: Double? = nil) {
+        guard let id else { return }
+        registry.setProgress(id, DubbingJobProgress(phase: phase, phaseText: text, fraction: fraction))
+        bumpJobs()
+    }
+    /// 兼容纯文案更新（沿用当前阶段）。
+    private func setProgress(_ id: UUID?, _ text: String) {
+        guard let id else { return }
+        let current = registry.slot(id)?.progress.phase ?? .prepareClone
+        let fraction = registry.slot(id)?.progress.fraction
+        registry.setProgress(id, DubbingJobProgress(phase: current, phaseText: text, fraction: text.isEmpty ? nil : fraction))
+        bumpJobs()
+    }
 
     private let rewriteService = ScriptRewriteService()
     private let tts: TTSClient = CosyVoiceTTSClient()
@@ -142,18 +366,26 @@ final class DubbingViewModel {
         let vid = video.id   // 进度按此视频独立跟踪；忙碌状态由调用方管理
         MixLog.info("[Clone] 开始克隆原声: video=\(path)")
         do {
-            setProgress(vid, "分离人声…")
-            let stems = try await vocalSep.separate(videoPath: path, videoHash: hash) { [weak self] msg in
-                Task { @MainActor in self?.setProgress(vid, msg) }
+            setStage(vid, .prepareClone, "分离人声…")
+            let stems = try await vocalSep.separate(videoPath: path, videoHash: hash) { [weak self] p in
+                Task { @MainActor in self?.setStage(vid, .prepareClone, p.message, fraction: p.fraction) }
             }
+            // 等待分离期间视频可能已被删除（句柄已脱离视图生命周期）：写回前必须过门。
+            guard !video.isDroppedFromContext else {
+                MixLog.info("[Clone] 视频已删除，中止克隆写回: \(vid)")
+                return false
+            }
+            if Task.isCancelled { return false }
             MixLog.info("[Clone] 分离完成: vocals=\(stems.vocalsPath)")
-            setProgress(vid, "提取克隆参考…")
+            setStage(vid, .prepareClone, "提取克隆参考…")
             // 参考音必须【短而干净】(≈6s)：18s 长参考含多句原话，qwen 克隆 TTS 会间歇性
             // "续读参考里的内容"导致配音混进下一段(实测 18s→clean 1/3，6s→clean 5/5)。
             let ref = try await vocalSep.referenceClip(fromVocals: stems.vocalsPath, maxSeconds: 6)
-            setProgress(vid, "注册克隆音色…")
+            guard !video.isDroppedFromContext else { return false }
+            setStage(vid, .prepareClone, "注册克隆音色…")
             let voiceId = try await cloneService.enroll(referenceAudioPath: ref,
                                                         preferredName: "\(Brand.shortName)\(hash.prefix(8))")
+            guard !video.isDroppedFromContext else { return false }
             MixLog.info("[Clone] 克隆成功: voiceId=\(voiceId)")
             video.clonedVoiceId = voiceId
             video.selectedVoiceIds = [voiceId]
@@ -163,6 +395,11 @@ final class DubbingViewModel {
             return true
         } catch {
             setProgress(vid, "")
+            // 用户停止 / 数据删除导致的取消不是失败：不弹失败 alert（toast 策略由管线检查点统一处理）。
+            if Task.isCancelled || error is CancellationError {
+                MixLog.info("[Clone] 克隆因取消中断: \(error.localizedDescription)")
+                return false
+            }
             MixLog.error("[Clone] 克隆失败: \(error.localizedDescription)")
             // 缺凭证性质在错误产生点定型：未配置千问 Key → 可跳设置；其余按通用错误。
             let kind: DubErrorKind
@@ -193,14 +430,26 @@ final class DubbingViewModel {
         beginBusy(vid)
         defer { endBusy(vid) }
 
-        guard await ensureClonedVoice(for: video, context: context) else { return }
+        guard await ensureClonedVoice(for: video, context: context) else {
+            // 克隆阶段被停止/素材被删：中性结束，不补「克隆未就绪」错误。
+            if Task.isCancelled { announceCancellation(videoID: vid) }
+            return
+        }
+        if Task.isCancelled { announceCancellation(videoID: vid); return }
+        guard !video.isDroppedFromContext else { return }
         let voices = video.selectedVoiceIds   // = [clonedVoiceId]
         guard !voices.isEmpty else {
             errorState = .init(message: "克隆原声未就绪", kind: .generic); return
         }
-        let reconfigurable = targets.filter { !$0.isVoiceLocked && !$0.text.isEmpty }
+        // 死实体过门：等待克隆期间分镜可能已被删除。
+        let reconfigurable = targets.filter {
+            !$0.isDroppedFromContext && !$0.isVoiceLocked && !$0.text.isEmpty
+        }
         guard !reconfigurable.isEmpty else {
-            errorState = .init(message: presentation.emptyEligibleError, kind: .generic); return
+            if !Task.isCancelled {
+                errorState = .init(message: presentation.emptyEligibleError, kind: .generic)
+            }
+            return
         }
 
         let inputs = reconfigurable.map {
@@ -229,13 +478,12 @@ final class DubbingViewModel {
         var completedRounds = 0
         for k in 0..<n {
             // ⚠️ 取消检查：这条链路每轮都在花钱（AI 改写 + 后续 TTS）。
-            // 以前全程没有一处 Task.isCancelled，用户关掉界面也停不下来，API 继续烧。
+            // 停止/数据删除/换项目的取消在此收口为中性提示，绝不进失败 alert。
             if Task.isCancelled {
-                setProgress(vid, "")
-                ToastCenter.shared.show("已停止改写，前 \(completedRounds) 套已保留", icon: "stop.circle.fill", style: .info)
+                announceCancellation(videoID: vid, completedRounds: completedRounds)
                 return
             }
-            setProgress(vid, "改写第 \(k + 1)/\(n) 套…")
+            setStage(vid, .rewrite, "改写第 \(k + 1)/\(n) 套…", fraction: Double(k) / Double(n))
             // 轮次组装保「将被本轮覆盖的旧 k 版」与「同次新产出」在截断窗口尾部，
             // 避免变体数调小后首轮恰好丢了要覆盖的旧版。
             let priorsForRound = RewritePromptBuilder.assemblePriors(
@@ -248,7 +496,8 @@ final class DubbingViewModel {
                     style: Self.rewriteStyles[styleIndices[k]],
                     priorVersions: priorsForRound)
                 for r in results {
-                    guard let seg = segById[r.segmentId] else { continue }
+                    // 死实体过门：分镜在等 AI 响应期间被删则跳过回写。
+                    guard let seg = segById[r.segmentId], !seg.isDroppedFromContext else { continue }
                     for voiceId in voices {
                         upsertDub(segment: seg, voiceId: voiceId, textVariantIndex: k,
                                   text: r.rewrittenText, context: context)
@@ -256,12 +505,18 @@ final class DubbingViewModel {
                 }
                 context.saveOrWarn("改写台词")
                 completedRounds += 1
+                setStage(vid, .rewrite, "改写第 \(k + 1)/\(n) 套…", fraction: Double(k + 1) / Double(n))
                 // 本轮非回退结果累积为下一轮的互斥输入（回退原文不是新说法，注入无意义）
                 let roundVersions = results
                     .filter { !$0.isFallback }
                     .map { RewritePriorVersion(segmentId: $0.segmentId, rewrittenText: $0.rewrittenText) }
                 if !roundVersions.isEmpty { freshRounds.append(roundVersions) }
             } catch {
+                // 取消不是失败：已完成轮次中性保留。
+                if Task.isCancelled || error is CancellationError {
+                    announceCancellation(videoID: vid, completedRounds: completedRounds)
+                    return
+                }
                 // ⚠️ 以前这里直接 return：已落库的前几套台词留在库里，但后面的批量合成被整体跳过，
                 // 于是产生一批"有台词、没音频"的变体，用户看不出问题、也没有"只补合成"的入口。
                 // 改为 break：保留已成功的几套，并继续往下走合成，把它们补齐。
@@ -277,11 +532,23 @@ final class DubbingViewModel {
                 break
             }
         }
+        if Task.isCancelled {
+            announceCancellation(videoID: vid, completedRounds: completedRounds)
+            return
+        }
         setProgress(vid, "")
 
         // 改写完成后自动批量合成 TTS（用户无需逐格手动点）；换 Key 致音色失效时自动重克隆重试
         let result = await generateAllAudioWithRecloneFallback(
             for: reconfigurable, videoID: vid, video: video, context: context)
+
+        // 合成阶段被停止：不发成功 toast、不弹失败 alert，只给中性提示。
+        if Task.isCancelled {
+            ToastCenter.shared.show("已停止，已合成的配音已保留（\(result.ok) 段）",
+                                    icon: "stop.circle.fill", style: .info)
+            return
+        }
+        guard !video.isDroppedFromContext else { return }
 
         let producedCount = reconfigurable.count * voices.count * n
         if result.fail > 0 {
@@ -410,10 +677,15 @@ final class DubbingViewModel {
         let vid = video.id
         beginBusy(vid)
         defer { endBusy(vid) }
-        setProgress(vid, "重新合成本版配音…")
+        setStage(vid, .synthesize, "重新合成本版配音…")
         let result = await generateAllAudioWithRecloneFallback(
             for: [segment], videoID: vid, video: video, context: context)
         setProgress(vid, "")
+        // 取消不弹失败 alert。
+        if Task.isCancelled {
+            ToastCenter.shared.show("已停止，已合成的配音已保留", icon: "stop.circle.fill", style: .info)
+            return
+        }
         if result.fail > 0 {
             errorState = .init(
                 message: Self.dubFailureMessage(
@@ -634,21 +906,25 @@ final class DubbingViewModel {
     /// 批量合成一组分镜下所有「还没音频」的变体（一键改写后自动调用）。
     private func generateAllAudio(for segments: [Segment], videoID: UUID?,
                                   context: ModelContext) async -> (ok: Int, fail: Int, errors: [String]) {
+        // 死实体过门：分镜或配音记录已删则不合成（句柄脱离视图后删除可能发生在等待期间）。
         let pending = segments
+            .filter { !$0.isDroppedFromContext }
             .flatMap { $0.segmentDubs }
-            .filter { $0.audioFilePath == nil && !$0.rewrittenText.isEmpty }
+            .filter { !$0.isDroppedFromContext && $0.audioFilePath == nil && !$0.rewrittenText.isEmpty }
         guard !pending.isEmpty else { return (0, 0, []) }
+        let total = pending.count
         var ok = 0, fail = 0
         var errors: [String] = []   // 去重收集真实失败原因，供上层透出
         for dub in pending {
             // ⚠️ 合成是整条链路里最长最贵的一段（每段都要调 TTS）。
-            // 用户点了停止 / 关掉界面，必须立刻停手，不能继续烧配额。
-            if Task.isCancelled {
-                setProgress(videoID, "")
-                MixLog.info("[Dub] 用户取消，已合成 \(ok) 段，剩余 \(pending.count - ok - fail) 段未合成")
+            // 用户点了停止 / 素材被删 / 换项目，必须立刻停手，不能继续烧配额。
+            if Task.isCancelled || dub.isDroppedFromContext {
+                MixLog.info("[Dub] 取消或实体已删，已合成 \(ok) 段，剩余 \(total - ok - fail) 段未合成")
                 break
             }
-            setProgress(videoID, "合成配音 \(ok + fail + 1)/\(pending.count)…")
+            let done = ok + fail
+            setStage(videoID, .synthesize, "合成配音 \(done + 1)/\(total)…",
+                     fraction: Double(done) / Double(total))
             if await generateAudio(for: dub, context: context, silent: true) {
                 ok += 1
             } else {
@@ -656,7 +932,8 @@ final class DubbingViewModel {
                 if let m = lastDubErrors[dub.id], !errors.contains(m) { errors.append(m) }
             }
         }
-        setProgress(videoID, "")
+        setStage(videoID, .synthesize, ok + fail == total ? "合成配音 \(total)/\(total)…" : "合成配音 \(ok + fail)/\(total)…",
+                 fraction: Double(ok + fail) / Double(total))
         return (ok, fail, errors)
     }
 
@@ -679,20 +956,20 @@ final class DubbingViewModel {
         guard first.fail > 0, Self.isStaleCloneError(first.errors) else { return first }
         guard let oldVoice = video.clonedVoiceId else { return first }
 
-        setProgress(vid, "检测到克隆音色失效，正在用当前 Key 重新克隆…")
+        setStage(vid, .prepareClone, "检测到克隆音色失效，正在用当前 Key 重新克隆…")
         guard await ensureClonedVoice(for: video, context: context, forceReclone: true),
               let newVoice = video.clonedVoiceId, newVoice != oldVoice else {
             return first   // 重克隆失败 → 保留原始错误供展示
         }
         // 把这些分镜下「待生成且仍指向旧克隆音色」的变体迁到新音色（已生成的本地文件不动）
-        for seg in segments {
-            for dub in seg.segmentDubs where dub.audioFilePath == nil && dub.voiceId == oldVoice {
+        for seg in segments where !seg.isDroppedFromContext {
+            for dub in seg.segmentDubs where !dub.isDroppedFromContext && dub.audioFilePath == nil && dub.voiceId == oldVoice {
                 dub.voiceId = newVoice
                 dub.status = .pending
             }
         }
         try? context.save()
-        setProgress(vid, "重克隆完成，重新合成配音…")
+        setStage(vid, .synthesize, "重克隆完成，重新合成配音…", fraction: nil)
         let retry = await generateAllAudio(for: segments, videoID: vid, context: context)
         setProgress(vid, "")
         return retry

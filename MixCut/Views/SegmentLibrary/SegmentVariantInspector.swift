@@ -8,6 +8,8 @@ struct SegmentVariantInspector<PropertiesContent: View>: View {
     let isPinned: Bool
     /// 头部关闭回调
     let onClose: () -> Void
+    /// 停止改写请求上抛到页面顶层（确认弹窗统一在 SegmentLibraryView）
+    let onStopRequest: (UUID) -> Void
     /// 调用方注入的片段属性内容（Inspector 不反向认识 SegmentLibraryViewModel）
     @ViewBuilder let propertiesContent: PropertiesContent
     @Environment(\.modelContext) private var modelContext
@@ -21,24 +23,9 @@ struct SegmentVariantInspector<PropertiesContent: View>: View {
     /// 视频尚未克隆时，单分镜改写的计费确认弹窗
     @State private var showCloneCostConfirm = false
 
-    /// 本检查器发起的、仍在跑的付费任务（AI 改写 / TTS 合成）。
-    ///
-    /// ⚠️ DubbingViewModel 里写了 `Task.isCancelled` 检查（注释写明是为了「用户关掉界面就停手，
-    /// 不烧配额」），但这些任务原先是裸 `Task {}`，句柄一丢就**没有任何地方能 cancel 它们** ——
-    /// 那些检查全是死代码，用户切走后 API 照样跑完、照样计费。
-    @State private var runningTasks: [Task<Void, Never>] = []
-
-    /// 发起一个可被取消的付费任务
-    private func runCancellable(_ work: @escaping () async -> Void) {
-        let task = Task { await work() }
-        runningTasks.append(task)
-    }
-
-    /// 取消并清空所有在跑的任务（切分镜 / 关闭检查器时调用）
-    private func cancelRunningTasks() {
-        for task in runningTasks { task.cancel() }
-        runningTasks.removeAll()
-    }
+    // 注：改写/配音任务句柄统一归 DubbingViewModel 的视频级注册表（DubbingJobRegistry）。
+    // 切换分镜会以 .id(segment.id) 重建本子树，但作业生命周期独立于本视图，不再被连带取消；
+    // 停止只走显式「停止」按钮、素材删除广播、换项目三个锚点。
 
     private func variantLetter(_ t: Int) -> String { String(Character(UnicodeScalar(65 + t)!)) }
 
@@ -122,10 +109,7 @@ struct SegmentVariantInspector<PropertiesContent: View>: View {
         }
         .frame(width: 340)
         .background(Color(nsColor: .windowBackgroundColor))
-        // 换分镜 / 关掉检查器 → 取消还没跑完的付费任务，别继续烧配额。
-        // 已经跑到一半的 API 调用无法退款，但至少不会把后续步骤（多套改写 + 多段 TTS）全部做完。
-        // 宿主以 .id(segment.id) 绑定视图身份，换分镜=旧子树 onDisappear，故取消清理只此一个真源。
-        .onDisappear { cancelRunningTasks() }
+        // 任务不再挂在本子树：切分镜/关检查器不取消在跑的改写（视频级作业，进度见浮层）。
         .sheet(item: $captionEditDub) { d in
             CaptionTimingEditorSheet(dub: d, dubVM: dubVM)
         }
@@ -165,16 +149,14 @@ struct SegmentVariantInspector<PropertiesContent: View>: View {
         }
     }
 
-    /// 实际执行：single 作用域走统一管线。
+    /// 实际执行：single 作用域走统一管线（句柄由 VM 注册表持有，切换分镜不取消）。
     private func proceedSingleRewrite() {
         guard let video = segment.video else { return }
-        runCancellable {
-            await dubVM.rewrite(
-                video: video,
-                targets: [segment],
-                presentation: DubScopePresentationMapper.presentation(for: .single),
-                context: modelContext)
-        }
+        dubVM.startRewriteTask(
+            video: video,
+            targets: [segment],
+            presentation: DubScopePresentationMapper.presentation(for: .single),
+            context: modelContext)
     }
 
     // MARK: - 头部
@@ -261,17 +243,23 @@ struct SegmentVariantInspector<PropertiesContent: View>: View {
             Text("该分镜还没有配音变体")
                 .font(.callout).foregroundStyle(.secondary)
 
-            Button {
-                runSingleRewrite()
-            } label: {
-                Label("一键改写本分镜", systemImage: "wand.and.stars")
-                    .frame(maxWidth: .infinity)
-            }
-            .buttonStyle(.borderedProminent)
-            .controlSize(.regular)
-            .help("自动克隆原声 → 改写本分镜台词 → 生成配音；视频未克隆时会先请你确认计费")
+            // 忙碌门与 rewriteBar 同源：作业进行中（含 MCP 等其他入口发起）
+            // 不再显示可点 CTA，避免重复点击被静默拦截时像「按钮失灵」。
+            if dubVM.isBusy(videoID: segment.video?.id), let vid = segment.video?.id {
+                DubbingRegularProgress(videoID: vid, vm: dubVM) { onStopRequest(vid) }
+            } else {
+                Button {
+                    runSingleRewrite()
+                } label: {
+                    Label("一键改写本分镜", systemImage: "wand.and.stars")
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.regular)
+                .help("自动克隆原声 → 改写本分镜台词 → 生成配音；视频未克隆时会先请你确认计费")
 
-            addManualVariantButton
+                addManualVariantButton
+            }
 
             Text("要一次处理整个视频，用上方「一键改写台词」（视频标题行右侧）")
                 .font(.system(size: 11))
@@ -299,12 +287,10 @@ struct SegmentVariantInspector<PropertiesContent: View>: View {
     private var addManualVariantButton: some View {
         if !dubVM.isBusy(videoID: segment.video?.id) {
             Button {
-                Task {
-                    if let newIndex = await dubVM.addManualVariant(for: segment, context: modelContext) {
-                        draftText = ""
-                        editingVariant = newIndex
-                        editorFocused = true
-                    }
+                dubVM.startManualVariantTask(for: segment, context: modelContext) { newIndex in
+                    draftText = ""
+                    editingVariant = newIndex
+                    editorFocused = true
                 }
             } label: {
                 Label("手动添加一版（自己写台词）", systemImage: "plus.circle")
@@ -320,9 +306,8 @@ struct SegmentVariantInspector<PropertiesContent: View>: View {
     private var rewriteBar: some View {
         VStack(alignment: .leading, spacing: 6) {
             if dubVM.isBusy(videoID: segment.video?.id) {
-                HStack(spacing: 6) {
-                    ProgressView().controlSize(.small)
-                    Text(dubVM.progressText(videoID: segment.video?.id)).font(.caption).foregroundStyle(.secondary)
+                if let vid = segment.video?.id {
+                    DubbingRegularProgress(videoID: vid, vm: dubVM) { onStopRequest(vid) }
                 }
             } else {
                 Button {
@@ -520,7 +505,7 @@ struct SegmentVariantInspector<PropertiesContent: View>: View {
                 generatedControls(d)
             } else if let d {
                 Button {
-                    runCancellable { await dubVM.generateAudio(for: d, context: modelContext) }
+                    dubVM.startDubAudioTask(for: d, context: modelContext)
                 } label: {
                     Label("生成", systemImage: "waveform").font(.caption2)
                 }
@@ -558,7 +543,7 @@ struct SegmentVariantInspector<PropertiesContent: View>: View {
                 .help(playing ? "停止" : "试听这条配音")
 
                 Button {
-                    runCancellable { await dubVM.generateAudio(for: d, context: modelContext) }
+                    dubVM.startDubAudioTask(for: d, context: modelContext)
                 } label: {
                     Image(systemName: stale ? "exclamationmark.arrow.circlepath" : "arrow.clockwise")
                         .font(.caption)

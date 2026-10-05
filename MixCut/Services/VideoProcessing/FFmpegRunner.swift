@@ -78,6 +78,41 @@ private final class ThreadSafeStringBuffer: @unchecked Sendable {
     }
 }
 
+/// 非阻塞管道收集器：进程运行期间用 readabilityHandler 持续排空管道
+/// （与 VocalSeparationService.runDemucs 的可靠路径同构）。
+/// 终止回调只允许做非阻塞收尾——禁止同步读取到 EOF（那会阻塞 Foundation 终止回调线程），
+/// 这一契约由 DubbingTaskOwnershipGuardTests G10 源码守卫钉死；旧写法也是现场抓到
+/// 无主 PIPE 残骸的来源之一。
+private final class PipeCollector: @unchecked Sendable {
+    let pipe = Pipe()
+    private let lock = NSLock()
+    private var buffer = Data()
+
+    init() {
+        pipe.fileHandleForReading.readabilityHandler = { [weak self] handle in
+            let chunk = handle.availableData
+            guard !chunk.isEmpty else { return }
+            self?.lock.lock()
+            self?.buffer.append(chunk)
+            self?.lock.unlock()
+        }
+    }
+
+    /// 进程终止后调用：停止接收并取出全部已收集字节。
+    func finish() -> Data {
+        pipe.fileHandleForReading.readabilityHandler = nil
+        lock.lock()
+        defer { lock.unlock() }
+        return buffer
+    }
+
+    var string: String {
+        lock.lock()
+        defer { lock.unlock() }
+        return String(data: buffer, encoding: .utf8) ?? ""
+    }
+}
+
 /// FFmpeg 命令执行封装
 actor FFmpegRunner {
 
@@ -171,6 +206,32 @@ actor FFmpegRunner {
 
     // MARK: - 核心执行
 
+    /// 统一构造子进程：最小环境 + stdin 显式接 /dev/null。
+    /// stdin 必须与 stdout/stderr 对称接管——ffmpeg 默认把 stdin 当交互控制台，
+    /// 继承到 tty 时行为依赖启动方式（Finder=EOF、终端=tty），自动化场景必须消除该差异。
+    nonisolated private static func makeProcess(executable: String, arguments: [String]) -> Process {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: executable)
+        process.arguments = arguments
+        process.qualityOfService = .userInitiated
+        let binDir = (executable as NSString).deletingLastPathComponent
+        process.environment = ["PATH": "\(binDir):/usr/bin:/bin", "HOME": NSHomeDirectory()]
+        process.standardInput = FileHandle.nullDevice
+        return process
+    }
+
+    /// ffmpeg 自动化调用统一注入 `-nostdin`（官方要求，与 stdin=/dev/null 双保险）。
+    /// 幂等：已含则不重复插。只用于 ffmpeg；ffprobe 不识别该参数，禁止对其调用。
+    nonisolated private static func withNoStdin(_ arguments: [String]) -> [String] {
+        arguments.contains("-nostdin") ? arguments : ["-nostdin"] + arguments
+    }
+
+    /// 进程生命周期埋点：挂死时这两行是区分「没启动 / 启动了不退出 / 退出码异常」的唯一证据。
+    nonisolated private static func logProcessSummary(arguments: [String]) -> String {
+        // filter_complex 等参数极长，只摘要前 8 段，避免日志刷屏。
+        arguments.prefix(8).joined(separator: " ")
+    }
+
     /// 执行 FFmpeg 命令并返回 stdout
     /// - Parameter timeoutSeconds: 墙钟超时（秒）。**0 表示不设**，靠 Task 取消来中断。
     ///   ⚠️ 以前这里写死 180 秒并作用于**所有** ffmpeg 调用 —— 导出一条 3 分钟以上的成片
@@ -187,20 +248,14 @@ actor FFmpegRunner {
             throw FFmpegError.binaryNotFound
         }
 
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: binaryPath)
-        process.arguments = arguments
-        process.qualityOfService = .userInitiated
-        // 设置最小化环境变量，确保 dylib 能在 bundle 内找到
-        let binDir = (binaryPath as NSString).deletingLastPathComponent
-        process.environment = [
-            "PATH": "\(binDir):/usr/bin:/bin",
-            "HOME": NSHomeDirectory()
-        ]
+        let arguments = Self.withNoStdin(arguments)
+        let process = Self.makeProcess(executable: binaryPath, arguments: arguments)
 
-        let stdoutPipe = Pipe()
+        // 两条管道都在进程运行期间持续排空（与 demucs 路径同构）：
+        // stdout 收输出字节，stderr 收错误文本 + 进度。
+        let stdoutCollector = PipeCollector()
         let stderrPipe = Pipe()
-        process.standardOutput = stdoutPipe
+        process.standardOutput = stdoutCollector.pipe
         process.standardError = stderrPipe
 
         // stderr 进度解析（使用线程安全缓冲区）
@@ -217,16 +272,21 @@ actor FFmpegRunner {
         }
 
         self.runningProcess = process
+        let startedAt = Date()
 
         return try await withTaskCancellationHandler(operation: {
             try await withCheckedThrowingContinuation { continuation in
                 process.terminationHandler = { proc in
+                    // 非阻塞收尾：只停 handler、取已排空的数据，绝不在此线程做阻塞 IO。
                     stderrPipe.fileHandleForReading.readabilityHandler = nil
-                    let stdoutData = stdoutPipe.fileHandleForReading.readDataToEndOfFile()
+                    let stdoutData = stdoutCollector.finish()
+                    let elapsed = Date().timeIntervalSince(startedAt)
 
                     if proc.terminationStatus == 0 {
+                        MixLog.info("[FF] exit rc=0 elapsed=\(String(format: "%.2f", elapsed))s")
                         continuation.resume(returning: stdoutData)
                     } else {
+                        MixLog.error("[FF] exit rc=\(proc.terminationStatus) elapsed=\(String(format: "%.2f", elapsed))s")
                         continuation.resume(throwing: FFmpegError.executionFailed(
                             exitCode: proc.terminationStatus,
                             stderr: stderrBuffer.value
@@ -236,6 +296,7 @@ actor FFmpegRunner {
 
                 do {
                     try process.run()
+                    MixLog.info("[FF] launched pid=\(process.processIdentifier) \(Self.logProcessSummary(arguments: arguments))")
                 } catch {
                     continuation.resume(throwing: error)
                     return
@@ -270,31 +331,30 @@ actor FFmpegRunner {
             throw FFmpegError.binaryNotFound
         }
 
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: ffprobePath)
-        process.arguments = arguments
-        process.qualityOfService = .userInitiated
-        let binDir = (ffprobePath as NSString).deletingLastPathComponent
-        process.environment = ["PATH": "\(binDir):/usr/bin:/bin", "HOME": NSHomeDirectory()]
+        let process = Self.makeProcess(executable: ffprobePath, arguments: arguments)
 
-        let stdoutPipe = Pipe()
-        process.standardOutput = stdoutPipe
+        // ffprobe 只 demux 不解码，输出走 stdout；运行期间持续排空（非阻塞收尾）。
+        let stdoutCollector = PipeCollector()
+        process.standardOutput = stdoutCollector.pipe
         process.standardError = FileHandle.nullDevice
 
+        let startedAt = Date()
         return try await withTaskCancellationHandler(operation: {
             try await withCheckedThrowingContinuation { continuation in
                 process.terminationHandler = { proc in
-                    let data = stdoutPipe.fileHandleForReading.readDataToEndOfFile()
-                    let output = String(data: data, encoding: .utf8) ?? ""
+                    let output = stdoutCollector.finish()
+                    let text = String(data: output, encoding: .utf8) ?? ""
+                    let elapsed = Date().timeIntervalSince(startedAt)
                     // ⚠️ 以前无视退出码一律返回 output：ffprobe 崩溃/被杀就返回空串，
                     // 下游 `Double("") ?? 0` 得到时长 0 → 配音变速系数、帧数、起始时间全部按 0 计算，
                     // 整条流程"成功"跑完但结果是错的。现在探测失败就明确抛错。
                     guard proc.terminationStatus == 0 else {
+                        MixLog.error("[FFprobe] exit rc=\(proc.terminationStatus) elapsed=\(String(format: "%.2f", elapsed))s")
                         continuation.resume(throwing: FFmpegError.outputParsingFailed(
                             "视频信息探测失败（exit \(proc.terminationStatus)）"))
                         return
                     }
-                    continuation.resume(returning: output)
+                    continuation.resume(returning: text)
                 }
 
                 do {
@@ -340,27 +400,27 @@ actor FFmpegRunner {
             throw FFmpegError.binaryNotFound
         }
 
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: binaryPath)
-        process.arguments = arguments
-        process.qualityOfService = .userInitiated
-        let binDir = (binaryPath as NSString).deletingLastPathComponent
-        process.environment = ["PATH": "\(binDir):/usr/bin:/bin", "HOME": NSHomeDirectory()]
+        let arguments = Self.withNoStdin(arguments)
+        let process = Self.makeProcess(executable: binaryPath, arguments: arguments)
 
-        let stderrPipe = Pipe()
+        // stderr 是该路径的输出通道，运行期间持续排空（非阻塞收尾）。
+        let stderrCollector = PipeCollector()
         process.standardOutput = FileHandle.nullDevice
-        process.standardError = stderrPipe
+        process.standardError = stderrCollector.pipe
 
+        let startedAt = Date()
         return try await withTaskCancellationHandler(operation: {
             try await withCheckedThrowingContinuation { continuation in
                 process.terminationHandler = { _ in
-                    let data = stderrPipe.fileHandleForReading.readDataToEndOfFile()
-                    let output = String(data: data, encoding: .utf8) ?? ""
-                    continuation.resume(returning: output)
+                    let output = stderrCollector.finish()
+                    let text = String(data: output, encoding: .utf8) ?? ""
+                    MixLog.info("[FF] stderr-path exit elapsed=\(String(format: "%.2f", Date().timeIntervalSince(startedAt)))s")
+                    continuation.resume(returning: text)
                 }
 
                 do {
                     try process.run()
+                    MixLog.info("[FF] launched pid=\(process.processIdentifier) \(Self.logProcessSummary(arguments: arguments))")
                 } catch {
                     continuation.resume(throwing: error)
                     return
@@ -496,28 +556,23 @@ actor FFmpegRunner {
             return true  // 无 ffprobe 时默认有音频
         }
 
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: ffprobePath)
-        process.arguments = [
+        let process = Self.makeProcess(executable: ffprobePath, arguments: [
             "-v", "quiet",
             "-select_streams", "a",
             "-show_entries", "stream=codec_type",
             "-of", "csv=p=0",
             path
-        ]
-        process.qualityOfService = .userInitiated
-        let binDir = (ffprobePath as NSString).deletingLastPathComponent
-        process.environment = ["PATH": "\(binDir):/usr/bin:/bin", "HOME": NSHomeDirectory()]
-        let pipe = Pipe()
-        process.standardOutput = pipe
+        ])
+        let collector = PipeCollector()
+        process.standardOutput = collector.pipe
         process.standardError = FileHandle.nullDevice
 
         return await withTaskCancellationHandler(operation: {
             await withCheckedContinuation { continuation in
                 process.terminationHandler = { _ in
-                    let data = pipe.fileHandleForReading.readDataToEndOfFile()
-                    let output = String(data: data, encoding: .utf8) ?? ""
-                    continuation.resume(returning: output.contains("audio"))
+                    let output = collector.finish()
+                    let text = String(data: output, encoding: .utf8) ?? ""
+                    continuation.resume(returning: text.contains("audio"))
                 }
 
                 do {

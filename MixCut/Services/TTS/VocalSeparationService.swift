@@ -6,6 +6,13 @@ struct SeparatedStems: Sendable {
     let bgmPath: String
 }
 
+/// 人声分离单通道进度：文案 + 可选阶段内百分比（demucs 子步才有真实百分比）。
+/// 不拆成 message/fraction 两个并行闭包——同一进程的一条进度信息只有一个通道。
+struct VocalSeparationProgress: Sendable {
+    let message: String
+    let fraction: Double?
+}
+
 /// 用内置 demucs.cpp 把一条视频的整轨音频分离成「人声 / 背景音乐」。
 /// 整轨只分离一次并缓存（键 = videoHash）；导出按分镜切片，克隆用人声做参考。
 actor VocalSeparationService {
@@ -32,9 +39,9 @@ actor VocalSeparationService {
         URL(string: "https://huggingface.co/datasets/Retrobear/demucs.cpp/resolve/main/ggml-model-htdemucs-4s-f16.bin")!,
     ]
 
-    /// 整轨分离（已缓存直接返回）。onProgress 回调进度文案。
+    /// 整轨分离（已缓存直接返回）。onProgress 回调单通道进度（文案 + 可选百分比）。
     func separate(videoPath: String, videoHash: String,
-                  onProgress: (@Sendable (String) -> Void)? = nil) async throws -> SeparatedStems {
+                  onProgress: (@Sendable (VocalSeparationProgress) -> Void)? = nil) async throws -> SeparatedStems {
         let dir = FileHelper.stemsDirectory(videoHash: videoHash)
         let vocals = dir.appendingPathComponent("vocals.wav")
         let bgm = dir.appendingPathComponent("bgm.wav")
@@ -55,7 +62,7 @@ actor VocalSeparationService {
         let tmp = FileHelper.tempDirectory
 
         // 1) 抽整轨音频为 44.1k 立体声 wav（demucs.cpp 输入要求）
-        onProgress?("提取原始音频…")
+        onProgress?(.init(message: "提取原始音频…", fraction: nil))
         let inputWav = tmp.appendingPathComponent("sep-in-\(UUID().uuidString).wav")
         // ⚠️ 中间产物很大（整轨 44.1k 立体声 wav + demucs 4 轨输出，长视频可达数百 MB）。
         // 原来只在 happy path 末尾清理，中途任何一次 throw / 取消都会把它们永久留在磁盘上。
@@ -64,13 +71,16 @@ actor VocalSeparationService {
         _ = try await ff.run(arguments: ["-y", "-i", videoPath, "-ac", "2", "-ar", "44100",
                                          "-c:a", "pcm_s16le", inputWav.path], timeoutSeconds: 600)
 
-        // 2) demucs 分离到临时目录（4 stems）
-        onProgress?("AI 分离人声与背景音乐（较慢，请稍候）…")
+        // 2) demucs 分离到临时目录（4 stems）。此子步有真实百分比（demucs 向 stdout 逐行打印）。
+        let demucsText = "AI 分离人声与背景音乐（较慢，请稍候）…"
+        onProgress?(.init(message: demucsText, fraction: nil))
         let outDir = tmp.appendingPathComponent("sep-out-\(UUID().uuidString)", isDirectory: true)
         try fm.createDirectory(at: outDir, withIntermediateDirectories: true)
         defer { try? fm.removeItem(at: outDir) }
         MixLog.info("[Sep] 开始 demucs 分离…")
-        try await Self.runDemucs(binary: binary, model: model, input: inputWav.path, outDir: outDir.path)
+        try await Self.runDemucs(binary: binary, model: model, input: inputWav.path, outDir: outDir.path) { fraction in
+            onProgress?(.init(message: demucsText, fraction: fraction))
+        }
         MixLog.info("[Sep] demucs 分离结束")
 
         let drums = outDir.appendingPathComponent("target_0_drums.wav").path
@@ -80,7 +90,7 @@ actor VocalSeparationService {
         guard fm.fileExists(atPath: voc) else { throw SepError.separateFailed }
 
         // 3) BGM = drums + bass + other（不归一化，保持原响度）；vocals 直接取
-        onProgress?("合成背景音乐轨…")
+        onProgress?(.init(message: "合成背景音乐轨…", fraction: nil))
         _ = try await ff.run(arguments: ["-y", "-i", drums, "-i", bass, "-i", other,
                                          "-filter_complex", "amix=inputs=3:normalize=0",
                                          "-c:a", "pcm_s16le", bgm.path], timeoutSeconds: 600)
@@ -97,13 +107,14 @@ actor VocalSeparationService {
         let ff = FFmpegRunner()
         let out = FileHelper.tempDirectory.appendingPathComponent("clone-ref-\(UUID().uuidString).mp3")
         _ = try await ff.run(arguments: ["-y", "-i", vocalsPath, "-t", String(maxSeconds),
-                                         "-c:a", "libmp3lame", "-b:a", "128k", out.path], timeoutSeconds: 600)
+                                         "-c:a", "libmp3lame", "-b:a", "128k", out.path],
+                            timeoutSeconds: 30)
         return out.path
     }
 
     // MARK: - 模型与二进制
 
-    private func ensureModel(onProgress: (@Sendable (String) -> Void)?) async throws -> String {
+    private func ensureModel(onProgress: (@Sendable (VocalSeparationProgress) -> Void)?) async throws -> String {
         // 1) bundle 内置模型（开箱即用，国内用户零下载）—— 正常路径
         if let bundled = Self.findBundledModel() {
             return bundled
@@ -130,8 +141,8 @@ actor VocalSeparationService {
 
     /// 兜底下载：多源（国内镜像优先）+ 单次 60s 超时 + 每源 2 次尝试。
     private func downloadModel(to dest: URL,
-                              onProgress: (@Sendable (String) -> Void)?) async throws -> String {
-        onProgress?("下载人声分离模型（约 80MB，仅首次）…")
+                              onProgress: (@Sendable (VocalSeparationProgress) -> Void)?) async throws -> String {
+        onProgress?(.init(message: "下载人声分离模型（约 80MB，仅首次）…", fraction: nil))
         let config = URLSessionConfiguration.default
         config.timeoutIntervalForRequest = 60
         config.timeoutIntervalForResource = 1800
@@ -176,22 +187,63 @@ actor VocalSeparationService {
     }
 
     /// 运行 demucs.cpp：`demucs <model> <input.wav> <outDir>`。
-    nonisolated private static func runDemucs(binary: String, model: String,
-                                              input: String, outDir: String) async throws {
-        try await withCheckedThrowingContinuation { (cont: CheckedContinuation<Void, Error>) in
-            let p = Process()
-            p.executableURL = URL(fileURLWithPath: binary)
-            p.arguments = [model, input, outDir]
-            p.standardOutput = FileHandle.nullDevice
-            p.standardError = FileHandle.nullDevice
-            p.terminationHandler = { proc in
-                if proc.terminationStatus == 0 {
-                    cont.resume()
-                } else {
-                    cont.resume(throwing: SepError.separateFailed)
+    ///
+    /// - stdout：demucs 逐行打印 `(NNN%) message` 真实进度 → DemucsLineAccumulator 解析后回调。
+    ///   readabilityHandler 持续排空，不依赖「输出量小」防管道写满死锁。
+    /// - 取消：包 withTaskCancellationHandler，Task 取消即 SIGTERM，3s 不退强 SIGKILL
+    ///   （与 FFmpegRunner.forceTerminate 同款）。被终止的进程退出码非 0，调用方以
+    ///   Task.isCancelled 识别取消，不把它当分离失败上报。
+    nonisolated private static func runDemucs(
+        binary: String, model: String, input: String, outDir: String,
+        onFraction: (@Sendable (Double) -> Void)? = nil
+    ) async throws {
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: binary)
+        p.arguments = [model, input, outDir]
+        // stdin 与 FFmpegRunner 对称接管：消除「终端启动=tty / Finder 启动=EOF」的环境差异。
+        p.standardInput = FileHandle.nullDevice
+        let stdoutPipe = Pipe()
+        p.standardOutput = stdoutPipe
+        p.standardError = FileHandle.nullDevice
+
+        let accumulator = DemucsLineAccumulator { fraction in
+            onFraction?(fraction)
+        }
+        stdoutPipe.fileHandleForReading.readabilityHandler = { handle in
+            accumulator.feed(handle.availableData)
+        }
+
+        try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { (cont: CheckedContinuation<Void, Error>) in
+                p.terminationHandler = { proc in
+                    stdoutPipe.fileHandleForReading.readabilityHandler = nil
+                    accumulator.finish()
+                    if proc.terminationStatus == 0 {
+                        cont.resume()
+                    } else {
+                        // 被 onCancel 终止：取消标志已置位，错误内容交给上层 isCancelled 判定。
+                        cont.resume(throwing: SepError.separateFailed)
+                    }
                 }
+                do { try p.run() } catch { cont.resume(throwing: error) }
             }
-            do { try p.run() } catch { cont.resume(throwing: error) }
+        } onCancel: {
+            if p.isRunning {
+                MixLog.info("[Sep] demucs 进程因 Task 取消被终止")
+                forceTerminate(p)
+            }
+        }
+    }
+
+    /// 先 SIGTERM，3 秒后仍存活则 SIGKILL（demucs CPU 推理可能不响应 SIGTERM）。
+    nonisolated private static func forceTerminate(_ process: Process) {
+        process.terminate()
+        let pid = process.processIdentifier
+        DispatchQueue.global().asyncAfter(deadline: .now() + 3) {
+            if process.isRunning {
+                MixLog.error("[Sep] demucs 拒绝 SIGTERM，发送 SIGKILL: pid=\(pid)")
+                kill(pid, SIGKILL)
+            }
         }
     }
 }

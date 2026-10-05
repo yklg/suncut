@@ -773,10 +773,12 @@ struct TombstoneReadGuardTests {
         (#"MixCut/Views/SegmentLibrary/SegmentLibraryView.swift"#, "video", #"let fps = segment.video?.fps ?? 0"#, 1),
         (#"MixCut/Views/SegmentLibrary/SegmentLibraryView.swift"#, "video", #"let st = segment.video?.status, st != .completed, st != .failed {"#, 1),
         (#"MixCut/Views/SegmentLibrary/SegmentPropertiesSection.swift"#, "video", #"private var fps: Double { segment.video?.fps ?? 30 }"#, 1),
-        (#"MixCut/Views/SegmentLibrary/SegmentVariantInspector.swift"#, "video", #"Text(dubVM.progressText(videoID: segment.video?.id)).font(.caption).foregroundStyle(.secondary)"#, 1),
+        (#"MixCut/Views/SegmentLibrary/SegmentVariantInspector.swift"#, "video", #"if let vid = segment.video?.id {"#, 1),
         (#"MixCut/Views/SegmentLibrary/SegmentVariantInspector.swift"#, "video", #"if !dubVM.isBusy(videoID: segment.video?.id) {"#, 1),
         (#"MixCut/Views/SegmentLibrary/SegmentVariantInspector.swift"#, "video", #"if (segment.video?.clonedVoiceId ?? ).isEmpty {"#, 1),
         (#"MixCut/Views/SegmentLibrary/SegmentVariantInspector.swift"#, "video", #"if dubVM.isBusy(videoID: segment.video?.id) {"#, 1),
+        // 空状态忙碌门（与 rewriteBar 同源）：同一行两次跨边读取（busy 判断 + 取 id）。
+        (#"MixCut/Views/SegmentLibrary/SegmentVariantInspector.swift"#, "video", #"if dubVM.isBusy(videoID: segment.video?.id), let vid = segment.video?.id {"#, 2),
         (#"MixCut/Views/SegmentLibrary/SegmentVariantInspector.swift"#, "video", #"if id == segment.video?.clonedVoiceId { return }"#, 1),
         (#"MixCut/Views/SegmentLibrary/SegmentVariantInspector.swift"#, "video", #"private var voices: [String] { segment.video?.selectedVoiceIds ?? [] }"#, 1),
         (#"MixCut/Views/SegmentLibrary/SegmentVariantInspector.swift"#, "video", #"} else if !dubVM.isBusy(videoID: segment.video?.id) {"#, 1),
@@ -954,12 +956,30 @@ struct TombstoneReadGuardTests {
         #expect(head.hasPrefix("MixCut/App/ContentView.swift:") && head.contains("object: payload"),
                 "唯一那处 post 必须是 GraphBroadcast 里的 `object: payload`，实得：\(head)")
 
-        // 消费口同理只许 1 处：剪枝分支写在 reloadAfterUndo 的第一行，多一个观察者就是多一套语义。
-        var observers = 0
+        // 消费口只许 3 处，且身份钉死（匹配三种合法订阅写法）：
+        //  - ContentView.onReceive：publisher(for:)，剪枝/全量重载（第一消费者）；
+        //  - DebugSelfTest：block 式 addObserver(forName:) 自检探针；
+        //  - DubbingViewModel：target-action addObserver(name:)，只做「数据真删 → 取消作业」，
+        //    禁止 load/flush（职责边界由 DubbingTaskOwnershipGuardTests G4 另钉）。
+        // selector 形态必须带 selector: 前缀锚定，否则会误中 GraphBroadcast 里
+        // 唯一那处 `post(name: .mixCutDataDidUndo, …)`。
+        let observerPattern =
+            "publisher\\(for:\\s*\\.mixCutDataDidUndo\\)"
+            + "|forName:\\s*\\.mixCutDataDidUndo"
+            + "|selector:[\\s\\S]{0,120}?name:\\s*\\.mixCutDataDidUndo"
+        var observerFiles: [String] = []
         for pair in allMixCutSources() {
-            forEachMatch(in: pair.code, pattern: "publisher\\(for:\\s*\\.mixCutDataDidUndo\\)") { _ in observers += 1 }
+            forEachMatch(in: pair.code, pattern: observerPattern) { _ in
+                observerFiles.append(pair.path)
+            }
         }
-        #expect(observers == 1, "观察者应为 1 处（ContentView 的 onReceive），实得 \(observers)")
+        #expect(observerFiles.count == 3,
+                "观察者应为 3 处（ContentView 剪枝 + DubbingViewModel 取消作业 + DebugSelfTest 自检探针），实得 \(observerFiles.count)：\(observerFiles)")
+        #expect(Set(observerFiles) == [
+            "MixCut/App/ContentView.swift",
+            "MixCut/App/DebugSelfTest.swift",
+            "MixCut/ViewModels/DubbingViewModel.swift"
+        ], "消费者身份漂移：\(observerFiles)")
 
         // 发布口自身那三条承重写法逐字钉住：丢了任一条，上面两条锚就成了空壳。
         guard let raw = load("MixCut/App/ContentView.swift") else {
