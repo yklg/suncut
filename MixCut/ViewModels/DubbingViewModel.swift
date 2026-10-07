@@ -338,10 +338,25 @@ final class DubbingViewModel {
     private var auditionPlayer: AVAudioPlayer?
 
     /// 按音色身份选合成客户端（引擎路由，与业务模式无关）。
+    ///
+    /// ⚠️ qwen-vc 分支要**按型号现建客户端**，不能直接返回共享的 `vcClient`：
+    /// `QwenTTSClient` 的 model 在 init 时固定（`private let model`），
+    /// 而账号级复刻音色（M2）各自绑定自己的型号（`choice.model`）。
+    /// 返回共享实例 ⇒ 拿 A 音色注册的 voiceId 会被用B 型号去合成，服务端报
+    /// InvalidParameter（且该错只在真机合成时才暴露，类型层面看不出来）。
+    ///
+    /// 存量视频克隆音色仍走共享 `vcClient`（型号恒为 targetModel），
+    /// 既保持零行为变化，也避免每次合成都新建 actor。
     private func synthesisClient(for choice: VoiceChoice) -> TTSClient {
         switch choice.engine {
-        case .cosyVoice: return tts
-        case .qwenVC: return vcClient
+        case .cosyVoice:
+            return tts
+        case .qwenVC:
+            if case .globalClone(_, _, let model) = choice, !model.isEmpty,
+               model != VoiceCloneService.targetModel {
+                return QwenTTSClient(model: model)
+            }
+            return vcClient
         }
     }
     private var playbackResetTask: Task<Void, Never>?
@@ -754,9 +769,8 @@ final class DubbingViewModel {
 
     /// 当前千问 API Key 的指纹（SHA256 前 8 位 hex）。只存指纹不存明文，用于检测换 Key。
     static func currentKeyFingerprint() -> String? {
-        guard let key = KeychainHelper.getAPIKey(for: .qwen), !key.isEmpty else { return nil }
-        let digest = SHA256.hash(data: Data(key.utf8))
-        return digest.prefix(4).map { String(format: "%02x", $0) }.joined()
+        let fp = KeyFingerprint.of(KeychainHelper.getAPIKey(for: .qwen))
+        return fp.isEmpty ? nil : fp
     }
 
     /// 把底层（DashScope / 网络）错误翻译成用户能看懂的提示，并保留原始返回片段便于排查。
@@ -866,12 +880,32 @@ final class DubbingViewModel {
                     CosyVoiceTTSClient.sampleRateForCache,
                     CosyVoiceTTSClient.formatForCache)
         case .qwenVC:
-            // QwenTTSClient 固定 wav / 24kHz 输出；model 随 voice 绑定（克隆音色走
-            // VoiceCloneService.targetModel），故取该常量而不是硬编码字符串。
-            return (.qwenVC,
-                    VoiceCloneService.targetModel,
+            // ⚠️ model 维度必须取**该音色实际注册/合成时用的型号**，不能一律用
+            // `VoiceCloneService.targetModel`：账号级复刻音色（M2）允许绑定不同型号
+            // （如 `qwen3-tts-vc-realtime-*`）。若一律写死 targetModel，
+            // 同一音色按 targetModel 建键、却用另一个型号合成 ⇒ 键与内容不对应，
+            // 最坏情况是**命中了另一型号的缓存音频**（音色/音质都不是用户要的那个）。
+            //
+            // 取值优先级：choice 带型号（globalClone 的 model）→ 存量视频克隆回落到
+            // targetModel（存量 voiceId 就是用它注册的，写死才对得上）。
+            let model = Self.qwenSynthesisModel(for: choice)
+            return (.qwenVC, model,
                     QwenTTSClient.sampleRateForCache,
                     QwenTTSClient.formatForCache)
+        }
+    }
+
+    /// qwen-vc 引擎下的实际合成型号（缓存键的 model 维度）。
+    ///
+    /// 单独抽出而非内联：注册、合成、缓存键三处必须**同一个型号**（服务端要求
+    /// 注册型号与合成型号一致，否则合成失败）。三处各自硬编码是这类 bug 的温床。
+    private static func qwenSynthesisModel(for choice: VoiceChoice) -> String {
+        switch choice {
+        case .globalClone(_, _, let model) where !model.isEmpty:
+            return model
+        default:
+            // 预置/存量视频克隆：voiceId 由 VoiceCloneService.targetModel 注册而来。
+            return VoiceCloneService.targetModel
         }
     }
 
@@ -948,15 +982,25 @@ final class DubbingViewModel {
             }
             return false
         }
-        // M2 起全局复刻 profile 的有效性在此接 isValidCloneProfile；M1 无 profile 实体，恒 false。
+        // M2：全局复刻 profile 的有效性接真实判据 —— 库里存在、且未因换 Key 而失效。
+        // ⚠️ 这里必须**活查 SwiftData**（而不是让调用方把 profile 传进来）：
+        // `VoiceSynthesisGate` 是 Core 纯函数，只吃 (profileID) -> Bool；
+        // 若把 profile 实体塞进解析入参，纯值判据就退化成了有实体依赖的判据，
+        // 未来「已删除 profile 的残留 choice」这类测试就无从构造。
+        // 只在 `.globalClone` 分支才查库，存量路径零额外 IO。
+        let currentFP = Self.currentKeyFingerprint()
         let usable = VoiceSynthesisGate.isUsable(
             choice,
             isCatalogVoice: { VoiceCatalog.voice(id: $0) != nil },
-            isValidCloneProfile: { _ in false })
+            isValidCloneProfile: { profileID in
+                guard let p = try? context.fetch(FetchDescriptor<VoiceProfile>())
+                    .first(where: { $0.id == profileID }) else { return false }
+                return !p.isInvalidated(currentKeyFingerprint: currentFP)
+            })
         guard usable else {
             if !silent {
                 errorState = .init(
-                    message: "该变体的音色未配置或已失效，请在「设置 → 配音」选择全局音色后重试",
+                    message: Self.invalidVoiceMessage(for: choice, context: context),
                     kind: .generic)
             }
             return false
@@ -1058,7 +1102,24 @@ final class DubbingViewModel {
         }
     }
 
-    /// 逐句对齐的结局。调用方据此决定要不要给用户提示。
+    /// 音色不可用时的提示。**区分两种失效** —— 用户要采取的动作完全不同：
+    /// 「已被删除」去库里删掉引用即可；「换 Key 失效」得用回原 Key 或重新注册。
+    private static func invalidVoiceMessage(for choice: VoiceChoice, context: ModelContext) -> String {
+        switch choice {
+        case .globalClone(let profileID, _, _):
+            let fp = Self.currentKeyFingerprint()
+            let p = try? context.fetch(FetchDescriptor<VoiceProfile>())
+                .first(where: { $0.id == profileID })
+            if let p, p.isInvalidated(currentKeyFingerprint: fp) {
+                return VoiceProfileValidity.invalidatedMessage()
+            }
+            return "这个复刻音色已被删除。请到「设置 → 配音 → 我的复刻音色库」重新选择或注册。"
+        default:
+            return "该变体的音色未配置或已失效，请在「设置 → 配音」选择全局音色后重试"
+        }
+    }
+
+/// 逐句对齐的结局。调用方据此决定要不要给用户提示。
     enum CaptionAlignOutcome {
         /// ASR 成功，按真实词时间戳对齐
         case aligned

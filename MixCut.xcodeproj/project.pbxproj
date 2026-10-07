@@ -155,6 +155,7 @@
 		AB01C0A1E5E04B2A9C010002 /* CoalescingLoader.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB01C0A1E5E04B2A9C010001 /* CoalescingLoader.swift */; };
 		AB01C0A1E5E04B2A9C010004 /* LibraryRowLayout.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB01C0A1E5E04B2A9C010003 /* LibraryRowLayout.swift */; };
 		AB02C0A2E5E04B2A9C020002 /* Product.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB02C0A2E5E04B2A9C020001 /* Product.swift */; };
+		AE0000000000000000000023 /* VoiceProfile.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF0000000000000000000023 /* VoiceProfile.swift */; };
 		AB02C0A2E5E04B2A9C020004 /* SegmentSource.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB02C0A2E5E04B2A9C020003 /* SegmentSource.swift */; };
 		AB02C0A2E5E04B2A9C020006 /* ProductCatalogDefaults.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB02C0A2E5E04B2A9C020005 /* ProductCatalogDefaults.swift */; };
 		AB02C0A2E5E04B2A9C020008 /* SegmentPickerCatalog.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB02C0A2E5E04B2A9C020007 /* SegmentPickerCatalog.swift */; };
@@ -231,10 +232,17 @@
             AC0000000000000000000065 /* DubVariantSelector.swift in Sources */ = {isa = PBXBuildFile; fileRef = AD0000000000000000000065 /* DubVariantSelector.swift */; };
             AC0000000000000000000060 /* VoiceChoice.swift in Sources */ = {isa = PBXBuildFile; fileRef = AD0000000000000000000060 /* VoiceChoice.swift */; };
             AC0000000000000000000020 /* RawAudioCache.swift in Sources */ = {isa = PBXBuildFile; fileRef = AD0000000000000000000020 /* RawAudioCache.swift */; };
+            AC0000000000000000000021 /* CloneVoicePolicy.swift in Sources */ = {isa = PBXBuildFile; fileRef = AD0000000000000000000021 /* CloneVoicePolicy.swift */; };
             AC0000000000000000000061 /* ScriptDubBinding.swift in Sources */ = {isa = PBXBuildFile; fileRef = AD0000000000000000000061 /* ScriptDubBinding.swift */; };
             AC0000000000000000000062 /* BoundedTaskGate.swift in Sources */ = {isa = PBXBuildFile; fileRef = AD0000000000000000000062 /* BoundedTaskGate.swift */; };
             AE0000000000000000000040 /* VoicePreferences.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF0000000000000000000040 /* VoicePreferences.swift */; };
             AE0000000000000000000041 /* VoiceAuditionPlayer.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF0000000000000000000041 /* VoiceAuditionPlayer.swift */; };
+            AE0000000000000000000027 /* VoiceCloneRemoteService.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF0000000000000000000027 /* VoiceCloneRemoteService.swift */; };
+            AE0000000000000000000028 /* KeyFingerprint.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF0000000000000000000028 /* KeyFingerprint.swift */; };
+            AE0000000000000000000026 /* VoiceCloneViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF0000000000000000000026 /* VoiceCloneViewModel.swift */; };
+            AE0000000000000000000025 /* CloneLibrarySection.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF0000000000000000000025 /* CloneLibrarySection.swift */; };
+            AE0000000000000000000029 /* CloneWizardView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF0000000000000000000029 /* CloneWizardView.swift */; };
+            AE0000000000000000000024 /* CloneRegistrationService.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF0000000000000000000024 /* CloneRegistrationService.swift */; };
             AE0000000000000000000035 /* RawAudioCacheStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF0000000000000000000035 /* RawAudioCacheStore.swift */; };
             AE0000000000000000000042 /* VoicePickerSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF0000000000000000000042 /* VoicePickerSheet.swift */; };
             AE0000000000000000000043 /* SheetContainerLayout.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF0000000000000000000043 /* SheetContainerLayout.swift */; };
@@ -402,6 +410,7 @@
 		AB01C0A1E5E04B2A9C010001 /* CoalescingLoader.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = CoalescingLoader.swift; path = Sources/MixCutCore/CoalescingLoader.swift; sourceTree = "<group>"; };
 		AB01C0A1E5E04B2A9C010003 /* LibraryRowLayout.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = LibraryRowLayout.swift; path = Sources/MixCutCore/LibraryRowLayout.swift; sourceTree = "<group>"; };
 		AB02C0A2E5E04B2A9C020001 /* Product.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Product.swift; sourceTree = "<group>"; };
+		AF0000000000000000000023 /* VoiceProfile.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoiceProfile.swift; sourceTree = "<group>"; };
 		AB02C0A2E5E04B2A9C020003 /* SegmentSource.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = SegmentSource.swift; path = Sources/MixCutCore/SegmentSource.swift; sourceTree = "<group>"; };
 		AB02C0A2E5E04B2A9C020005 /* ProductCatalogDefaults.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = ProductCatalogDefaults.swift; path = Sources/MixCutCore/ProductCatalogDefaults.swift; sourceTree = "<group>"; };
 		AB02C0A2E5E04B2A9C020007 /* SegmentPickerCatalog.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = SegmentPickerCatalog.swift; path = Sources/MixCutCore/SegmentPickerCatalog.swift; sourceTree = "<group>"; };
@@ -481,10 +490,17 @@
             AD0000000000000000000065 /* DubVariantSelector.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = DubVariantSelector.swift; path = Sources/MixCutCore/DubVariantSelector.swift; sourceTree = "<group>"; };
             AD0000000000000000000060 /* VoiceChoice.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = VoiceChoice.swift; path = Sources/MixCutCore/VoiceChoice.swift; sourceTree = "<group>"; };
             AD0000000000000000000020 /* RawAudioCache.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = RawAudioCache.swift; path = Sources/MixCutCore/RawAudioCache.swift; sourceTree = "<group>"; };
+            AD0000000000000000000021 /* CloneVoicePolicy.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = CloneVoicePolicy.swift; path = Sources/MixCutCore/CloneVoicePolicy.swift; sourceTree = "<group>"; };
             AD0000000000000000000061 /* ScriptDubBinding.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = ScriptDubBinding.swift; path = Sources/MixCutCore/ScriptDubBinding.swift; sourceTree = "<group>"; };
             AD0000000000000000000062 /* BoundedTaskGate.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = BoundedTaskGate.swift; path = Sources/MixCutCore/BoundedTaskGate.swift; sourceTree = "<group>"; };
             AF0000000000000000000040 /* VoicePreferences.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = VoicePreferences.swift; sourceTree = "<group>"; };
             AF0000000000000000000041 /* VoiceAuditionPlayer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoiceAuditionPlayer.swift; sourceTree = "<group>"; };
+            AF0000000000000000000027 /* VoiceCloneRemoteService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoiceCloneRemoteService.swift; sourceTree = "<group>"; };
+            AF0000000000000000000028 /* KeyFingerprint.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeyFingerprint.swift; sourceTree = "<group>"; };
+            AF0000000000000000000026 /* VoiceCloneViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoiceCloneViewModel.swift; sourceTree = "<group>"; };
+            AF0000000000000000000025 /* CloneLibrarySection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CloneLibrarySection.swift; sourceTree = "<group>"; };
+            AF0000000000000000000029 /* CloneWizardView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CloneWizardView.swift; sourceTree = "<group>"; };
+            AF0000000000000000000024 /* CloneRegistrationService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CloneRegistrationService.swift; sourceTree = "<group>"; };
             AF0000000000000000000035 /* RawAudioCacheStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RawAudioCacheStore.swift; sourceTree = "<group>"; };
             AF0000000000000000000042 /* VoicePickerSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoicePickerSheet.swift; sourceTree = "<group>"; };
             AF0000000000000000000043 /* SheetContainerLayout.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SheetContainerLayout.swift; sourceTree = "<group>"; };
@@ -579,6 +595,7 @@
 				FD09EFBAFD23D44FB86BE80C /* ProjectViewModel.swift */,
 				9747A5EC55B7AB12BE78AA02 /* SchemeViewModel.swift */,
 				4C4CC2EDACAE4BFBA8750741 /* DubbingViewModel.swift */,
+				AF0000000000000000000026 /* VoiceCloneViewModel.swift */,
 				091FFFADF81C22E2358CF840 /* SegmentLibraryViewModel.swift */,
 				1B3405BACFEFDF9218B606DD /* ShotEditViewModel.swift */,
 				AD0000000000000000000010 /* KnowledgeLibraryViewModel.swift */,
@@ -766,6 +783,7 @@
                             AD0000000000000000000065 /* DubVariantSelector.swift */,
                             AD0000000000000000000060 /* VoiceChoice.swift */,
                             AD0000000000000000000020 /* RawAudioCache.swift */,
+                            AD0000000000000000000021 /* CloneVoicePolicy.swift */,
                             AD0000000000000000000061 /* ScriptDubBinding.swift */,
                             AD0000000000000000000062 /* BoundedTaskGate.swift */,
 				AD0000000000000000000037 /* ScriptMatchRepair.swift */,
@@ -927,6 +945,7 @@
 				DD012F47D617AF470003A855 /* DesignTokens.swift */,
 				1A9002373E37600803745419 /* FileHelper.swift */,
 				E57FE62ED6EB761E16B527C6 /* KeychainHelper.swift */,
+				AF0000000000000000000028 /* KeyFingerprint.swift */,
 				AF0000000000000000000040 /* VoicePreferences.swift */,
 				33A42DE9B350BF619D35E08C /* ModelContextExtension.swift */,
 			);
@@ -976,6 +995,7 @@
 				A7695BFC5FDA4232D1CC13F8 /* MixStrategy.swift */,
 				1CC212CC8B46714F25F63E1D /* Project.swift */,
 				AB02C0A2E5E04B2A9C020001 /* Product.swift */,
+				AF0000000000000000000023 /* VoiceProfile.swift */,
 				EF59AD68D657C47FEE65194C /* SchemaVersions.swift */,
 				0E1A7D058E5D3BEA366EA579 /* ProjectVideo.swift */,
 				685BFF64A6DC4F662738E239 /* SchemeSegment.swift */,
@@ -1003,6 +1023,8 @@
 			isa = PBXGroup;
 			children = (
 				4730FBF87FD450D92F8D32A9 /* SettingsView.swift */,
+				AF0000000000000000000025 /* CloneLibrarySection.swift */,
+				AF0000000000000000000029 /* CloneWizardView.swift */,
 			);
 			path = Settings;
 			sourceTree = "<group>";
@@ -1042,6 +1064,8 @@
 				B3A7F2E91C4D58A30E6F1D2B /* QwenTTSClient.swift */,
 				7DD8F10E220C49CFB4D2DBDA /* CosyVoiceTTSClient.swift */,
 				AF0000000000000000000041 /* VoiceAuditionPlayer.swift */,
+				AF0000000000000000000027 /* VoiceCloneRemoteService.swift */,
+				AF0000000000000000000024 /* CloneRegistrationService.swift */,
 				AF0000000000000000000035 /* RawAudioCacheStore.swift */,
 				77F93B7C1DE045DA9A8F371B /* VocalSeparationService.swift */,
 				8125257167654959A82159EF /* VoiceCloneService.swift */,
@@ -1136,6 +1160,7 @@
 				A66CE2CC04E8F513B1DD6E13 /* MixStrategy.swift in Sources */,
 				AA36EDE841B8DC99170EEC50 /* Project.swift in Sources */,
 				AB02C0A2E5E04B2A9C020002 /* Product.swift in Sources */,
+				AE0000000000000000000023 /* VoiceProfile.swift in Sources */,
 				F81E113EDEFB06D35FCC108C /* SchemaVersions.swift in Sources */,
 				4FA5586F7125C20D8B86271F /* ProjectVideo.swift in Sources */,
 				AC821FA7CC830DF3896F3B59 /* SchemeSegment.swift in Sources */,
@@ -1146,6 +1171,12 @@
 				C8D4E5F60A1B27C93E8D4A15 /* QwenTTSClient.swift in Sources */,
 				E45A697280C04799918959ED /* CosyVoiceTTSClient.swift in Sources */,
 				AE0000000000000000000041 /* VoiceAuditionPlayer.swift in Sources */,
+				AE0000000000000000000027 /* VoiceCloneRemoteService.swift in Sources */,
+				AE0000000000000000000028 /* KeyFingerprint.swift in Sources */,
+				AE0000000000000000000026 /* VoiceCloneViewModel.swift in Sources */,
+				AE0000000000000000000025 /* CloneLibrarySection.swift in Sources */,
+				AE0000000000000000000029 /* CloneWizardView.swift in Sources */,
+				AE0000000000000000000024 /* CloneRegistrationService.swift in Sources */,
 				AE0000000000000000000035 /* RawAudioCacheStore.swift in Sources */,
 				AE0000000000000000000042 /* VoicePickerSheet.swift in Sources */,
 				AE0000000000000000000043 /* SheetContainerLayout.swift in Sources */,
@@ -1345,6 +1376,7 @@
                            AC0000000000000000000065 /* DubVariantSelector.swift in Sources */,
                            AC0000000000000000000060 /* VoiceChoice.swift in Sources */,
                            AC0000000000000000000020 /* RawAudioCache.swift in Sources */,
+                           AC0000000000000000000021 /* CloneVoicePolicy.swift in Sources */,
                            AC0000000000000000000061 /* ScriptDubBinding.swift in Sources */,
                            AC0000000000000000000062 /* BoundedTaskGate.swift in Sources */,
                            AE0000000000000000000040 /* VoicePreferences.swift in Sources */,

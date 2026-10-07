@@ -1,4 +1,5 @@
 import SwiftUI
+import SwiftData
 
 struct SettingsView: View {
     /// 设置标签页；默认「通用」——配音/视频处理等常用配置打开即见，API Key 配一次后很少再动。
@@ -50,6 +51,15 @@ struct SettingsView: View {
     /// M3：原始音频缓存用量（nil = 尚未扫盘，UI 显示进度指示）。
     @State private var cacheUsage: RawAudioCacheStore.Usage?
 
+    // MARK: - M2 我的复刻音色库
+    /// 复刻音色库读侧。@Query 让 SwiftData 在库变化时自动刷新列表（增删改后 UI 立即跟上）。
+    @Query(sort: \VoiceProfile.createdAt) private var cloneProfiles: [VoiceProfile] = []
+    /// 写入收口 VM（视图不直写 SwiftData 字段）。
+    @State private var cloneVM = VoiceCloneViewModel()
+    @State private var showCloneWizard = false
+    @State private var cloneKeyFingerprint: String = ""
+    @Environment(\.modelContext) private var modelContext
+
     var body: some View {
         VStack(spacing: 0) {
             // 顶部标题栏 + 关闭按钮
@@ -95,6 +105,7 @@ struct SettingsView: View {
         .onAppear {
             loadProviderState()
             refreshASRState()
+            refreshCloneKeyFingerprint()
             Task { await refreshCacheUsage() }
         }
         .sheet(isPresented: $showVoicePicker) {
@@ -112,6 +123,22 @@ struct SettingsView: View {
                 },
                 onClose: { showVoicePicker = false })
         }
+        // M2：注册向导（从「我的复刻音色库」的[注册新音色] 发起）。
+        .sheet(isPresented: $showCloneWizard) {
+            CloneWizardView(
+                onRegistered: { showCloneWizard = false },
+                onCancel: { showCloneWizard = false })
+        }
+    }
+
+    /// 复刻音色的 Key 指纹（决定库内哪些音色置灰）。
+    ///
+    /// 指纹本身只是一次 Keychain 读取 + SHA256，不该在打开设置页的主线程上做。
+    /// `VoiceCloneViewModel` 是 `@MainActor`，故这里用 `Task { }`（继承 MainActor）
+    /// 而**不是** `Task.detached` —— 后者在非隔离上下文调主actor 方法既不成立、
+    /// 也会让「指纹从哪来」这件事分散在两个隔离域里。指纹是给 UI 读的，同actor 最简单。
+    private func refreshCloneKeyFingerprint() {
+        Task { cloneKeyFingerprint = VoiceCloneViewModel.currentKeyFingerprint() }
     }
 
     /// 模型探测放后台队列：stat + 读 4 字节文件头虽然便宜，也不该占设置页 opening 的主线程。
@@ -499,6 +526,17 @@ struct SettingsView: View {
                     .font(DesignTokens.Typography.microRegular)
                     .foregroundStyle(.tertiary)
                     .fixedSize(horizontal: false, vertical: true)
+
+                // M2：我的复刻音色库。放在「配音」区里，因为它就是配音音色的一部分。
+                Divider()
+                CloneLibrarySection(
+                    profiles: cloneProfiles,
+                    currentKeyFingerprint: cloneKeyFingerprint.isEmpty ? nil : cloneKeyFingerprint,
+                    onRegister: { showCloneWizard = true },
+                    onDelete: { profile, scope in
+                        Task { await cloneVM.delete(profile, scope: scope, context: modelContext) }
+                    },
+                    onRename: { profile, name in cloneVM.rename(profile, to: name) })
             }
 
             Section("视频处理") {

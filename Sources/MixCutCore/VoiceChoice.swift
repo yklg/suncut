@@ -25,7 +25,12 @@ public enum VoiceEngine: String, Equatable, Sendable {
 public enum VoiceChoice: Equatable, Sendable {
     /// 系统预置音色（CosyVoice 目录 id，如 longyingxiao）。
     case preset(voiceID: String)
-    /// 账号级复刻音色（M2 起由上传/视频提取注册；绑定 CosyVoice 系具体型号）。
+    /// 账号级复刻音色（M2：由上传音频 / 从素材库视频提取参考音注册）。
+    ///
+    /// - `voiceID` 是注册返回的音色 id（不是显示名）。
+    /// - `model` 是**驱动该音色的合成型号**，注册与合成必须同型号，否则服务端报错。
+    ///   M2 走了 Qwen 复刻路线（`qwen-voice-enrollment`，base64 内联 + 同步返回），
+    ///   故这里的 model 形如 `qwen3-tts-vc-*`。
     case globalClone(profileID: UUID, voiceID: String, model: String)
     /// 存量逐视频克隆音色（qwen-vc）；voiceID 即 Video.clonedVoiceId。
     case videoClone(voiceID: String)
@@ -38,19 +43,37 @@ public enum VoiceChoice: Equatable, Sendable {
         }
     }
 
-    /// 合成引擎：预置与全局复刻走 CosyVoice；逐视频克隆走 qwen-vc。
+    /// 合成引擎路由：**由型号决定，不硬编码**。
+    ///
+    /// M2 之前的写法是「`globalClone` 一律 `.cosyVoice`」——那是在「M2 必定走
+    /// CosyVoice 复刻」的假设下写的。实际选定Qwen 复刻路线后，账号级复刻音色
+    /// 注册自 `qwen-voice-enrollment`、由 `qwen3-tts-vc-*` 驱动，**必须走 qwen-vc 分支**
+    /// （走 atempo 对齐 + 重试取最短），否则会用 CosyVoice 客户端去请求一个
+    /// qwen 音色 —— 服务端直接报错，而且这种错在类型层面看不出来。
+    ///
+    /// 判据用型号前缀（`qwen3-tts-vc` / `qwen-audio-` ⇒ qwen 系），而不是「是不是
+    /// globalClone」—— 后者在两条复刻路线都存在时是错的。
     public var engine: VoiceEngine {
         switch self {
-        case .preset, .globalClone: return .cosyVoice
-        case .videoClone: return .qwenVC
+        case .preset:
+            return .cosyVoice
+        case .videoClone:
+            return .qwenVC
+        case .globalClone(_, _, let model):
+            return Self.isQwenFamily(model) ? .qwenVC : .cosyVoice
         }
     }
 
-    /// CosyVoice 系合成所需型号（qwen-vc 引擎下为 nil，由 App 层映射到 qwen 克隆型号）。
+    /// 型号是否属于 Qwen 系（`qwen3-tts-vc-*` / `qwen-audio-*` 等）。
+    public static func isQwenFamily(_ model: String) -> Bool {
+        model.lowercased().hasPrefix("qwen")
+    }
+
+    /// CosyVoice 系合成所需型号；qwen-vc 引擎下为 nil（App 层映射到 qwen 克隆型号）。
     public var cosyVoiceModel: String? {
         switch self {
         case .preset: return CosyVoiceCatalog.model
-        case .globalClone(_, _, let model): return model
+        case .globalClone(_, _, let model): return Self.isQwenFamily(model) ? nil : model
         case .videoClone: return nil
         }
     }

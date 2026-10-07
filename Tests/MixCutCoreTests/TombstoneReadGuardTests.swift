@@ -648,6 +648,8 @@ struct TombstoneReadGuardTests {
         .init(file: "MixCut/Views/Schemes/SchemeDetailView.swift", count: 1, exempt: false, reason: ""),
         .init(file: "MixCut/Services/Knowledge/KnowledgeIngestService.swift", count: 1, exempt: false, reason: ""),
         .init(file: "MixCut/ViewModels/ScriptWizardViewModel.swift", count: 2, exempt: false, reason: ""),
+        // M2 复刻音色库：删除音色记录（删库记录**不删任何音频文件** —— 已生成配音是自包含的m4a）。
+        .init(file: "MixCut/ViewModels/VoiceCloneViewModel.swift", count: 1, exempt: false, reason: ""),
         .init(file: "MixCut/App/MixCutApp.swift", count: 2, exempt: true,
               reason: "启动 fixups 用独立 ModelContext(container)（:353/:397/:426），跑在任何视图建立投影之前"),
         .init(file: "MixCut/App/DebugSelfTest.swift", count: 21, exempt: true,
@@ -667,11 +669,11 @@ struct TombstoneReadGuardTests {
         return m
     }
 
-    @Test("G12 名册对账：真仓 52 处 delete 必须逐文件等于登记")
+    @Test("G12 名册对账：真仓 53 处 delete 必须逐文件等于登记")
     func realRepoMatchesDeleteRoster() {
         let actual = actualDeleteCounts()
         let total = actual.values.reduce(0, +)
-        #expect(total == 52, "真删站点总数应为 52（全局音色 +2：删方案回收脚本配音、绑定删空壳），实得 \(total) ⇒ 名册或扫描面已漂移")
+        #expect(total == 53, "真删站点总数应为 53（全局音色 +2、复刻音色库 +1），实得 \(total) ⇒ 名册或扫描面已漂移")
         let problems = Self.rosterProblems(actual: actual, recorded: Self.deleteRoster)
         #expect(problems.isEmpty, "门 4b 不认账：\(problems)")
     }

@@ -48,6 +48,11 @@ enum AppSchemaV1: VersionedSchema {
             // M1b 音色三级覆盖再补两个带默认值字段（同属轻量迁移，无新实体）：
             //   Video.voiceFollowsGlobal: Bool = false（视频级「跟随全局/项目」开关）；
             //   SchemeSegment.preferredVoiceChoiceRaw: String?（脚本成片段级音色覆盖）。
+            // M2 我的复刻音色库：**新表** VoiceProfile（无存量行，新表不需要默认值兜底）。
+            // 字段一律带默认值 / optional，故仍属轻量迁移：
+            //   keyFingerprint "" =存量无指纹（乐观复用，与逐视频克隆同口径）；
+            //   consentAcceptedAt nil + consentAccepted 经 recordConsent 唯一写入口成对落。
+            VoiceProfile.self,
         ]
     }
 }
