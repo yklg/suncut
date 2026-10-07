@@ -133,6 +133,13 @@ enum APIErrorClassifier {
             || l.contains("does not exist") || l.contains("http 404") {
             return "接口找不到所选模型。请到「设置」核对模型名称是否正确；若用的是「自定义」或「国内转发网关」，还要确认接口地址填的是根地址（通常以 /v1 结尾，不要带 /chat/completions）。"
         }
+        // ⚠️ 音色注册参数非法（M2 实测踩过）：必须在下面的「http 400 兜底」**之前**，
+        // 否则会被误诊为「模型名/接口地址不匹配」，把用户引去改完全无关的设置。
+        // 实测原始错误：InvalidParameter: Required input 'preferred_name' is invalid
+        //（成因是清洗把汉字原样发出——Swift 的 `Character.isLetter` 对汉字返回 true。）
+        if l.contains("preferred_name") || l.contains("voice_name") {
+            return "音色名含服务端不支持的字符（只允许英文字母、数字和下划线）。请把音色名改成字母数字，例如「市土产仓库 5」改成「citywarehouse5」。"
+        }
         // 请求格式被拒（多为模型名/参数与该平台不匹配）
         if l.contains("http 400") || l.contains("invalid_request") || l.contains("bad request") {
             return "服务商拒绝了这次请求，通常是模型名称或接口地址与该平台不匹配。请到「设置」检查提供商、模型名和接口地址是否配套。"
@@ -153,12 +160,19 @@ enum APIErrorClassifier {
     }
 
     /// 带兜底：识别不出时返回原文（截断）。
-    static func friendly(_ error: Error, maxRawLen: Int = 200) -> String {
+    ///
+    /// - Parameters:
+    ///   - error: 原始错误。
+    ///   - maxRawLen: 命中 hint 时，附带的原文最大长度。
+    ///   - includeRawDetail: 是否把原始响应（常含 `request_id` 与整段 JSON）铺给用户。
+    ///     **默认折叠**（M2 实测教训）：命中 hint 时那一句中文才是用户要读的，
+    ///     而 200 字符的 JSON 会把设置页/红字区撑满，真要报给阿里云客服时再看详情即可。
+    static func friendly(_ error: Error, maxRawLen: Int = 200,
+                         includeRawDetail: Bool = false) -> String {
         let raw = error.localizedDescription
-        if let hint = hint(raw) {
-            return "\(hint)\n（接口返回：\(raw.prefix(maxRawLen)))"
-        }
-        return raw
+        guard let hint = hint(raw) else { return raw }   // 识别不出只能给原文
+        guard includeRawDetail else { return hint }
+        return "\(hint)\n（接口返回：\(raw.prefix(maxRawLen)))"
     }
 }
 

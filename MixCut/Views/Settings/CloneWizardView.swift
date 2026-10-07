@@ -186,6 +186,36 @@ struct CloneWizardView: View {
             TextField("音色名称", text: $name)
                 .textFieldStyle(.roundedBorder)
                 .disabled(phase == .registering)
+
+            // 远端注册名实时预览：让用户在点「注册」之前就看见**服务端会收到什么**。
+            // 为什么必须提前给（M2 实测教训）：早期把中文名原样发出去，
+            // 服务端返 400 `InvalidParameter: Required input 'preferred_name' is invalid`，
+            // 而错误文案还误诊为「模型名/接口地址不匹配」，用户完全不知道该改什么。
+            // 预览 + 拦截把「提交后才报错」变成「打字时就看见」。
+            if !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                HStack(spacing: 4) {
+                    Text("远端注册名：")
+                        .font(DesignTokens.Typography.micro)
+                        .foregroundStyle(.tertiary)
+                    Text(remoteProviderNamePreview)
+                        .font(DesignTokens.Typography.micro)
+                        // ⚠️ `.ok(providerName:)` 是**关联枚举**（带值），
+                        // 不能用 `== .ok` 比较；也不能把 Color 直接塞进 `.foregroundStyle(...)`
+                        // 的分支（类型不匹配）。分别用 if/else + `Color`。
+                        .foregroundStyle(isNameVerdictOK ? Color.secondary : Color.orange)
+                        .textSelection(.enabled)
+                }
+                .padding(.top, 1)
+            }
+
+            // 名称类错误（本地预检，不发请求就能拦）
+            if let nameErrorText {
+                Text(nameErrorText)
+                    .font(DesignTokens.Typography.micro)
+                    .foregroundStyle(.orange)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
             // 样本类错误**就近显示**：与「建议 10–20 秒」同区。
             // 早前它落在最外层 VStack 末尾（授权勾选下方），用户要来回扫
             // 才能把「太短了」和「建议区间」对上。
@@ -283,9 +313,49 @@ struct CloneWizardView: View {
     /// 注册门。样本维度**只看 `preparedSample`**（合规与否的唯一真源），
     /// 刻意不看 `pickedPath` / `durationSeconds` —— 后两者会脱钩，曾导致
     /// 「校验失败后时长残留旧值」把注册门绕过去。
+    ///
+    /// 名称维度**本地预检**（M2）：不合规就不发请求 ⇒ 省一次 400 往返，
+    /// 也省掉那段误诊的「模型名/接口地址不匹配」红字。
     private var canRegister: Bool {
         preparedSample != nil && !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            && consent && phase != .preparing && phase != .registering
+            && consent && isNameVerdictOK
+            && phase != .preparing && phase != .registering
+    }
+
+    // MARK: - 名称预检（本地，不发请求）
+
+    /// 名称的预检结论（复用 Core 的 `CloneVoiceNaming.validate`，**不在 UI 重写判据**）。
+    private var nameVerdict: CloneVoiceNaming.NameVerdict {
+        CloneVoiceNaming.validate(name,
+                                  maxLength: CloneVoiceNaming.ProviderLimit.qwenPreferredName)
+    }
+
+    /// 预览用的远端注册名（清洗唯一真源，与 `enroll` 内部用的是同一函数）。
+    private var remoteProviderNamePreview: String {
+        CloneVoiceNaming.sanitizeForProvider(
+            name, maxLength: CloneVoiceNaming.ProviderLimit.qwenPreferredName)
+    }
+
+    /// `NameVerdict.ok` 是关联枚举（带 `providerName`），不能用 `== .ok` 比较。
+    private var isNameVerdictOK: Bool {
+        if case .ok = nameVerdict { return true }
+        return false
+    }
+
+    /// 名称类错误文案。**只覆盖用户能自己解决的问题**——
+    /// 服务端契约（仅 ASCII / ≤16）已被 `validate` 收口，这里翻译成可操作提示。
+    private var nameErrorText: String? {
+        switch nameVerdict {
+        case .ok:
+            return nil
+        case .notRepresentable:
+            return name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                ? nil                              // 空名由「注册」按钮禁用表达，不必红字
+                : "这个名字里没有能用的字母或数字（比如全是符号或表情）。请改成字母、数字或下划线。"
+        case .truncated:
+            // 超长**不是错误**（会被自动截断 + 加唯一后缀），只提示会截断，避免用户以为会重名。
+            return "名字较长，注册时会自动截断并加唯一后缀（见上方预览）。"
+        }
     }
 
     private func register() async {
