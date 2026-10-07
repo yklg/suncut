@@ -785,17 +785,25 @@ final class DubbingViewModel {
     /// ① **可读性**：命中/未命中两条路径对称，`generateAudio` 里只留「选哪条」；
     /// ② **可验证性**：存缓存必须在 finalize 之前（finalize 会删掉传入文件），
     /// 收在一个函数里才不会在后续改动中被挪到 finalize 之后。
+    ///
+    /// - Parameter skipCacheProbe: true 表示**本分镜此前已合成过同文案**（`forceRegenerate`
+    ///   或改写后重生成）。此时「读缓存拿到脏音频」的风险大于「再花一次钱重合成」——
+    ///   见 `synthesizeCloneRobust` 的跑飞说明：首包可能续读参考内容，且**同样的输入
+    ///   未必复现同样的脏结果**，缓存会把一次偶发的跑飞**固化**下来反复播放。
+    ///   故此路径直接跳过缓存读写，只做一次干净重合成。
     private static func synthesizeFresh(client: TTSClient,
                                         voiceID: String,
                                         text: String,
                                         targetDuration: Double,
                                         bias: Double,
                                         cloned: Bool,
+                                        skipCacheProbe: Bool,
                                         cacheSpec: (engine: RawAudioCacheKey.Engine,
                                                     model: String,
                                                     sampleRate: Int,
                                                     format: String)?) async throws -> TTSResult {
         let firstRate = 1.0
+        let cacheable = skipCacheProbe ? nil : cacheSpec
         let result: TTSResult
         if cloned {
             // qwen克隆 TTS 间歇性"续读参考内容/跑飞"(音频比台词长，混进下一段)：
@@ -813,10 +821,13 @@ final class DubbingViewModel {
             result = r
         }
         // 存入缓存（键用 rate=1.0 —— 与下次查询用的键严格一致；命中率靠分桶保证）。
-        if let cacheSpec {
-            let key = RawAudioCacheStore.key(engine: cacheSpec.engine, model: cacheSpec.model,
+        // ⚠️ 读侧在「该分镜此前已合成过同文案」时会绕过缓存（skipCacheProbe），
+        // 写侧**同样**要绕过 —— 否则刚绕过脏缓存、转头又把这次的新结果盖进去，
+        // 下次那条路径又会命中。两边必须同一把尺子。
+        if let cacheable {
+            let key = RawAudioCacheStore.key(engine: cacheable.engine, model: cacheable.model,
                                              voiceID: voiceID, text: text, rate: firstRate,
-                                             sampleRate: cacheSpec.sampleRate, format: cacheSpec.format)
+                                             sampleRate: cacheable.sampleRate, format: cacheable.format)
             await RawAudioCacheStore.shared.store(key: key,
                                                   audioURL: URL(fileURLWithPath: result.wavPath),
                                                   rawDuration: result.rawDuration)
@@ -829,9 +840,20 @@ final class DubbingViewModel {
     /// 该音色身份是否可缓存，以及缓存键所需的固定维度（model/采样率/格式）。
     /// 返回 nil = 该组合不进缓存（调用方按原路径合成）。
     ///
-    /// 为什么只对 CosyVoice 引擎开：qwen-vc 克隆分支带「重试取最短」健壮逻辑，
-    /// 且克隆音色按视频隔离、跨分镜复用收益低；把重试产出当代表反而会缓存下一份
-    /// 「可能跑飞」的音频。宁可少缓存，不可缓存坏音频。
+    /// ## 两个引擎都进缓存，但克隆分支多一道「脏音频」防线
+    ///
+    /// qwen-vc 分支带「重试取最短」健壮逻辑（`synthesizeCloneRobust`），
+    /// 这是为治「间歇性续读参考内容/跑飞」而存在的。跑飞的特征是**音频比台词长**
+    /// 且混进下一段内容。对缓存的含义：
+    ///
+    /// - **存的时候**：重试会挑出「最干净的那一份」（时长最短），缓存它是对的 ——
+    ///   缓存的是「已通过时长阈值筛选」的结果，不是跑飞的那份。
+    /// - **读的时候**：同样输入**未必复现同样的脏结果**（这是间歇性故障），
+    ///   但缓存一旦存进跑飞版就会**固化**，之后每次命中都放跑飞版 ⇒ 必须能绕过。
+    ///
+    /// 所以 `generateAudio` 传`skipCacheProbe` 给`已合成过同文案` 的场景
+    /// （`forceRegenerate` / 改写后重生成），那条路径跳过缓存读写、只做干净重合成。
+    /// 首次合成仍走缓存（那正是缓存最该省钱的场景）。
     private static func rawCacheSpec(for choice: VoiceChoice,
                                      voiceID: String) -> (engine: RawAudioCacheKey.Engine,
                                                           model: String,
@@ -844,7 +866,12 @@ final class DubbingViewModel {
                     CosyVoiceTTSClient.sampleRateForCache,
                     CosyVoiceTTSClient.formatForCache)
         case .qwenVC:
-            return nil
+            // QwenTTSClient 固定 wav / 24kHz 输出；model 随 voice 绑定（克隆音色走
+            // VoiceCloneService.targetModel），故取该常量而不是硬编码字符串。
+            return (.qwenVC,
+                    VoiceCloneService.targetModel,
+                    QwenTTSClient.sampleRateForCache,
+                    QwenTTSClient.formatForCache)
         }
     }
 
@@ -951,18 +978,21 @@ final class DubbingViewModel {
             // 命中后各分镜仍各自 finalize（自己的 atempo），故时长各自正确。
             // ⚠️ 命中时必须把缓存**复制**到临时文件再交给 finalize —— finalize
             // 会删掉传入的文件，直接给缓存真身会把缓存删空。
-            //
-            // 只对 **CosyVoice 引擎**开缓存：qwen-vc 克隆分支带「重试取最短」健壮性逻辑
-            // （synthesizeCloneRobust 可能连合成三次），把它塞进缓存会把「重试产出的
-            // 那一份」当成该文案的代表；且克隆音色按视频隔离，跨分镜复用收益本就低。
             let cacheSpec = Self.rawCacheSpec(for: choice, voiceID: synthVoiceID)
+
+            // 这条 dub 此前是否已按**同一段文案**合成过？若是，说明本次是「重新生成」
+            // （forceRegenerate 或改写后重生成）—— 那次合成可能跑飞过。
+            // qwen 克隆的跑飞是间歇性的（同样输入未必复现），但缓存会**固化**跑飞版，
+            // 所以这类场景必须绕过缓存重合成，而不是拿回那份可能脏的音频。
+            let regeneratedSameText = !dub.generatedForTextHash.isEmpty
+                && dub.generatedForTextHash == DubStaleness.textHash(of: dub.rewrittenText)
 
             // 两条路径（命中 / 新合成）各自返回「可交给 finalize 的 TTSResult」。
             // ⚠️ 刻意用 if/else **表达式**而不是「先 var result 再分支赋值」——
             // 后者 Swift 无法证明所有路径都已初始化（silgen 腿实测报
             // "variable 'result' used before being initialized"，而 typecheck 放行）。
             let hitURL = Self.ttsTempURL(prefix: "cachhit")
-            let cachedDuration: Double? = if let cacheSpec {
+            let cachedDuration: Double? = if let cacheSpec, !regeneratedSameText {
                 await RawAudioCacheStore.shared.hit(
                     key: RawAudioCacheStore.key(engine: cacheSpec.engine, model: cacheSpec.model,
                                                voiceID: synthVoiceID, text: dub.rewrittenText,
@@ -977,9 +1007,13 @@ final class DubbingViewModel {
                 MixLog.info("[TTSCache] 命中 raw=\(String(format: "%.2f", cachedDuration))s voice=\(synthVoiceID)")
                 result = TTSResult(wavPath: hitURL.path, rawDuration: cachedDuration)
             } else {
+                if regeneratedSameText {
+                    MixLog.info("[TTSCache] 该分镜此前已合成过同文案（可能跑飞过）→ 本次绕过缓存重合成")
+                }
                 result = try await Self.synthesizeFresh(
                     client: client, voiceID: synthVoiceID, text: dub.rewrittenText,
-                    targetDuration: target, bias: bias, cloned: cloned, cacheSpec: cacheSpec)
+                    targetDuration: target, bias: bias, cloned: cloned,
+                    skipCacheProbe: regeneratedSameText, cacheSpec: cacheSpec)
             }
             let finalized = try await finalizer.finalize(
                 tts: result, targetDuration: target, fps: video.fps > 0 ? video.fps : 30,

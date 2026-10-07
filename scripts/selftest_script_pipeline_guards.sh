@@ -408,6 +408,44 @@ else
   exit 1
 fi
 
+# G-C④ qwen-vc 分支被排除出缓存（M2 已定 qwen 路线 ⇒ 克隆音色也该省重复合成钱）
+build_tree "$DIRTY"
+python3 - "$DIRTY/MixCut/ViewModels/DubbingViewModel.swift" <<'PY'
+import sys
+p = sys.argv[1]
+s = open(p, encoding="utf-8").read()
+s = s.replace("""        case .qwenVC:
+            // QwenTTSClient 固定 wav / 24kHz 输出；model随 voice 绑定（克隆音色走
+            // VoiceCloneService.targetModel），故取该常量而不是硬编码字符串。
+            return (.qwenVC,
+                    VoiceCloneService.targetModel,""", "        case .qwenVC:\n            return nil")
+open(p, "w", encoding="utf-8").write(s)
+PY
+if run_isolated_guard "$DIRTY" "qwen-vc 引擎也须进缓存"; then
+  :
+else
+  echo "FAIL G-C④ 变异腿：qwen-vc 被排除出缓存应红却没红"
+  exit 1
+fi
+
+# G-C⑤ 重生成路径不再绕过缓存（会把间歇性跑飞的音频固化下来反复播放）
+build_tree "$DIRTY"
+python3 - "$DIRTY/MixCut/ViewModels/DubbingViewModel.swift" <<'PY'
+import sys
+p = sys.argv[1]
+s = open(p, encoding="utf-8").read()
+s = s.replace("if let cacheSpec, !regeneratedSameText {", "if let cacheSpec {")
+s = s.replace("skipCacheProbe: regeneratedSameText, cacheSpec: cacheSpec)",
+              "skipCacheProbe: false, cacheSpec: cacheSpec)")
+open(p, "w", encoding="utf-8").write(s)
+PY
+if run_isolated_guard "$DIRTY" "重生成路径读侧必须绕过缓存"; then
+  :
+else
+  echo "FAIL G-C⑤ 变异腿：重生成不绕过缓存应红却没红"
+  exit 1
+fi
+
 # 综合脏树：在最终脏树上叠加全部 G-V7 变异（供既有「总体应红」总判）
 build_tree "$DIRTY"
 sed -i '' 's/suppressVideoClone: video\.voiceFollowsGlobal//g' \

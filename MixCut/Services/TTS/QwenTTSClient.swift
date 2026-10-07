@@ -5,6 +5,11 @@ import Foundation
 actor QwenTTSClient: TTSClient {
     private static let endpoint = URL(string: "https://dashscope.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation")!
 
+    /// 缓存维度（M3）：DashScope 返回的 wav 固定 24kHz / wav 容器，
+    /// 暴露为内部常量供 DubbingViewModel 建键（单一真源，避免两处各写一份）。
+    nonisolated static let sampleRateForCache = 24000
+    nonisolated static let formatForCache = "wav"
+
     /// 合成模型：qwen3-tts-flash（系统音色）或 qwen3-tts-vc-*（克隆音色）。
     private let model: String
     private let apiKeyProvider: @Sendable () -> String?

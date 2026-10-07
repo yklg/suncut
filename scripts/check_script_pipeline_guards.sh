@@ -483,6 +483,25 @@ expect_ge "Core 键必须含 format 维度" "$(code_count_f "$RAW_CACHE_CORE" 'f
 expect_ge "Core 键必须含 rate 分桶（否则命中率崩）" \
   "$(code_count_f "$RAW_CACHE_CORE" 'bucket(for rate: Double)')" 1
 
+# ②b两个引擎都必须进缓存（M2 定了走 qwen 路线，qwenVC 不能被排除在缓存外）。
+expect_ge "CosyVoice 引擎须进缓存（预置/复刻音色）" \
+  "$(code_count_f "$DUB_VM" 'choice.cosyVoiceModel ?? CosyVoiceCatalog.model')" 1
+expect_ge "qwen-vc 引擎也须进缓存（M2 定 qwen 路线后不可排除）" \
+  "$(code_count_f "$DUB_VM" 'VoiceCloneService.targetModel')" 1
+expect_ge "qwen 分支的缓存 model 须取自单一真源（禁硬编码型号串）" \
+  "$(code_count_f "$DUB_VM" '.qwenVC,')" 1
+
+# ②c克隆音色的「脏音频」防线：qwen 克隆间歇性跑飞，缓存会把它固化，
+#     故「此前已按同文案合成过」这一路径必须绕过缓存（读侧 + 写侧同一把尺子）。
+expect_ge "必须有「本dub 此前已合成过同文案」的判据" \
+  "$(code_count_f "$DUB_VM" 'regeneratedSameText')" 1
+expect_ge "判据须比对 generatedForTextHash 与当前文案哈希" \
+  "$(code_count_f "$DUB_VM" 'dub.generatedForTextHash == DubStaleness.textHash')" 1
+expect_ge "重生成路径读侧必须绕过缓存（不得命中可能跑飞的音频）" \
+  "$(code_count_f "$DUB_VM" 'if let cacheSpec, !regeneratedSameText')" 1
+expect_ge "重生成路径写侧必须同样绕过（skipCacheProbe 同时关读写）" \
+  "$(code_count_f "$DUB_VM" 'skipCacheProbe ? nil : cacheSpec')" 1
+
 # ③ 键的构造只有一处（禁止 App 层自己拼 stem —— 拼错就是「界面显示已缓存却永远不命中」）。
 expect_ge "键构造必须收口在 Core（App 层唯一入口）" \
   "$(code_count_f "$RAW_CACHE_CORE" 'normalizedTextHash')" 1
