@@ -90,10 +90,15 @@ actor CloneRegistrationService {
         // 需裁切：取中段（避开开头/结尾的静音与寒暄，中段人声最连续）
         let target = Self.trimDuration(for: duration)
         let start = max(0, min((duration - target) / 2.0, duration - target))
-        let out = FileHelper.tempDirectory
-            .appendingPathComponent("clone-sample-\(UUID().uuidString).mp3")
+        // ⚠️ 落**持久目录**而非 tempDirectory，且**不在此处 defer 删除**
+        // （GAP-2）：原先写 temp + `defer { removeItem }`，而 defer 在 return 之前执行
+        // ⇒ 本函数返回一个「已被自己删除」的路径。症状隐蔽：原文件已合规时走
+        // 上面的 early return 不触发，只有**需要裁切的样本**才会静默失败。
+        // 现在：裁切产物活到注册成功（写入 VoiceProfile.sampleAudioPath），
+        // 之后由「未采用的裁切产物」清理逻辑回收（见计划 GAP-2）。
+        let out = FileHelper.cloneSamplesDirectory
+            .appendingPathComponent("sample-\(UUID().uuidString).mp3")
         try? fm.removeItem(at: out)
-        defer { try? fm.removeItem(at: out) }   // 失败路径不留半成品
 
         let args = [
             "-ss", String(format: "%.3f", start),
@@ -103,12 +108,19 @@ actor CloneRegistrationService {
             "-acodec", "libmp3lame", "-b:a", "64k",   // 64kbps 足够复刻，且 20s 仅约 160KB
             "-y", out.path,
         ]
+        // 失败路径清半成品（那是真垃圾：既不可用又占盘）；**成功路径保留**
+        // （它要活到注册成功、写入 VoiceProfile.sampleAudioPath）。
+        // 刻意用显式分支而非 `defer`：defer 无法区分成败，曾因此把成功产物也删掉（GAP-2）。
         do {
             _ = try await runner.run(arguments: args, timeoutSeconds: 120)
+            guard fm.fileExists(atPath: out.path) else {
+                try? fm.removeItem(at: out)
+                throw PrepError.trimmingFailed
+            }
         } catch {
+            try? fm.removeItem(at: out)
             throw PrepError.trimmingFailed
         }
-        guard fm.fileExists(atPath: out.path) else { throw PrepError.trimmingFailed }
 
         // ⚠️ 不能写成 `try? await probeDuration(...) ?? target`：?? 的右操作数是
         // autoclosure，不支持并发调用（编译器直接报"async call in an autoclosure"）。
@@ -118,6 +130,8 @@ actor CloneRegistrationService {
         let verdict = CloneSampleValidator.validate(durationSeconds: newDuration, byteSize: newSize)
         guard case .ok = verdict else {
             // 裁完仍不合规（如源太短）→ 如实报原因，不硬着头皮注册（那必然被服务端拒）。
+            // 这里删产物：它没被采用，留着就是孤儿。
+            try? fm.removeItem(at: out)
             throw PrepError.sampleRejected(
                 CloneSampleValidator.message(for: verdict) ?? "参考音频不符合要求")
         }

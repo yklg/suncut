@@ -87,6 +87,18 @@ enum FileHelper {
         appSupportDirectory.appendingPathComponent("ReplacedPictures", isDirectory: true)
     }
 
+    /// 复刻音色的**参考音频样本**目录（M2）。
+    ///
+    /// 为什么**不用** tempDirectory：裁切后的样本要活到「注册成功」那一刻之后
+    /// （`VoiceProfile.sampleAudioPath` 存它、用户点「重新注册」时还要复用），
+    /// 放 temp 会被系统在任意时刻清掉 ⇒ 复刻音色会突然变成「样本丢失、无法重注册」。
+    /// 放在 appSupport 下与 `Dubs` / `Thumbnails` 同级，语义一致。
+    static var cloneSamplesDirectory: URL {
+        let url = appSupportDirectory.appendingPathComponent("CloneSamples", isDirectory: true)
+        ensureDirectory(at: url)
+        return url
+    }
+
     // MARK: - 配音音频存储（按视频 hash / 方案变体 / 分镜 ID 三级目录）
 
     /// 配音音频全局目录：AppSupport/MixCut/Dubs/{videoHash}/{segmentId}/{voiceId}-v{textVariantIndex}.m4a

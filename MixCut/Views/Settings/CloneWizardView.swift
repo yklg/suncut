@@ -24,11 +24,22 @@ struct CloneWizardView: View {
 
     @State private var name = ""
     @State private var sourceKind: CloneProfileKind = .upload
+    /// 用户选中的**源文件**路径（用户挑了哪个文件），与「样本是否合规」无关。
     @State private var pickedPath: String?
     @State private var pickedDisplayName = ""
+    /// 已通过校验的合规样本 —— **样本合规性的唯一真源**。
+    ///
+    /// 为什么不能靠 `pickedPath != nil && durationOK`：
+    /// 那两个量会**脱钩**。失败路径曾把 `pickedPath` 置 nil 却保留 `durationSeconds`，
+    /// 于是「时长读数」仍停在上一份合规样本的值上；一旦 `pickedPath` 恢复非 nil
+    /// （重跑校验 / 重选又选了短样本），`canRegister` 就会**误判为可注册** ⇒ 注册门被绕过。
+    @State private var preparedSample: CloneRegistrationService.PreparedSample?
     @State private var durationSeconds: Double = 0
     @State private var consent = false
     @State private var phase: Phase = .idle
+    /// 样本类错误（就近显示在样本检查区）。
+    @State private var sampleErrorText: String?
+    /// 注册类错误（显示在末尾；来自服务端）。
     @State private var errorText: String?
 
     private enum Phase: Equatable {
@@ -45,6 +56,9 @@ struct CloneWizardView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: DesignTokens.Spacing.normal) {
                     sourceSection
+                    // 显示条件只看「用户选了文件」，**不**看合规状态——
+                    // 校验失败时样本信息必须仍在（否则用户看到「刚选了文件怎么又变未选择」，
+                    // 且没法就地改名、看不到建议区间）。
                     if pickedPath != nil { sampleSection }
                     consentSection
                     if let errorText {
@@ -55,14 +69,17 @@ struct CloneWizardView: View {
                     }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(24)
+                .padding(DesignTokens.Padding.page)
             }
             Divider()
             footer
         }
-        .frame(width: 520)
         .background(.regularMaterial)
-        .sheetContainerFrame(minWidth: 480, idealWidth: 520, maxWidth: 560,
+        // 尺寸唯一真源。**不再叠加 `.frame(width:)`** —— 那是本次错位的根因：
+        // 硬性宽度与sheetContainerFrame 的 minWidth 语义相反，系统夹到 min 后
+        // 内容仍按硬宽度排版 ⇒ 溢出被裁（标题与关闭按钮各切掉一半）。
+        // 宽度取三者同值，对齐 VoicePickerSheet 的既有范式。
+        .sheetContainerFrame(minWidth: 460, idealWidth: 460, maxWidth: 460,
                              minHeight: 420, idealHeight: 560)
     }
 
@@ -82,7 +99,7 @@ struct CloneWizardView: View {
             }
             .buttonStyle(.plain)
         }
-        .padding(DesignTokens.Spacing.normal)
+        .padding(DesignTokens.Padding.page)
     }
 
     // MARK: - 来源
@@ -128,6 +145,13 @@ struct CloneWizardView: View {
         pickedPath = url.path
         pickedDisplayName = url.lastPathComponent
         errorText = nil
+        // ⭐ 重选必须**先清掉上一份样本的合规状态**。否则在新样本校验完成前，
+        // `preparedSample` 仍是上一份的 ⇒ `canRegister` 为真 ⇒ 用户能在
+        // 「新样本还没验完」的窗口里点注册，注册的是**上一份的音频**。
+        // 这是「读路径不做无证据修正」纪律在 UI 侧的对应：状态必须与事实同步。
+        preparedSample = nil
+        durationSeconds = 0
+        sampleErrorText = nil
         // 名字默认取文件名（去扩展名），用户可改
         if name.isEmpty {
             name = url.deletingPathExtension().lastPathComponent
@@ -162,14 +186,25 @@ struct CloneWizardView: View {
             TextField("音色名称", text: $name)
                 .textFieldStyle(.roundedBorder)
                 .disabled(phase == .registering)
+            // 样本类错误**就近显示**：与「建议 10–20 秒」同区。
+            // 早前它落在最外层 VStack 末尾（授权勾选下方），用户要来回扫
+            // 才能把「太短了」和「建议区间」对上。
+            if let sampleErrorText {
+                Text(sampleErrorText)
+                    .font(DesignTokens.Typography.micro)
+                    .foregroundStyle(.red)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
         }
         .padding(.top, DesignTokens.Spacing.tight)
     }
 
-    private var durationOK: Bool {
-        durationSeconds >= CloneSampleValidator.minDurationSeconds
-            && durationSeconds <= CloneSampleValidator.maxDurationSeconds
-    }
+    /// 样本是否已通过校验 —— **只认 `preparedSample`**，不看 `durationSeconds`。
+    ///
+    /// 早前用 `durationSeconds` 的区间判定，而它在校验失败时**不会被重置**，
+    /// 于是「时长读数」可能停在上一份合规样本的值上 ⇒ 注册门被绕过。
+    private var durationOK: Bool { preparedSample != nil }
+
     private var durationCheckSymbol: String {
         if phase == .preparing { return "clock" }
         return durationOK ? "checkmark.circle.fill" : "exclamationmark.triangle.fill"
@@ -178,13 +213,21 @@ struct CloneWizardView: View {
         (phase != .preparing && durationOK) ? .green : .orange
     }
 
-    /// 准备合规样本（裁切+ 校验）。结果写进 `pickedPath`（可能换成裁切后的临时文件）。
+    /// 准备合规样本（裁切 + 校验）。
+    ///
+    /// 状态写入约定（这组语义是本次修复的核心，改动时三处必须同批）：
+    /// - `pickedPath`：**用户选了哪个源文件**。失败时**保留**（否则用户看到
+    ///   「刚选了文件怎么又变回未选择」，且没法就地改名）；
+    /// - `preparedSample`：**样本是否合规**的唯一真源，失败时置 nil；
+    /// - `durationSeconds`：**纯展示值**，失败时归零（不归零会显示上一份的残留时长）。
     private func prepareSample() async {
         guard let src = pickedPath else { return }
         phase = .preparing
         errorText = nil
+        sampleErrorText = nil
         do {
             let sample = try await CloneRegistrationService().prepareSample(from: src)
+            preparedSample = sample
             pickedPath = sample.path
             durationSeconds = sample.durationSeconds
             phase = .idle
@@ -194,8 +237,10 @@ struct CloneWizardView: View {
             }
         } catch {
             phase = .idle
-            errorText = FriendlyError.reason(for: error)
-            pickedPath = nil      // 不合规 ⇒ 回到「未选择」态，避免用户以为可以直接注册
+            preparedSample = nil
+            durationSeconds = 0
+            sampleErrorText = FriendlyError.reason(for: error)
+            // pickedPath 刻意保留：让样本信息与名称输入框继续可见，用户可就地改或重选。
         }
     }
 
@@ -235,19 +280,23 @@ struct CloneWizardView: View {
         .padding(.vertical, 12)
     }
 
+    /// 注册门。样本维度**只看 `preparedSample`**（合规与否的唯一真源），
+    /// 刻意不看 `pickedPath` / `durationSeconds` —— 后两者会脱钩，曾导致
+    /// 「校验失败后时长残留旧值」把注册门绕过去。
     private var canRegister: Bool {
-        pickedPath != nil && !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            && consent && durationOK && phase != .preparing && phase != .registering
+        preparedSample != nil && !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && consent && phase != .preparing && phase != .registering
     }
 
     private func register() async {
-        guard let path = pickedPath else { return }
+        guard let sample = preparedSample else { return }
         phase = .registering
         errorText = nil
+        sampleErrorText = nil
         let vm = VoiceCloneViewModel()
         await vm.register(displayName: name,
-                         samplePath: path,
-                         sampleDuration: durationSeconds,
+                         samplePath: sample.path,
+                         sampleDuration: sample.durationSeconds,
                          consentAccepted: consent,
                          kind: sourceKind,
                          context: modelContext)

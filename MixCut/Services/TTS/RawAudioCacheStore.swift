@@ -60,7 +60,13 @@ actor RawAudioCacheStore {
 
     // MARK: - 存
 
-    /// TTS 成功后存入。**必须在 finalize 之前调用**（finalize 会删源文件）。
+        /// TTS 成功后存入。**必须在 finalize 之前调用**（finalize 会删源文件）。
+    ///
+    /// 写入成功后**顺手做一次预算淘汰**（GAP-1）：此前 `evictToBudget()` 生产侧零调用，
+    /// 而 `budgetBytes` 与 `isOverBudget` 都在、设置页还显示「（超上限）」——
+    /// 承诺在 UI 上存在、代码从未执行，缓存只增不减。
+    /// **为何挂在写路径而不是读路径**：本次写入的量已知、淘汰目标确定（有确证答案）；
+    /// 而「读时顺带清理」会让「本次是否命中」依赖磁盘占用率，把可预测的行为变成不确定。
     /// - Returns: 是否真的存入（失败不阻断合成：缓存是优化，不是功能）。
     @discardableResult
     func store(key: RawAudioCacheKey, audioURL source: URL, rawDuration: Double) -> Bool {
@@ -78,6 +84,19 @@ actor RawAudioCacheStore {
             let data = try JSONSerialization.data(withJSONObject: sidecar)
             try data.write(to: sidecarURL(key), options: .atomic)
             touch(key)
+            // 预算自愈：仅在超预算时才真去扫盘（scanEntries 是 IO，
+            // 无条件调用会让每次存缓存都多一次全目录扫描）。
+            let entries = scanEntries()
+            let total = entries.reduce(Int64(0)) { $0 + $1.byteSize }
+            if budgetBytes > 0, total > budgetBytes {
+                let victims = RawAudioCacheEvictor.victims(entries, budgetBytes: budgetBytes,
+                                                           protectedStems: [key.fileStem])
+                var removed = 0
+                for v in victims where remove(v.fileStem) { removed += 1 }
+                if removed > 0 {
+                    MixLog.info("[TTSCache] 预算自愈：淘汰 \(removed) 项（\(total) → 预算 \(budgetBytes)）")
+                }
+            }
             return true
         } catch {
             try? FileManager.default.removeItem(at: tmp)
