@@ -4,7 +4,8 @@ import Foundation
 /// 复用千问 DashScope key（与文本/qwen 同一把）。原生支持 `rate` 语速。
 actor CosyVoiceTTSClient: TTSClient {
     private static let endpoint = URL(string: "wss://dashscope.aliyuncs.com/api-ws/v1/inference/")!
-    private let model = CosyVoiceCatalog.model
+    /// 合成型号：预置音色默认 cosyvoice-v2；全局复刻音色可经注册时绑定的型号注入。
+    private let model: String
     private static let sampleRate = 24000
     private static let overallTimeout: TimeInterval = 45
     /// rate 合法区间（基准 1.0）
@@ -13,7 +14,9 @@ actor CosyVoiceTTSClient: TTSClient {
 
     private let apiKeyProvider: @Sendable () -> String?
 
-    init(apiKeyProvider: @escaping @Sendable () -> String? = { KeychainHelper.dashScopeKey }) {
+    init(model: String = CosyVoiceCatalog.model,
+         apiKeyProvider: @escaping @Sendable () -> String? = { KeychainHelper.dashScopeKey }) {
+        self.model = model
         self.apiKeyProvider = apiKeyProvider
     }
 

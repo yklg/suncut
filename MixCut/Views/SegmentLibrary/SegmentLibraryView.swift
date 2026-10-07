@@ -145,6 +145,7 @@ struct SegmentLibraryView: View {
                     SegmentVariantInspector(
                         segment: seg,
                         dubVM: dubVM,
+                        project: project,
                         isPinned: seg.id == viewModel.pinnedSegmentID,
                         onClose: { viewModel.clearPinned() },
                         onStopRequest: { requestStopJob($0) }
@@ -755,6 +756,7 @@ struct SegmentLibraryView: View {
                 }
                 DubSettingsBar(video: video,
                                videoSegments: domain,
+                               project: project,
                                dubVM: dubVM,
                                scope: scope,
                                targets: targets,

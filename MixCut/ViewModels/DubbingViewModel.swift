@@ -27,8 +27,6 @@ final class DubbingViewModel {
         "数据与口碑背书的专业信任风格：用销量、复购率、检测结果、用户评价等具体数字与事实做支撑，措辞克制专业、少夸张，强调品质、资质与口碑，适合高客单价或决策谨慎品类的信息流广告",
         "限时限量、损失厌恶的紧迫促销风格：强调优惠的时间或库存边界与错过的损失（不得改写任何价格数字与现价/恢复价指向），节奏紧凑、句句推动决策，适合大促与清仓类信息流广告"
     ]
-    private static let auditionText = "这款产品真的很好用，喜欢的话点击下方链接了解一下吧。"
-
     let topVoices: [TTSVoice] = VoiceCatalog.top(10)
 
     /// 视频级配音作业注册表：进程级共享单例（Core，可 swift test）。
@@ -68,7 +66,6 @@ final class DubbingViewModel {
         return registry.busyIDs
     }
     var busyDubIDs: Set<UUID> = []
-    var auditioningVoiceId: String?
     var playingDubID: UUID?
 
     /// 配音错误性质：alert 是否提供「去设置配置」由它派生。
@@ -119,11 +116,16 @@ final class DubbingViewModel {
         return registry.canStop(id)
     }
 
-    init() {
-        // 唯一删除广播的第二消费者：职责仅限「按载荷取消作业」，
-        // 处理函数内严禁 load/fetch/save/flush（同栈递归是前案 P0），由守卫测试 G4 钉死。
-        // target-action 形态：本类全部存储属性均有默认值，init 入口 self 即完成初始化，
-        // 可直接传入；selector 经 nonisolated 跳板显式 hop MainActor。
+    /// 统一 designated init：注册删除广播观察者 + 注入 TTS 客户端（默认值=生产链路）。
+    /// - 观察者：唯一删除广播的第二消费者，处理函数内严禁 load/fetch/save/flush（G4 钉死）。
+    ///   selector 经 nonisolated 跳板显式 hop MainActor。
+    /// - 客户端注入：DebugSelfTest/测试可传假客户端；默认 CosyVoice/qwen-vc，旧行为零变化。
+    /// - rewriteService 注入：只换 AI provider 来源，prompt 构建/结果映射（Core）与轮次编排全同路径。
+    init(tts: TTSClient? = nil, vcClient: TTSClient? = nil,
+         rewriteService: ScriptRewriteService? = nil) {
+        self.tts = tts ?? CosyVoiceTTSClient()
+        self.vcClient = vcClient ?? QwenTTSClient(model: VoiceCloneService.targetModel)
+        self.rewriteService = rewriteService ?? ScriptRewriteService()
         NotificationCenter.default.addObserver(
             self,
             selector: #selector(handleGraphChange(_:)),
@@ -172,10 +174,12 @@ final class DubbingViewModel {
     }
 
     /// 统一改写入口的任务句柄发起：句柄归视频级注册表，切换分镜/素材不取消。
+    /// - Parameter projectOverrideRaw: 当前项目音色覆盖串（调用方从 Project 传入；nil=跟随全局）。
     func startRewriteTask(video: Video,
                           targets: [Segment],
                           presentation: DubScopePresentation,
-                          context: ModelContext) {
+                          context: ModelContext,
+                          projectOverrideRaw: String? = nil) {
         let vid = video.id
         guard !registry.isBusy(vid), !targets.isEmpty else {
             if registry.isBusy(vid) { Self.notifyBusy(videoName: video.name) }
@@ -190,7 +194,8 @@ final class DubbingViewModel {
             await self?.rewrite(video: video,
                                 targets: targets,
                                 presentation: presentation,
-                                context: context)
+                                context: context,
+                                projectOverrideRaw: projectOverrideRaw)
         }
         registry.register(vid, taskID: taskID,
                           targets: Set(targets.map(\.id)),
@@ -319,14 +324,26 @@ final class DubbingViewModel {
         bumpJobs()
     }
 
-    private let rewriteService = ScriptRewriteService()
-    private let tts: TTSClient = CosyVoiceTTSClient()
-    private let vcClient: TTSClient = QwenTTSClient(model: VoiceCloneService.targetModel)
+    /// 改写服务。init 可注入（默认 = 生产链路，运行时动态取当前 provider，Settings 改了立即生效）；
+    /// DebugSelfTest 就绪腿注入假 provider，在零真实 API 成本下走通`rewrite()` 全链路。
+    private let rewriteService: ScriptRewriteService
+    /// CosyVoice 合成客户端（预置音色与全局复刻；model 可经 init 注入，默认 cosyvoice-v2）。
+    private let tts: TTSClient
+    /// qwen3-tts-vc 逐视频克隆合成客户端（存量链路，行为不变）。
+    private let vcClient: TTSClient
     private let vocalSep = VocalSeparationService()
     private let cloneService = VoiceCloneService()
     private let finalizer = DubAudioFinalizer()
     private let asrService = ASRService()   // 逐句字幕对齐用（对成品配音做 whisper ASR 测每句时间）
     private var auditionPlayer: AVAudioPlayer?
+
+    /// 按音色身份选合成客户端（引擎路由，与业务模式无关）。
+    private func synthesisClient(for choice: VoiceChoice) -> TTSClient {
+        switch choice.engine {
+        case .cosyVoice: return tts
+        case .qwenVC: return vcClient
+        }
+    }
     private var playbackResetTask: Task<Void, Never>?
 
     /// 该 voiceId 是否是这个视频的克隆原声。
@@ -421,7 +438,8 @@ final class DubbingViewModel {
     func rewrite(video: Video,
                  targets: [Segment],
                  presentation: DubScopePresentation,
-                 context: ModelContext) async {
+                 context: ModelContext,
+                 projectOverrideRaw: String? = nil) async {
         let vid = video.id
         guard !isBusy(videoID: vid) else { return }   // 防重复点击；与其它视频互不影响
         // 入口 guard（P2-R6）：空目标（disabled 被程序化误用）静默不执行，
@@ -430,17 +448,44 @@ final class DubbingViewModel {
         beginBusy(vid)
         defer { endBusy(vid) }
 
-        guard await ensureClonedVoice(for: video, context: context) else {
-            // 克隆阶段被停止/素材被删：中性结束，不补「克隆未就绪」错误。
-            if Task.isCancelled { announceCancellation(videoID: vid) }
+        // 音色解析（唯一入口；UI 与 MCP 同此）：视频克隆优先（存量零变化），
+        // 未克隆或已显式跟随全局 → 项目覆盖/全局预置音色，跳过克隆、不付分离注册费。
+        let resolution = VoicePreferences.resolveForLegacy(
+            video: video, projectOverrideRaw: projectOverrideRaw,
+            suppressVideoClone: video.voiceFollowsGlobal)
+        let initialChoice: VoiceChoice
+        switch resolution {
+        case .unconfigured:
+            errorState = .init(
+                message: "尚未配置配音音色：请到「设置 → 配音」选择一个全局音色后再改写；需要保留原博主音色时，可先在该视频上克隆原声。",
+                kind: .generic)
             return
+        case .resolved(let resolved):
+            initialChoice = resolved
         }
-        if Task.isCancelled { announceCancellation(videoID: vid); return }
-        guard !video.isDroppedFromContext else { return }
-        let voices = video.selectedVoiceIds   // = [clonedVoiceId]
-        guard !voices.isEmpty else {
-            errorState = .init(message: "克隆原声未就绪", kind: .generic); return
+
+        // 本次改写统一使用的音色（克隆分支可能因重克隆换 id，在 ensure 之后取最终值）。
+        let choice: VoiceChoice
+        if initialChoice.engine == .qwenVC {
+            // 逐视频克隆分支：维持原链路（demucs 分离 → 注册 → 合成），含 Key 变更重克隆兜底。
+            guard await ensureClonedVoice(for: video, context: context) else {
+                if Task.isCancelled { announceCancellation(videoID: vid) }
+                return
+            }
+            if Task.isCancelled { announceCancellation(videoID: vid); return }
+            guard !video.isDroppedFromContext else { return }
+            guard let currentClone = video.clonedVoiceId, !currentClone.isEmpty else {
+                errorState = .init(message: "克隆原声未就绪", kind: .generic); return
+            }
+            // 以 ensure 之后的克隆 id 为准（重克隆兜底可能已换 voice）。
+            choice = .videoClone(voiceID: currentClone)
+        } else {
+            // 预置/全局复刻分支：零克隆。检查取消与死实体后直接用解析音色。
+            if Task.isCancelled { announceCancellation(videoID: vid); return }
+            guard !video.isDroppedFromContext else { return }
+            choice = initialChoice
         }
+        let voices = [choice.voiceID]
         // 死实体过门：等待克隆期间分镜可能已被删除。
         let reconfigurable = targets.filter {
             !$0.isDroppedFromContext && !$0.isVoiceLocked && !$0.text.isEmpty
@@ -753,12 +798,31 @@ final class DubbingViewModel {
         }
     }
 
+    // MARK: - M1b 音色偏好写入收口
+
+    /// 视频级「原声克隆 ↔ 跟随全局/项目」开关唯一写入点（G-V7 守此函数名）。
+    /// 只改变此后新生成的解析口径（VoiceResolver.suppressVideoClone），不重生成、不删除既有音频。
+    /// VM 不持有 ModelContext，与配音生成方法同形态由调用方显式传入。
+    func setVideoFollowsGlobal(_ follows: Bool, video: Video, context: ModelContext) {
+        guard video.voiceFollowsGlobal != follows else { return }
+        video.voiceFollowsGlobal = follows
+        context.safeSave()
+    }
+
     // MARK: - 按需生成单格音频
 
     /// - Parameter silent: 批量生成时传 true，失败不逐条弹窗（由调用方汇总）。
     /// - Returns: 是否生成成功。
     @discardableResult
     func generateAudio(for dub: SegmentDub, context: ModelContext, silent: Bool = false) async -> Bool {
+        await generateAudio(for: dub, context: context, silent: silent, resolvedChoice: nil)
+    }
+
+    /// - Parameter resolvedChoice: 调用方已经 VoiceResolver 解析出的音色身份（脚本成片/无克隆链路传入）。
+    ///   nil = 兼容旧调用，按 dub.voiceId 现场推导（视频克隆 ∪ CosyVoice 目录）。
+    @discardableResult
+    func generateAudio(for dub: SegmentDub, context: ModelContext, silent: Bool = false,
+                       resolvedChoice: VoiceChoice?) async -> Bool {
         guard let segment = dub.segment, let video = segment.video else { return false }
         guard !dub.rewrittenText.isEmpty else {
             if !silent {
@@ -766,36 +830,59 @@ final class DubbingViewModel {
             }
             return false
         }
-        let cloned = isCloned(dub.voiceId, video)
-        // 防御：非克隆音色必须在当前 CosyVoice 目录里，否则引擎会报 418
-        guard cloned || VoiceCatalog.voice(id: dub.voiceId) != nil else {
+        // 音色身份：显式解析优先；否则按存量形态推导（视频克隆 ∪ 预置目录）。
+        // 空 voiceId 的脚本空壳必须由调用方经解析绑定后传入，这里不猜测、不兜底。
+        let choice: VoiceChoice
+        if let resolvedChoice {
+            choice = resolvedChoice
+        } else if isCloned(dub.voiceId, video) {
+            choice = .videoClone(voiceID: dub.voiceId)
+        } else if VoiceCatalog.voice(id: dub.voiceId) != nil {
+            choice = .preset(voiceID: dub.voiceId)
+        } else {
             if !silent {
                 errorState = .init(
-                    message: "该变体的音色已失效（旧音色），请在顶部重选音色后重新「一键改写」",
+                    message: "该变体的音色未配置或已失效，请在「设置 → 配音」选择全局音色后重试",
                     kind: .generic)
             }
             return false
         }
+        // M2 起全局复刻 profile 的有效性在此接 isValidCloneProfile；M1 无 profile 实体，恒 false。
+        let usable = VoiceSynthesisGate.isUsable(
+            choice,
+            isCatalogVoice: { VoiceCatalog.voice(id: $0) != nil },
+            isValidCloneProfile: { _ in false })
+        guard usable else {
+            if !silent {
+                errorState = .init(
+                    message: "该变体的音色未配置或已失效，请在「设置 → 配音」选择全局音色后重试",
+                    kind: .generic)
+            }
+            return false
+        }
+        let cloned = choice.engine == .qwenVC
         busyDubIDs.insert(dub.id)
         defer { busyDubIDs.remove(dub.id) }
         do {
             let target = segment.duration
             let bias = video.dubSpeechRate
-            // 克隆音色走 qwen-vc（无数值语速，靠 atempo 对齐）；其它走 CosyVoice + rate 对齐
-            let client = cloned ? vcClient : tts
+            // qwen-vc 引擎（逐视频克隆）无数值语速，靠 atempo 对齐 + 健壮重试；
+            // CosyVoice 引擎（预置/全局复刻）走 rate 对齐。客户端按音色身份路由。
+            let client = synthesisClient(for: choice)
+            let synthVoiceID = choice.voiceID
             var result: TTSResult
             if cloned {
                 // qwen 克隆 TTS 间歇性"续读参考内容/跑飞"(音频比台词长，混进下一段)：
                 // 干净版必然最短 → 重试取最短，看着干净(时长≤字数×阈值)即提前采用。
                 result = try await Self.synthesizeCloneRobust(
-                    client: client, text: dub.rewrittenText, voiceId: dub.voiceId)
+                    client: client, text: dub.rewrittenText, voiceId: synthVoiceID)
             } else {
-                result = try await client.synthesize(text: dub.rewrittenText, voiceId: dub.voiceId,
+                result = try await client.synthesize(text: dub.rewrittenText, voiceId: synthVoiceID,
                                                      languageType: "Chinese", rate: 1.0)
                 if let retarget = SpeechRatePlanner.retargetRate(
                     targetDuration: target, measuredDuration: result.rawDuration,
                     measuredAtRate: 1.0, bias: bias) {
-                    result = try await client.synthesize(text: dub.rewrittenText, voiceId: dub.voiceId,
+                    result = try await client.synthesize(text: dub.rewrittenText, voiceId: synthVoiceID,
                                                          languageType: "Chinese", rate: retarget)
                 }
             }
@@ -1023,21 +1110,383 @@ final class DubbingViewModel {
         }
     }
 
-    // MARK: - 试听音色样例
+    // MARK: - 产品脚本成片：配音生成（dubOnly，全新配音，不克隆、不改文案）
 
-    func audition(voiceId: String, rate: Double = 1.0, cloned: Bool = false) async {
-        auditioningVoiceId = voiceId
-        defer { auditioningVoiceId = nil }
-        do {
-            let client = cloned ? vcClient : tts
-            let result = try await client.synthesize(text: Self.auditionText, voiceId: voiceId,
-                                                     languageType: "Chinese", rate: rate)
-            let player = try AVAudioPlayer(contentsOf: URL(fileURLWithPath: result.wavPath))
-            auditionPlayer = player
-            player.play()
-        } catch {
-            errorState = .init(
-                message: "试听失败：\(Self.friendlyError(error))", kind: .generic)
+    /// 脚本方案配音就绪度（VM 单一投影；UI 与导出 blockers 同源）。
+    struct ScriptReadiness: Equatable {
+        var ready: Int
+        var total: Int
+        var allReady: Bool { total > 0 && ready == total }
+    }
+
+    /// 单槽配音 UI 态（VM 投影；视图层零跨边读）。
+    /// M1b：staleVoice = 已有音频但音色已被改选（先于 ready 判定；旧音频可播放，点生成才按新音色合成）。
+    enum ScriptSlotState: Equatable {
+        case missing, pending, busy, ready, staleVoice
+    }
+
+    /// 槽位当前生效音色（M1b 单一函数，展示投影与生成路径共用）：
+    /// 段覆盖 VoiceChoiceCoder 串优先（坏串回落），否则项目覆盖 → 全局默认；未配置返回 nil。
+    /// 纯字符串/UserDefaults 读取，无 SwiftData 关系访问，无 IO。
+    func resolvedScriptChoice(for schemeSeg: SchemeSegment, project: Project?) -> VoiceChoice? {
+        VoiceChoiceCoder.decode(schemeSeg.preferredVoiceChoiceRaw)
+            ?? projectLevelScriptChoice(project: project)
+    }
+
+    /// 项目级脚本音色（resolveForScript 的 .resolved 取值）。
+    private func projectLevelScriptChoice(project: Project?) -> VoiceChoice? {
+        guard case .resolved(let choice) = VoicePreferences.resolveForScript(project: project) else {
+            return nil
         }
+        return choice
+    }
+
+    /// 段级音色覆盖唯一写入收口（raw=nil 表示跟随项目/全局默认）。只影响此后新生成。
+    func setScriptSlotVoiceOverride(raw: String?, schemeSeg: SchemeSegment, context: ModelContext) {
+        schemeSeg.preferredVoiceChoiceRaw = raw
+        context.safeSave()
+    }
+
+    /// 方案槽有效变体的纯值投影（App 层值类型；Core 侧对应 DubVariantValue）。
+    /// 视图只消费它，不直读 segment.segmentDubs（G08）。
+    struct SlotVariantView: Identifiable, Equatable {
+        let dubID: UUID
+        let variantIndex: Int
+        let voiceID: String
+        var id: UUID { dubID }
+    }
+
+    /// 方案槽 R3 有效变体：按卡片所属工作流解析「当前音色」后交 Core 去重。
+    /// dubOnly 脚本槽当前音色=段覆盖→项目/全局且永不回退克隆；普通方案槽=该视频 legacy 解析。
+    func effectiveSlotVariants(for schemeSeg: SchemeSegment, project: Project?) -> [SlotVariantView] {
+        guard let segment = schemeSeg.segment, let video = segment.video else { return [] }
+        let isDubOnly = !(schemeSeg.scheme?.audioTrackPolicy.allowsOriginalFallback ?? true)
+        let preferredVoiceID: String?
+        let cloneVoiceID: String?
+        if isDubOnly {
+            preferredVoiceID = resolvedScriptChoice(for: schemeSeg, project: project)?.voiceID
+            cloneVoiceID = nil
+        } else if case .resolved(let choice) = VoicePreferences.resolveForLegacy(
+            video: video,
+            projectOverrideRaw: project?.preferredVoiceChoiceRaw,
+            suppressVideoClone: video.voiceFollowsGlobal) {
+            preferredVoiceID = choice.voiceID
+            cloneVoiceID = video.clonedVoiceId
+        } else {
+            preferredVoiceID = nil
+            cloneVoiceID = video.clonedVoiceId
+        }
+        return segment.effectiveDubVariants(
+            preferredVoiceID: preferredVoiceID,
+            videoCloneVoiceID: cloneVoiceID
+        ).map {
+            SlotVariantView(dubID: $0.id, variantIndex: $0.textVariantIndex, voiceID: $0.voiceId)
+        }
+    }
+
+    /// 素材库检查器 R3 有效变体（legacy 链路；返回模型对象供既有台词/播放路径使用）。
+    /// 关系读取全部封在 VM：preferred 取该视频解析结果（含跟随开关与项目覆盖），克隆取视频字段。
+    func effectiveLegacyVariants(for segment: Segment, project: Project?) -> [SegmentDub] {
+        guard let video = segment.video else { return [] }
+        var preferredVoiceID: String?
+        if case .resolved(let choice) = VoicePreferences.resolveForLegacy(
+            video: video,
+            projectOverrideRaw: project?.preferredVoiceChoiceRaw,
+            suppressVideoClone: video.voiceFollowsGlobal) {
+            preferredVoiceID = choice.voiceID
+        }
+        return segment.effectiveDubVariants(
+            preferredVoiceID: preferredVoiceID,
+            videoCloneVoiceID: video.clonedVoiceId)
+    }
+
+    /// 方案涉及的视频 id 集合（VM 内读关系；供忙碌/取消，视图不直接碰关系链）。
+    private func scriptSchemeVideoIDs(_ scheme: MixScheme) -> Set<UUID> {
+        Set(scheme.orderedSegments.compactMap { $0.segment?.video?.id })
+    }
+
+    /// 方案是否有配音作业在跑。
+    func isScriptSchemeBusy(_ scheme: MixScheme) -> Bool {
+        _ = jobsRevision
+        return scriptSchemeVideoIDs(scheme).contains { isBusy(videoID: $0) }
+    }
+
+    /// 停止方案涉及的全部视频作业。
+    func cancelScriptSchemeJobs(_ scheme: MixScheme) {
+        for vid in scriptSchemeVideoIDs(scheme) {
+            cancelJobs(for: vid, reason: .userStop)
+        }
+    }
+
+    /// 单槽配音态（VM 读 segment/segmentDubs/video，视图只 switch 枚举）。
+    /// M1b：project 必传——已生成音频还要与槽位生效音色比对（staleVoice）。
+    func scriptSlotState(_ schemeSeg: SchemeSegment, project: Project?) -> ScriptSlotState {
+        guard let segment = schemeSeg.segment else { return .missing }
+        // 本槽 dub 正在合成为最高优先（不用随机 UUID 占位，缺 id 即不忙）。
+        if let id = schemeSeg.selectedSegmentDubId, busyDubIDs.contains(id) { return .busy }
+        if let id = schemeSeg.selectedSegmentDubId,
+           let dub = segment.segmentDubs.first(where: { $0.id == id }) {
+            if let path = dub.audioFilePath, FileManager.default.fileExists(atPath: path) {
+                // 已有音频但音色已改选 → stale（先于 ready）；未配置音色时不判 stale（无法合成新音色，仍只展示已生成）。
+                let resolvedID = resolvedScriptChoice(for: schemeSeg, project: project)?.voiceID
+                if DubVariantSelector.isStale(boundVoiceID: dub.voiceId, resolvedVoiceID: resolvedID) {
+                    return .staleVoice
+                }
+                return .ready
+            }
+            return .pending
+        }
+        return .missing
+    }
+
+    /// 一组分镜下「已有音频」的配音变体数（素材库视频行计数，排除空壳）。
+    func readyDubCount(in segments: [Segment]) -> Int {
+        segments.reduce(0) { $0 + $1.segmentDubs.filter { $0.audioFilePath != nil }.count }
+    }
+
+    /// 该分镜所属视频当前是否有配音作业；返回进度文案（空串=忙碌但无阶段文案，nil=不忙）。
+    func videoDubProgress(for segment: Segment) -> String? {
+        _ = jobsRevision
+        guard let vid = segment.video?.id, isBusy(videoID: vid) else { return nil }
+        return progressText(videoID: vid)
+    }
+
+    /// 未绑定的脚本成片配音空壳（provenance 脚本族 + 空音色 + 无音频）。
+    func unboundScriptShells(in segment: Segment) -> [SegmentDub] {
+        segment.segmentDubs.filter {
+            ScriptDubReap.scriptProvenanceRaws.contains($0.textProvenanceRaw)
+                && $0.voiceId.isEmpty
+                && ($0.audioFilePath == nil)
+        }
+    }
+
+    /// 该分镜是否「仅有脚本空壳、无任何真实变体」（检查器据此显示引导而非死路）。
+    func hasOnlyUnboundScriptShells(_ segment: Segment) -> Bool {
+        let shells = unboundScriptShells(in: segment)
+        guard !shells.isEmpty else { return false }
+        return segment.segmentDubs.allSatisfy { shells.contains($0) }
+    }
+
+    /// 实际存在的改写版下标（排除未绑定脚本空壳；检查器变体池唯一投影）。
+    func presentVariantIndices(_ segment: Segment) -> [Int] {
+        let shellIDs = Set(unboundScriptShells(in: segment).map(\.id))
+        return Array(Set(segment.segmentDubs
+            .filter { !shellIDs.contains($0.id) }
+            .map(\.textVariantIndex))).sorted()
+    }
+
+    func scriptDubbingReadiness(for scheme: MixScheme) -> ScriptReadiness {
+        var ready = 0, total = 0
+        for ss in scheme.orderedSegments {
+            total += 1
+            if let id = ss.selectedSegmentDubId,
+               let dub = ss.segment?.segmentDubs.first(where: { $0.id == id }),
+               let path = dub.audioFilePath, FileManager.default.fileExists(atPath: path) {
+                ready += 1
+            }
+        }
+        return .init(ready: ready, total: total)
+    }
+
+    /// 整方案生成：视频内串行、跨视频最多 2 路（Core BoundedTaskGate）。
+    /// 不调用 AI 改写、不克隆；每槽经 VoiceResolver（项目→全局）解析音色。
+    /// - Returns: (成功数, 失败数, 逐段去重原因)
+    @discardableResult
+    func generateScriptDubs(for scheme: MixScheme, project: Project?,
+                            context: ModelContext) async -> (ok: Int, fail: Int, errors: [String]) {
+        let ordered = scheme.orderedSegments
+        guard !ordered.isEmpty else { return (0, 0, []) }
+
+        // M1b：音色按槽解析（段覆盖 → 项目/全局），不再整批只认一个 choice——
+        // 允许方案内逐段不同音色；全槽都未配置时逐槽记同一失败原因，观感等同整批阻断。
+
+        // 按视频分组（保持方案顺序）。
+        var groups: [(videoID: UUID, slots: [SchemeSegment])] = []
+        for ss in ordered {
+            guard let seg = ss.segment, let vid = seg.video?.id else { continue }
+            if let idx = groups.firstIndex(where: { $0.videoID == vid }) {
+                groups[idx].slots.append(ss)
+            } else {
+                groups.append((vid, [ss]))
+            }
+        }
+
+        let gate = BoundedTaskGate(maxConcurrent: 2)
+        var ok = 0, fail = 0
+        var errors: [String] = []
+        // 跨组结果归并用串行队列（actor 内安全）。
+        await withTaskGroup(of: (Int, Int, [String]).self) { group in
+            for (vid, slots) in groups {
+                group.addTask { [weak self] in
+                    do {
+                        return try await gate.run { () -> (Int, Int, [String]) in
+                            guard let self else { return (0, slots.count, ["配音服务不可用"]) }
+                            return await self.generateScriptSlots(
+                                slots, scheme: scheme, project: project,
+                                videoID: vid, context: context)
+                        }
+                    } catch {
+                        return (0, slots.count, ["已取消"])
+                    }
+                }
+            }
+            for await (o, f, es) in group {
+                ok += o; fail += f
+                for e in es where !errors.contains(e) { errors.append(e) }
+            }
+        }
+        MixLog.info("[ScriptDub] 方案配音生成完成 ok=\(ok) fail=\(fail)")
+        return (ok, fail, errors)
+    }
+
+    /// 单卡生成（一个槽位）。返回是否成功；失败原因写 lastDubErrors/errorState。
+    @discardableResult
+    func generateScriptDub(for schemeSeg: SchemeSegment, scheme: MixScheme,
+                           project: Project?, context: ModelContext,
+                           forceRegenerate: Bool = false) async -> Bool {
+        guard let seg = schemeSeg.segment, let vid = seg.video?.id else { return false }
+        let (ok, _, errors) = await generateScriptSlots(
+            [schemeSeg], scheme: scheme, project: project, videoID: vid,
+            context: context, forceRegenerate: forceRegenerate)
+        if ok == 0, let e = errors.first {
+            errorState = .init(message: e, kind: .generic)
+        }
+        return ok == 1
+    }
+
+    /// 同一视频内逐槽串行合成（调用方负责并发闸）。M1b：每槽按段覆盖→项目/全局解析音色。
+    private func generateScriptSlots(_ slots: [SchemeSegment], scheme: MixScheme,
+                                     project: Project?, videoID: UUID,
+                                     context: ModelContext,
+                                     forceRegenerate: Bool = false) async -> (Int, Int, [String]) {
+        var ok = 0, fail = 0
+        var errors: [String] = []
+        let total = slots.count
+        for (i, ss) in slots.enumerated() {
+            if Task.isCancelled {
+                errors.append("已停止")
+                break
+            }
+            // 段覆盖 → 项目/全局（与展示投影同一函数）；本槽未配置音色则跳过合成、结构化报错。
+            guard let choice = resolvedScriptChoice(for: ss, project: project) else {
+                fail += 1
+                let reason = "第 \(ss.position) 段：尚未配置配音音色，请到「设置 → 配音」选择或在本段菜单指定音色"
+                if !errors.contains(reason) { errors.append(reason) }
+                continue
+            }
+            setStage(videoID, .synthesize, "合成脚本配音 \(i + 1)/\(total)…",
+                     fraction: Double(i) / Double(max(1, total)))
+            let result = await bindAndSynthesize(ss, scheme: scheme, choice: choice,
+                                                 context: context, forceRegenerate: forceRegenerate)
+            switch result {
+            case .success:
+                ok += 1
+            case .failure(let reason):
+                fail += 1
+                if !errors.contains(reason) { errors.append(reason) }
+            }
+        }
+        setProgress(videoID, "")
+        try? context.save()
+        return (ok, fail, errors)
+    }
+
+    private enum SlotResult { case success, failure(String) }
+
+    /// 单槽：Core ScriptDubBinding 四分支落 SwiftData → generateAudio（不改文案、不克隆）。
+    private func bindAndSynthesize(_ ss: SchemeSegment, scheme: MixScheme,
+                                   choice: VoiceChoice, context: ModelContext,
+                                   forceRegenerate: Bool = false) async -> SlotResult {
+        guard let segment = ss.segment, segment.video != nil else {
+            return .failure("第 \(ss.position) 段：分镜数据缺失")
+        }
+        let existing = segment.segmentDubs.map {
+            ExistingDub(dubID: $0.id, variantIndex: $0.textVariantIndex,
+                        voiceID: $0.voiceId, text: $0.rewrittenText,
+                        hasAudio: $0.audioFilePath != nil)
+        }
+        let shellID = ss.selectedSegmentDubId
+        let shell = existing.first { $0.dubID == shellID }
+        // 文案真源：壳的脚本台词；壳缺失则从冻结 ScriptScene 反查（防御分支，清理豁免后罕见）。
+        let scriptText: String = {
+            if let shell, !shell.text.isEmpty { return shell.text }
+            return scriptSceneText(for: segment, scheme: scheme, context: context)
+        }()
+        guard !scriptText.isEmpty else { return .failure("第 \(ss.position) 段：脚本台词为空") }
+
+        let outcome = ScriptDubBinding.resolve(
+            shellDubID: shellID, shellIndex: shell?.variantIndex,
+            shellText: scriptText, existing: existing, voiceID: choice.voiceID)
+
+        let targetDub: SegmentDub
+        switch outcome {
+        case .reuseExisting(let reusableID, let shellToDelete, _, _):
+            guard let reusable = segment.segmentDubs.first(where: { $0.id == reusableID }) else {
+                return .failure("第 \(ss.position) 段：可复用配音已不存在")
+            }
+            if let sid = shellToDelete, sid != reusableID,
+               let shellModel = segment.segmentDubs.first(where: { $0.id == sid }) {
+                context.delete(shellModel)
+            }
+            ss.selectedSegmentDubId = reusableID
+            targetDub = reusable
+        case .relocate(let sid, let newIndex, let voiceID):
+            guard let shellModel = segment.segmentDubs.first(where: { $0.id == sid }) else {
+                return .failure("第 \(ss.position) 段：配音载体缺失")
+            }
+            shellModel.textVariantIndex = newIndex
+            shellModel.voiceId = voiceID
+            targetDub = shellModel
+        case .bindInPlace(let sid, let voiceID):
+            guard let shellModel = segment.segmentDubs.first(where: { $0.id == sid }) else {
+                return .failure("第 \(ss.position) 段：配音载体缺失")
+            }
+            shellModel.voiceId = voiceID
+            targetDub = shellModel
+        case .createNew(let index, let voiceID):
+            let dub = SegmentDub(segment: segment, voiceId: voiceID,
+                                 voiceProvider: "cosyvoice",
+                                 textVariantIndex: index, rewrittenText: scriptText)
+            // 继承脚本来源（供删除归属 Reap 判定）；反查不到方向时按正向 AI 新撰记录。
+            dub.setProvenance(scriptDirection(for: segment, scheme: scheme, context: context))
+            context.insert(dub)
+            segment.segmentDubs.append(dub)
+            ss.selectedSegmentDubId = dub.id
+            targetDub = dub
+        }
+        try? context.save()
+
+        // 已有音频直接视为成功，不重复合成、不重复计费；forceRegenerate（单卡重生成）除外。
+        if !forceRegenerate,
+           let path = targetDub.audioFilePath, FileManager.default.fileExists(atPath: path) {
+            return .success
+        }
+        let startedOK = await generateAudio(for: targetDub, context: context,
+                                            silent: true, resolvedChoice: choice)
+        return startedOK ? .success : .failure(
+            lastDubErrors[targetDub.id] ?? "第 \(ss.position) 段：配音合成失败")
+    }
+
+    /// 经活 fetch + 标识符解边反查槽位脚本台词（VM 内允许，视图层禁止）。
+    private func scriptSceneText(for segment: Segment, scheme: MixScheme,
+                                 context: ModelContext) -> String {
+        let scenes = (try? context.fetch(FetchDescriptor<ScriptScene>())) ?? []
+        let docs = (try? context.fetch(FetchDescriptor<ScriptDocument>())) ?? []
+        return scenes.first { scene in
+            scene.matchedSegment?.id == segment.id
+                && docs.contains { $0.id == scene.script?.id && $0.realizedScheme?.id == scheme.id }
+        }?.text ?? ""
+    }
+
+    private func scriptDirection(for segment: Segment, scheme: MixScheme,
+                                 context: ModelContext) -> TranscriptSource {
+        let docs = (try? context.fetch(FetchDescriptor<ScriptDocument>())) ?? []
+        let scenes = (try? context.fetch(FetchDescriptor<ScriptScene>())) ?? []
+        let isReverse = scenes.contains { scene in
+            scene.matchedSegment?.id == segment.id
+                && docs.contains { $0.id == scene.script?.id && $0.realizedScheme?.id == scheme.id
+                    && $0.direction == .reverse }
+        }
+        return isReverse ? .userScriptReverse : .productScript
     }
 }

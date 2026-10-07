@@ -52,46 +52,126 @@ struct DubExportInput: Sendable {
     let maxWidth: Int
     let maxHeight: Int
 
+    /// dubOnly 策略下阻塞导出的单个槽位（带定位与人话原因；绝不回退原声）。
+    struct Blocker: Sendable {
+        let position: Int          // 槽位序号（从 1 起）
+        let segmentLabel: String   // 分镜编号（seg_xxx）
+        let reason: String
+    }
+
+    /// 导出输入构建错误（全部带可展示的人话描述）。
+    enum BuildError: LocalizedError {
+        case noOrderedSegments
+        case allPicturesMissing
+        case missingVocals(videoName: String)
+        case dubOnlyBlocked([Blocker])
+
+        var errorDescription: String? {
+            switch self {
+            case .noOrderedSegments:
+                return "方案中没有可导出的分镜"
+            case .allPicturesMissing:
+                return "所有分镜的画面文件都缺失，无法导出（素材可能已被移动或删除）"
+            case .missingVocals(let name):
+                return "全局 BGM 模式缺少「\(name)」的纯人声音轨（vocals.wav），无法导出"
+            case .dubOnlyBlocked(let blockers):
+                let shown = blockers.prefix(8).map {
+                    "第 \($0.position) 段（\($0.segmentLabel)）：\($0.reason)"
+                }.joined(separator: "；")
+                let more = blockers.count > 8 ? " 等 \(blockers.count) 段" : ""
+                return "全新配音策略下以下分镜未就绪：\(shown)\(more)。请先在方案详情逐段生成配音后再导出（不会回退原声）"
+            }
+        }
+    }
+
     /// 从某方案解析出导出输入（必须在 @MainActor 调用）。
     /// - Parameter combo: 每槽选定的变体 dubId（与 orderedSegments 对齐，nil=原声）。
     ///   传 nil 时退回按 SchemeSegment.selectedSegmentDubId 取定（单条/预览一致）。
-    ///   nil/锁定/找不到/无音频 → 原声回退。配音段会自动混入分离出的 BGM。
     /// - Parameter useVocalsOnly: 全局 BGM 模式——原声段改用纯人声切片、配音段不混原分离 BGM。
-    ///   任一分镜缺 vocals.wav 时返回 nil（预检阶段已保证分离成功；这里是兜底防御，
-    ///   绝不静默回退成混音原声——那会悄悄给用户一条 BGM 没去干净的片子）。
+    ///   keepOriginal 策略下任一分镜缺 vocals.wav 即抛错（预检阶段已保证分离成功）；
+    ///   dubOnly 方案没有原声段，不要求 vocals。
+    ///
+    /// 声音策略（M4 接线，唯一依据 = `scheme.audioTrackPolicy`）：
+    /// - `keepOriginal`：逐段「有配音用配音、无配音回退原声」（历史行为不变）；
+    /// - `dubOnly`（产品脚本成片）：每槽必须使用物化时绑定的新配音且音频已生成，
+    ///   不看分镜的 isVoiceLocked 标记；任一槽未就绪 → 抛 `dubOnlyBlocked`（带定位），
+    ///   **绝不静默回退原声**（策略即承诺：画面静音 + 全新配音）。
     @MainActor
-    static func from(scheme: MixScheme, combo: [UUID?]? = nil, useVocalsOnly: Bool = false) -> DubExportInput? {
+    static func from(scheme: MixScheme, combo: [UUID?]? = nil, useVocalsOnly: Bool = false) throws -> DubExportInput {
         let ordered = scheme.orderedSegments
-        guard !ordered.isEmpty else { return nil }
+        guard !ordered.isEmpty else { throw BuildError.noOrderedSegments }
 
+        let dubOnly = !scheme.audioTrackPolicy.allowsOriginalFallback
         var specs: [DubSegmentSpec] = []
         var maxW = 0, maxH = 0
+        var blockers: [Blocker] = []
+
         for (idx, schemeSeg) in ordered.enumerated() {
+            let position = idx + 1
+            let segLabel = schemeSeg.segment?.segmentIndex ?? "第 \(position) 段"
             guard let segment = schemeSeg.segment,
-                  let video = segment.video else { continue }
+                  let video = segment.video else {
+                if dubOnly {
+                    blockers.append(.init(position: position, segmentLabel: segLabel, reason: "分镜数据缺失"))
+                }
+                continue
+            }
             // 走"当前生效画面"：替换版=合成片整段(0..frameCount)；原版=源视频帧区间。音频/字幕仍属分镜本身。
             let ep = segment.effectivePicture
-            guard !ep.videoPath.isEmpty, FileManager.default.fileExists(atPath: ep.videoPath) else { continue }
+            guard !ep.videoPath.isEmpty, FileManager.default.fileExists(atPath: ep.videoPath) else {
+                if dubOnly {
+                    blockers.append(.init(position: position, segmentLabel: segLabel, reason: "画面文件缺失"))
+                }
+                continue
+            }
 
             let fps = ep.fps > 0 ? ep.fps : 30
             maxW = max(maxW, video.width)
             maxH = max(maxH, video.height)
-
-            // 全局 BGM 模式：所有原声段都必须能拿到纯人声源，缺一即整条成片不可导
-            var vocalsPath: String? = nil
-            if useVocalsOnly {
-                guard let vp = Self.vocalsPath(for: video) else {
-                    MixLog.error("[Export] 全局 BGM 模式缺少 vocals.wav：\(video.name)")
-                    return nil
-                }
-                vocalsPath = vp
-            }
 
             // 该槽选定的变体：combo 指定优先，否则用 selectedSegmentDubId；nil 或找不到 → 原声
             let chosenId: UUID? = combo != nil ? (idx < combo!.count ? combo![idx] : nil)
                                                : schemeSeg.selectedSegmentDubId
             let chosen: SegmentDub? = chosenId.flatMap { dubId in
                 segment.effectiveDubVariants.first { $0.id == dubId }
+                // 注意：dubOnly 下不能用 effectiveDubVariants（它只含已有音频的变体）
+                // 做"有没有绑定"的判定——未生成音频时需要给出精确原因而非"未选择配音"，
+                // 因此绑定存在性在下面单独查全量 segmentDubs。
+            }
+            let chosenDubHasAudio: Bool = {
+                guard let path = chosen?.audioFilePath else { return false }
+                return FileManager.default.fileExists(atPath: path)
+            }()
+
+            // MARK: dubOnly：每槽唯选新配音，缺即记阻塞原因，绝不回退原声
+            if dubOnly {
+                // 先查"是否绑定了配音"（含尚无音频的空壳，用于区分两种未就绪原因）。
+                let boundDub: SegmentDub? = chosenId.flatMap { dubId in
+                    segment.segmentDubs.first { $0.id == dubId }
+                }
+                guard chosenId != nil, boundDub != nil else {
+                    blockers.append(.init(position: position, segmentLabel: segLabel, reason: "未选择配音"))
+                    continue
+                }
+                guard chosenDubHasAudio, let dub = chosen, let audioPath = dub.audioFilePath else {
+                    blockers.append(.init(position: position, segmentLabel: segLabel,
+                                          reason: "配音尚未生成，请先在方案详情生成配音"))
+                    continue
+                }
+                specs.append(makeDubSpec(
+                    segment: segment, ep: ep, fps: fps, video: video, dub: dub, audioPath: audioPath,
+                    useVocalsOnly: useVocalsOnly))
+                continue
+            }
+
+            // 全局 BGM 模式（仅 keepOriginal）：原声段必须能拿到纯人声源，缺一即整条不可导。
+            var vocalsPath: String? = nil
+            if useVocalsOnly {
+                guard let vp = Self.vocalsPath(for: video) else {
+                    MixLog.error("[Export] 全局 BGM 模式缺少 vocals.wav：\(video.name)")
+                    throw BuildError.missingVocals(videoName: video.name)
+                }
+                vocalsPath = vp
             }
 
             if segment.isVoiceLocked || chosen == nil {
@@ -102,24 +182,10 @@ struct DubExportInput: Sendable {
                     freezePadFrames: 0, trailingSilence: 0, bgmAudioPath: nil,
                     subtitleFontRatio: segment.subtitleFontRatio,
                     vocalsAudioPath: vocalsPath, vocalsStart: segment.startTime, vocalsEnd: segment.endTime))
-            } else if let dub = chosen,
-                      let audioPath = dub.audioFilePath,
-                      FileManager.default.fileExists(atPath: audioPath) {
-                // 逐句字幕：优先用对齐好的 captionLines；旧数据无对齐 → 整段一条兜底（等价旧整段烧法，防止老数据丢字幕）
-                let capLines: [CaptionLine] = {
-                    let lines = dub.captionLines
-                    if !lines.isEmpty { return lines }
-                    let whole = dub.rewrittenText.isEmpty ? segment.text : dub.rewrittenText
-                    return whole.isEmpty ? [] : [CaptionLine(text: whole, start: 0, end: segment.duration)]
-                }()
-                specs.append(DubSegmentSpec(
-                    videoPath: ep.videoPath, startFrame: ep.startFrame, endFrame: ep.endFrame,
-                    fps: fps, captionLines: capLines, hasHardSubtitle: segment.hasHardSubtitle, maskStyleRaw: segment.maskStyleRaw,
-                    maskRect: segment.maskRect, isVoiceLocked: false, dubAudioPath: audioPath,
-                    freezePadFrames: dub.freezePadFrames, trailingSilence: dub.trailingSilence,
-                    // 全局 BGM 模式下配音段不再混原视频分离 BGM（配音本身就是纯人声，BGM 最后整片统一铺）
-                    bgmAudioPath: useVocalsOnly ? nil : Self.bgmPath(for: video),
-                    subtitleFontRatio: segment.subtitleFontRatio))
+            } else if chosenDubHasAudio, let dub = chosen, let audioPath = dub.audioFilePath {
+                specs.append(makeDubSpec(
+                    segment: segment, ep: ep, fps: fps, video: video, dub: dub, audioPath: audioPath,
+                    useVocalsOnly: useVocalsOnly))
             } else {
                 // 非锁定但无已生成配音 → 回退保留原声原字幕，保证导出不中断
                 MixLog.info("分镜 \(segment.segmentIndex) 无已生成配音，回退原声导出")
@@ -134,8 +200,55 @@ struct DubExportInput: Sendable {
                     vocalsAudioPath: vocalsPath, vocalsStart: segment.startTime, vocalsEnd: segment.endTime))
             }
         }
-        guard !specs.isEmpty else { return nil }
+
+        if dubOnly, !blockers.isEmpty {
+            throw BuildError.dubOnlyBlocked(blockers.sorted { $0.position < $1.position })
+        }
+        // keepOriginal 路径：所有段都因画面缺失被跳过（dubOnly 的画面缺失已并入 blockers 抛出）。
+        guard !specs.isEmpty else { throw BuildError.allPicturesMissing }
         return DubExportInput(segments: specs, maxWidth: maxW, maxHeight: maxH)
+    }
+
+    /// 构造一个配音段规格（dubOnly 与 keepOriginal 的配音路径共用，零分叉）。
+    @MainActor
+    private static func makeDubSpec(
+        segment: Segment, ep: EffectivePicture, fps: Double, video: Video,
+        dub: SegmentDub, audioPath: String, useVocalsOnly: Bool
+    ) -> DubSegmentSpec {
+        // 逐句字幕：优先用对齐好的 captionLines；旧数据无对齐 → 整段一条兜底（等价旧整段烧法，防止老数据丢字幕）
+        let capLines: [CaptionLine] = {
+            let lines = dub.captionLines
+            if !lines.isEmpty { return lines }
+            let whole = dub.rewrittenText.isEmpty ? segment.text : dub.rewrittenText
+            return whole.isEmpty ? [] : [CaptionLine(text: whole, start: 0, end: segment.duration)]
+        }()
+        return DubSegmentSpec(
+            videoPath: ep.videoPath, startFrame: ep.startFrame, endFrame: ep.endFrame,
+            fps: fps, captionLines: capLines, hasHardSubtitle: segment.hasHardSubtitle, maskStyleRaw: segment.maskStyleRaw,
+            maskRect: segment.maskRect, isVoiceLocked: false, dubAudioPath: audioPath,
+            freezePadFrames: dub.freezePadFrames, trailingSilence: dub.trailingSilence,
+            // 全局 BGM 模式下配音段不再混原视频分离 BGM（配音本身就是纯人声，BGM 最后整片统一铺）
+            bgmAudioPath: useVocalsOnly ? nil : Self.bgmPath(for: video),
+            subtitleFontRatio: segment.subtitleFontRatio)
+    }
+
+    // MARK: - 全局 BGM 预检范围
+
+    /// 全局 BGM 模式下需要分离 vocals.wav 的源视频（去重保序）。
+    /// 只含 keepOriginal 方案涉及的视频：dubOnly 方案没有原声段、不消费 vocals.wav，
+    /// 把其视频纳入分离会白发数分钟 demucs；同视频被两类方案共用时以 keepOriginal 一侧为准。
+    @MainActor
+    static func videosRequiringVocals(for schemes: [MixScheme]) -> [Video] {
+        var involved: [Video] = []
+        var seen = Set<UUID>()
+        for scheme in schemes where scheme.audioTrackPolicy.allowsOriginalFallback {
+            for ss in scheme.orderedSegments {
+                guard let video = ss.segment?.video, !seen.contains(video.id) else { continue }
+                seen.insert(video.id)
+                involved.append(video)
+            }
+        }
+        return involved
     }
 
     /// 配音段的 BGM 源：demucs 分离出的整轨 bgm.wav（按视频内容哈希定位）；不存在 → nil（不混 BGM）。
@@ -174,7 +287,13 @@ enum SchemeComboPlanner {
 
     /// 理论组合总数（不真正生成；用于 UI 显示「将生成 N 条」）。
     static func feasibleCount(for scheme: MixScheme) -> Int {
-        scheme.orderedSegments.reduce(1) { acc, ss in
+        // dubOnly（产品脚本成片）：每槽唯选物化时绑定的新配音，组合恒为一条；
+        // 任一槽未绑定 ⇒ 0（导出页会给出「哪些段还没生成配音」的精确提示）。
+        if !scheme.audioTrackPolicy.allowsOriginalFallback {
+            let ids = scheme.orderedSegments.map(\.selectedSegmentDubId)
+            return DubOnlyExportPolicy.singleComboChoices(orderedSelectedDubIDs: ids) == nil ? 0 : 1
+        }
+        return scheme.orderedSegments.reduce(1) { acc, ss in
             guard let seg = ss.segment else { return acc }
             return acc * seg.combinationSlotCount   // 单一真源（含锁定/兜底/参与过滤）
         }
@@ -183,6 +302,17 @@ enum SchemeComboPlanner {
     static func plan(for scheme: MixScheme) -> Plan {
         let ordered = scheme.orderedSegments
         guard !ordered.isEmpty else { return Plan(combos: [], feasibleCount: 0, truncated: false) }
+
+        // dubOnly：不展开「原声/各配音版」笛卡尔积——策略承诺全新配音、绝不回退原声，
+        // 每槽唯选 selectedSegmentDubId；缺绑定时 0 组合，由 DubExportInput.from 给出阻塞明细。
+        if !scheme.audioTrackPolicy.allowsOriginalFallback {
+            let ids = ordered.map(\.selectedSegmentDubId)
+            guard DubOnlyExportPolicy.singleComboChoices(orderedSelectedDubIDs: ids) != nil else {
+                return Plan(combos: [], feasibleCount: 0, truncated: false)
+            }
+            return Plan(combos: [Combo(choices: ids, nameSuffix: "全新配音")],
+                        feasibleCount: 1, truncated: false)
+        }
 
         let slots: [SlotOptions] = ordered.map { ss in
             guard let seg = ss.segment else { return SlotOptions(isLocked: true, includeOriginal: true, dubIds: []) }
@@ -197,8 +327,7 @@ enum SchemeComboPlanner {
             let parts: [String] = choices.enumerated().map { idx, dubId in
                 guard let dubId,
                       idx < ordered.count,
-                      let seg = ordered[idx].segment,
-                      let dub = seg.effectiveDubVariants.first(where: { $0.id == dubId }) else { return "原" }
+                      let dub = ordered[idx].segment?.effectiveDubVariants.first(where: { $0.id == dubId }) else { return "原" }
                 return Self.letter(dub.textVariantIndex)
             }
             return Combo(choices: choices, nameSuffix: "[" + parts.joined(separator: "·") + "]")

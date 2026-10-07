@@ -119,6 +119,16 @@ final class ProjectViewModel {
         }
     }
 
+    // MARK: - 配音音色（M1b 项目覆盖唯一写入收口）
+
+    /// 设置/清除项目级配音音色覆盖（VoiceChoiceCoder 串；nil=跟随全局默认）。
+    /// 视图不直写 Project.preferredVoiceChoiceRaw——G-V7 守此收口函数名。
+    func setProjectVoiceOverride(raw: String?, project: Project) {
+        guard let modelContext else { return }
+        project.preferredVoiceChoiceRaw = raw
+        modelContext.safeSave()
+    }
+
     // MARK: - 产品操作
 
     /// 取或建内置「默认产品」（哨兵 UUID，全库唯一）。

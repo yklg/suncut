@@ -84,6 +84,12 @@ final class Video: Identifiable {
     /// 原声克隆音色 id（qwen3-tts-vc）。nil = 尚未克隆。SwiftData 加字段。
     var clonedVoiceId: String?
 
+    /// M1b：true = 用户在该视频上显式选择「跟随全局/项目音色」，改写时压制历史克隆声、
+    /// 零克隆直合成（透传给 VoiceResolver.LegacyInput.suppressVideoClone）。
+    /// false = 存量行为（有克隆声仍优先克隆）；只影响此后新生成，不自动重生旧音频。
+    /// 带默认值轻量迁移，旧库打开即 false。
+    var voiceFollowsGlobal: Bool = false
+
     /// 文件内容哈希（SHA-256），用于全局去重
     var contentHash: String?
 

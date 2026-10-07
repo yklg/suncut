@@ -25,6 +25,13 @@ public enum TranscriptSource: String, CaseIterable, Sendable {
     case cleaned
     /// 边界调整导致的段间搬字
     case boundaryShift
+    // MARK: 产品脚本成片（v3.4）
+    /// AI 基于资料新撰写的配音文案
+    case aiRewrite
+    /// 产品资料驱动的脚本
+    case productScript
+    /// 粘贴文案逆向结构化
+    case userScriptReverse
 }
 
 public struct TextUpdate: Equatable, Sendable {
@@ -90,6 +97,9 @@ public enum TextProvenance {
         case .agentEdit:      return "Agent 写入"
         case .cleaned:        return "乱码清洗"
         case .boundaryShift:  return "边界调整搬字"
+        case .aiRewrite:      return "AI 新撰文案"
+        case .productScript:  return "产品资料脚本"
+        case .userScriptReverse: return "粘贴文案逆向"
         }
     }
 }

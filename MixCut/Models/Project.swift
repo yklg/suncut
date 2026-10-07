@@ -34,6 +34,11 @@ final class Project: Identifiable {
     @Relationship(deleteRule: .cascade, inverse: \MixScheme.project)
     var schemes: [MixScheme] = []
 
+    /// 项目级配音音色覆盖（VoiceChoiceCoder 版本化 JSON 串）。
+    /// nil = 跟随 App 全局默认；坏串由 VoiceChoiceCoder 解为 nil（自动回落全局，不崩）。
+    /// 带默认值 optional 字段，走 SwiftData 轻量迁移（同 v3.4 字段惯例）。
+    var preferredVoiceChoiceRaw: String?
+
     init(name: String) {
         self.id = UUID()
         self.name = name

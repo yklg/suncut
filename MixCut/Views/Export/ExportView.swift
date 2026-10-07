@@ -917,7 +917,17 @@ struct ExportView: View {
             allSchemes.map { ($0, SchemeComboPlanner.plan(for: $0).combos) }
         let totalClips = plans.reduce(0) { $0 + $1.combos.count }
         guard totalClips > 0 else {
-            ToastCenter.shared.show("没有可导出的组合", icon: "exclamationmark.triangle.fill", style: .warning)
+            // dubOnly 方案 0 组合 = 还有槽位没绑定/没生成配音：给出可行动的指引，
+            // 而不是一句泛化的"没有可导出的组合"。
+            let notReady = allSchemes
+                .filter { !$0.audioTrackPolicy.allowsOriginalFallback }
+                .map(\.name)
+            if !notReady.isEmpty {
+                errorMessage = "方案「\(notReady.joined(separator: "、"))」还有分镜未生成配音，请先在方案详情逐段生成配音后再导出"
+                ToastCenter.shared.show("配音未就绪", icon: "exclamationmark.triangle.fill", style: .warning)
+            } else {
+                ToastCenter.shared.show("没有可导出的组合", icon: "exclamationmark.triangle.fill", style: .warning)
+            }
             return
         }
 
@@ -964,17 +974,12 @@ struct ExportView: View {
                 // 1.5) 全局 BGM 预检：为选中方案涉及的每个源视频准备 vocals.wav（已分离的秒回）。
                 // 失败的**不回退**——回退等于悄悄给用户一条原 BGM 没去掉的片子。
                 // 记录人话原因，涉及该视频的方案整个标记失败，不影响其他方案。
+                // dubOnly（产品脚本成片）没有原声段、不使用 vocals.wav，其视频不纳入分离范围。
                 var sepFailures: [UUID: (videoName: String, reason: String)] = [:]
                 if globalBGM != nil {
-                    var involved: [Video] = []
-                    var seen = Set<UUID>()
-                    for (scheme, _) in plans {
-                        for ss in scheme.orderedSegments {
-                            guard let v = ss.segment?.video, !seen.contains(v.id) else { continue }
-                            seen.insert(v.id)
-                            involved.append(v)
-                        }
-                    }
+                    // dubOnly 方案没有原声段、不消费 vocals.wav，其视频不纳入分离范围
+                    //（策略判定与去重收口在 DubExportInput.videosRequiringVocals，视图层不新增跨边读取）。
+                    let involved = DubExportInput.videosRequiringVocals(for: plans.map(\.scheme))
                     let separator = VocalSeparationService()
                     for (index, video) in involved.enumerated() {
                         if Task.isCancelled { break }
@@ -1003,8 +1008,27 @@ struct ExportView: View {
                 // 2) 扁平化所有 (方案×组合) 任务（DubExportInput 须在 MainActor 构造）
                 var jobs: [DubExportJob] = []
                 for (scheme, combos) in plans {
-                    // 全局 BGM 模式：任一分镜的源视频分离失败 → 该方案全部组合直接进失败清单，说清原因
+                    // dubOnly 方案 0 组合（还有槽位未绑定/未生成配音）：不能静默略过，
+                    // 直接走 from 的阻塞错误拿到逐槽原因，进失败清单。
+                    if combos.isEmpty && !scheme.audioTrackPolicy.allowsOriginalFallback {
+                        do {
+                            _ = try DubExportInput.from(scheme: scheme, combo: nil,
+                                                        useVocalsOnly: globalBGM != nil)
+                            // from 成功却 0 组合 = 不应发生（组合规划与 from 判据同源）；记防御性失败。
+                            exportFailures.append(ExportFailure(
+                                name: scheme.name,
+                                reason: "没有可导出的配音组合，请重新选择方案"))
+                        } catch {
+                            exportFailures.append(ExportFailure(
+                                name: scheme.name, reason: error.localizedDescription))
+                        }
+                        continue
+                    }
+                    // 全局 BGM 模式：keepOriginal 方案任一分镜的源视频分离失败
+                    // → 该方案全部组合直接进失败清单，说清原因。
+                    // dubOnly 方案不消费 vocals.wav，分离结果与其无关（同视频被两类方案共用时不误伤）。
                     if globalBGM != nil,
+                       scheme.audioTrackPolicy.allowsOriginalFallback,
                        let badVideo = scheme.orderedSegments.compactMap({ $0.segment?.video })
                            .first(where: { sepFailures[$0.id] != nil }) {
                         let failure = sepFailures[badVideo.id]!
@@ -1015,13 +1039,21 @@ struct ExportView: View {
                     }
                     let strategyName = scheme.strategy?.name ?? "未分组"
                     for combo in combos {
-                        guard let input = DubExportInput.from(scheme: scheme, combo: combo.choices,
-                                                              useVocalsOnly: globalBGM != nil) else { continue }
-                        let base = sanitizeFilename("\(strategyName)_方案\(scheme.variationIndex)_\(combo.nameSuffix)")
-                        jobs.append(DubExportJob(
-                            input: input,
-                            outputPath: url.appendingPathComponent("\(base).mp4").path,
-                            label: "\(scheme.name) \(combo.nameSuffix)"))
+                        // 构建失败（dubOnly 缺配音/画面缺失/vocals 缺失等）进失败清单，
+                        // 不再静默 continue——否则总任务数悄悄变少，用户拿不到任何原因。
+                        do {
+                            let input = try DubExportInput.from(scheme: scheme, combo: combo.choices,
+                                                                useVocalsOnly: globalBGM != nil)
+                            let base = sanitizeFilename("\(strategyName)_方案\(scheme.variationIndex)_\(combo.nameSuffix)")
+                            jobs.append(DubExportJob(
+                                input: input,
+                                outputPath: url.appendingPathComponent("\(base).mp4").path,
+                                label: "\(scheme.name) \(combo.nameSuffix)"))
+                        } catch {
+                            exportFailures.append(ExportFailure(
+                                name: "\(scheme.name) \(combo.nameSuffix)",
+                                reason: error.localizedDescription))
+                        }
                     }
                 }
                 let totalJobs = jobs.count

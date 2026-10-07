@@ -405,7 +405,6 @@ struct TombstoneReadGuardTests {
         (#"MixCut/Views/Export/ExportView.swift"#, "orderedSchemes", #"let ids = Set(strategy.orderedSchemes.map(\.id))"#, 2),
         (#"MixCut/Views/Export/ExportView.swift"#, "orderedSchemes", #"let schemeIDs = Set(strategy.orderedSchemes.map(\.id))"#, 1),
         (#"MixCut/Views/Export/ExportView.swift"#, "orderedSchemes", #"let strategySchemeIDs = Set(strategy.orderedSchemes.map(\.id))"#, 1),
-        (#"MixCut/Views/Export/ExportView.swift"#, "orderedSegments", #"for ss in scheme.orderedSegments {"#, 1),
         (#"MixCut/Views/Export/ExportView.swift"#, "orderedSegments", #"let badVideo = scheme.orderedSegments.compactMap({ $0.segment?.video })"#, 1),
         (#"MixCut/Views/Export/ExportView.swift"#, "schemeSegments", #"for ss in scheme.schemeSegments where ss.segment?.source == .curated {"#, 1),
         (#"MixCut/Views/Export/ExportView.swift"#, "schemes", #"let total = strategy.schemes.count"#, 1),
@@ -418,7 +417,8 @@ struct TombstoneReadGuardTests {
         (#"MixCut/Views/Import/ImportView.swift"#, "videos", #"let thumbPaths = project.videos.compactMap(\.thumbnailPath)"#, 1),
         (#"MixCut/Views/Overview/ProjectOverviewView.swift"#, "segments", #"Text( video.segments.count )"#, 1),
         (#"MixCut/Views/Schemes/NarrativeStructureEditorView.swift"#, "videos", #"project.videos.flatMap(\.segments).map { seg in"#, 1),
-        (#"MixCut/Views/Schemes/SchemeDetailView.swift"#, "effectiveDubVariants", #"let variants = segment.effectiveDubVariants"#, 1),
+        // M1b 销账 1/2：变体枚举改走 DubbingVM.effectiveSlotVariants 纯值投影（R3 去重），
+        // 视图不再裸读 segment.effectiveDubVariants。
         (#"MixCut/Views/Schemes/SchemeDetailView.swift"#, "orderedSegments", #"ForEach(Array(scheme.orderedSegments.enumerated()), id: \.element.id) { idx, schemeSeg in"#, 1),
         (#"MixCut/Views/Schemes/SchemeDetailView.swift"#, "orderedSegments", #"ForEach(scheme.orderedSegments) { schemeSeg in"#, 1),
         (#"MixCut/Views/Schemes/SchemeDetailView.swift"#, "orderedSegments", #"for ss in scheme.orderedSegments {"#, 1),
@@ -429,18 +429,20 @@ struct TombstoneReadGuardTests {
         (#"MixCut/Views/Schemes/SchemeDetailView.swift"#, "schemeSegments", #"let referencedDubIDs = Set(scheme.schemeSegments.compactMap { $0.selectedSegmentDubId })"#, 1),
         (#"MixCut/Views/Schemes/SchemeDetailView.swift"#, "segmentDubs", #"for d in seg.segmentDubs where d.voiceId != current {"#, 1),
         (#"MixCut/Views/Schemes/SchemeListView.swift"#, "orderedSchemes", #"ForEach(strategy.orderedSchemes) { scheme in"#, 1),
-        (#"MixCut/Views/Schemes/SchemeListView.swift"#, "schemes", #"if strategy.isCustomGroup && strategy.schemes.isEmpty {"#, 1),
+        (#"MixCut/Views/Schemes/SchemeListView.swift"#, "schemes", #"if strategy.isScriptGroup && strategy.schemes.isEmpty {"#, 1),
+        (#"MixCut/Views/Schemes/SchemeListView.swift"#, "schemes", #"} else if strategy.isCustomGroup && strategy.schemes.isEmpty {"#, 1),
         (#"MixCut/Views/Schemes/SchemeListView.swift"#, "schemes", #"} else if strategy.isNarrativeTemplate && strategy.schemes.isEmpty {"#, 1),
         (#"MixCut/Views/Schemes/SchemeListView.swift"#, "videos", #"let allSegments = project.videos.flatMap(\.segments)"#, 1),
         (#"MixCut/Views/Schemes/SegmentPickerDrawer.swift"#, "schemeSegments", #"Set(scheme.schemeSegments.compactMap { liveIndex.uuid(for: $0.segment) })"#, 1),
-        (#"MixCut/Views/SegmentLibrary/DubSettingsBar.swift"#, "segmentDubs", #"variantCount = videoSegments.reduce(0) { $0 + $1.segmentDubs.count }"#, 1),
+        // 全局音色：素材库变体计数已收口到 DubbingVM.readyDubCount（视图不再裸读 segmentDubs），销账 1 条。
         (#"MixCut/Views/SegmentLibrary/SegmentLibraryView.swift"#, "schemeSegments", #"ToastCenter.shared.show( segment.schemeSegments.count ,"#, 1),
         (#"MixCut/Views/SegmentLibrary/SegmentLibraryView.swift"#, "schemeSegments", #"if segment.schemeSegments.isEmpty {"#, 1),
         (#"MixCut/Views/SegmentLibrary/SegmentLibraryView.swift"#, "videos", #"let videoCovers = project.videos.compactMap(\.thumbnailPath)"#, 1),
+        // 计数 2：字幕字号 / 遮挡设置两个「应用到同视频全部分镜」各一处（G08d 守卫自生成基线核对）。
         (#"MixCut/Views/SegmentLibrary/SegmentPropertiesSection.swift"#, "segments", #"let targets = video.segments.filter { $0.id != source.id }"#, 2),
-        (#"MixCut/Views/SegmentLibrary/SegmentVariantInspector.swift"#, "effectiveDubVariants", #"segment.effectiveDubVariants.first { $0.textVariantIndex == t }"#, 1),
+        // M1b 销账 2/2：检查器有效变体改走 DubbingVM.effectiveLegacyVariants（R3，含项目覆盖/跟随开关）。
         (#"MixCut/Views/SegmentLibrary/SegmentVariantInspector.swift"#, "segmentDubs", #"?? segment.segmentDubs.first { $0.textVariantIndex == t }"#, 1),
-        (#"MixCut/Views/SegmentLibrary/SegmentVariantInspector.swift"#, "segmentDubs", #"Array(Set(segment.segmentDubs.map { $0.textVariantIndex })).sorted()"#, 1),
+        // 全局音色：变体下标与空壳判定收口到 DubbingVM（presentVariantIndices/hasOnly…），销账 1 条。
         (#"MixCut/Views/SegmentLibrary/SegmentVariantInspector.swift"#, "segmentDubs", #"segment.segmentDubs.first { $0.textVariantIndex == t && $0.voiceId == v }"#, 1),
         (#"MixCut/Views/SegmentLibrary/SegmentVariantInspector.swift"#, "segmentDubs", #"} else if segment.segmentDubs.isEmpty {"#, 1),
         (#"MixCut/Views/SegmentLibrary/ShotEditSheet.swift"#, "variants", #"ForEach(shot.variants.sorted { $0.createdAt < $1.createdAt }) { v in"#, 1),
@@ -472,7 +474,7 @@ struct TombstoneReadGuardTests {
                 "SegmentLibraryView 没有任何命中 ⇒ 取样面没覆盖崩点所在文件，下面的零断言是空的")
         #expect(!got.keys.contains { $0.hasPrefix("MixCut/Views/SegmentLibrary/SegmentLibraryView.swift|segments|") },
                 "本次 SIGTRAP 的直接触发点（SegmentLibraryView 读 video.segments）又回来了")
-        #expect(hits.count == 45, "命中总数应为 45，实得 \(hits.count)")
+        #expect(hits.count == 41, "命中总数应为 41（M1b R3 再把变体枚举 2 处裸读收口到 VM：43→41），实得 \(hits.count)")
     }
 
     @Test("G08c 敏感性变异：往真实取样面里注入一处新裸读，门必须立刻认出来")
@@ -638,11 +640,14 @@ struct TombstoneReadGuardTests {
     static let deleteRoster: [DeleteRosterEntry] = [
         .init(file: "MixCut/ViewModels/ImportViewModel.swift", count: 10, exempt: false, reason: ""),
         .init(file: "MixCut/ViewModels/SegmentLibraryViewModel.swift", count: 4, exempt: false, reason: ""),
-        .init(file: "MixCut/ViewModels/SchemeViewModel.swift", count: 3, exempt: false, reason: ""),
+        .init(file: "MixCut/ViewModels/SchemeViewModel.swift", count: 4, exempt: false, reason: ""),
         .init(file: "MixCut/ViewModels/ShotEditViewModel.swift", count: 3, exempt: false, reason: ""),
         .init(file: "MixCut/Services/MCP/MCPSegmentToolHandlers.swift", count: 2, exempt: false, reason: ""),
-        .init(file: "MixCut/ViewModels/DubbingViewModel.swift", count: 1, exempt: false, reason: ""),
+        // 全局音色：deleteVariant 删改写版本（原有）+ 脚本配音绑定复用分支删被取代空壳（新增）= 2
+        .init(file: "MixCut/ViewModels/DubbingViewModel.swift", count: 2, exempt: false, reason: ""),
         .init(file: "MixCut/Views/Schemes/SchemeDetailView.swift", count: 1, exempt: false, reason: ""),
+        .init(file: "MixCut/Services/Knowledge/KnowledgeIngestService.swift", count: 1, exempt: false, reason: ""),
+        .init(file: "MixCut/ViewModels/ScriptWizardViewModel.swift", count: 2, exempt: false, reason: ""),
         .init(file: "MixCut/App/MixCutApp.swift", count: 2, exempt: true,
               reason: "启动 fixups 用独立 ModelContext(container)（:353/:397/:426），跑在任何视图建立投影之前"),
         .init(file: "MixCut/App/DebugSelfTest.swift", count: 21, exempt: true,
@@ -662,11 +667,11 @@ struct TombstoneReadGuardTests {
         return m
     }
 
-    @Test("G12 名册对账：真仓 47 处 delete 必须逐文件等于登记")
+    @Test("G12 名册对账：真仓 52 处 delete 必须逐文件等于登记")
     func realRepoMatchesDeleteRoster() {
         let actual = actualDeleteCounts()
         let total = actual.values.reduce(0, +)
-        #expect(total == 47, "真删站点总数应为 47，实得 \(total) ⇒ 名册或扫描面已漂移")
+        #expect(total == 52, "真删站点总数应为 52（全局音色 +2：删方案回收脚本配音、绑定删空壳），实得 \(total) ⇒ 名册或扫描面已漂移")
         let problems = Self.rosterProblems(actual: actual, recorded: Self.deleteRoster)
         #expect(problems.isEmpty, "门 4b 不认账：\(problems)")
     }
@@ -755,7 +760,6 @@ struct TombstoneReadGuardTests {
     /// 逐条 = (文件, 被跨的边名, 归一化行, 该组合出现次数)。新增一处⇒红；悄悄拔掉一处不改表⇒也红。
     static let toOneBaseline: [(String, String, String, Int)] = [
         (#"MixCut/Views/Export/ExportView.swift"#, "segment", #"for ss in scheme.schemeSegments where ss.segment?.source == .curated {"#, 1),
-        (#"MixCut/Views/Export/ExportView.swift"#, "segment", #"guard let v = ss.segment?.video, !seen.contains(v.id) else { continue }"#, 1),
         (#"MixCut/Views/Export/ExportView.swift"#, "segment", #"if let sid = ss.segment?.id { ids.insert(sid) }"#, 1),
         (#"MixCut/Views/Export/ExportView.swift"#, "segment", #"let badVideo = scheme.orderedSegments.compactMap({ $0.segment?.video })"#, 1),
         (#"MixCut/Views/Export/ExportView.swift"#, "strategy", #"let strategyName = scheme.strategy?.name ??"#, 2),
@@ -801,16 +805,17 @@ struct TombstoneReadGuardTests {
         return ToOneReadScan.scan(viewSources: viewSources(), edges: edges, modelTypes: types)
     }
 
-    @Test("G13 第三来源承重：to-one 边必须派生出 13 条声明 / 9 个名字，且名单逐条对得上")
+    @Test("G13 第三来源承重：to-one 边必须派生出 20 条声明 / 13 个名字，且名单逐条对得上（v3.4 含知识库+脚本 7 条新边）")
     func toOneEdgeSourceIsLoaded() {
         let models = modelSources()
         let types = RelationshipReadScan.modelTypeNames(modelSources: models)
         let decls = ToOneReadScan.toOneEdgeDeclarations(modelSources: models, modelTypes: types)
         let names = Set(decls.map(\.name))
         // 条数与去重名数**两条都要断言**：只断名集会漏掉「同一名字多挂一处」那条边（project 就有三个宿主）。
-        #expect(decls.count == 13, "to-one 边声明应为 13 条，实得 \(decls.count) ⇒ 来源漏扫或模型层新增了边没登记")
-        #expect(names == ["product", "ownerProject", "project", "video", "scheme",
-                          "segment", "strategy", "parentSegment", "shot"],
+        #expect(decls.count == 20, "to-one 边声明应为 20 条，实得 \(decls.count) ⇒ 来源漏扫或模型层新增了边没登记")
+        #expect(names == ["document", "matchedSegment", "ownerProject", "parentSegment",
+                          "product", "project", "realizedScheme", "scheme", "script",
+                          "segment", "shot", "strategy", "video"],
                 "边名集合与实测锚定不符：\(names.sorted())")
     }
 
@@ -956,11 +961,14 @@ struct TombstoneReadGuardTests {
         #expect(head.hasPrefix("MixCut/App/ContentView.swift:") && head.contains("object: payload"),
                 "唯一那处 post 必须是 GraphBroadcast 里的 `object: payload`，实得：\(head)")
 
-        // 消费口只许 3 处，且身份钉死（匹配三种合法订阅写法）：
+        // 消费口只许 4 处，且身份钉死（匹配三种合法订阅写法）：
         //  - ContentView.onReceive：publisher(for:)，剪枝/全量重载（第一消费者）；
         //  - DebugSelfTest：block 式 addObserver(forName:) 自检探针；
         //  - DubbingViewModel：target-action addObserver(name:)，只做「数据真删 → 取消作业」，
-        //    禁止 load/flush（职责边界由 DubbingTaskOwnershipGuardTests G4 另钉）。
+        //    禁止 load/flush（职责边界由 DubbingTaskOwnershipGuardTests G4 另钉）；
+        //  - ScriptWizardViewModel（M4/W3）：target-action + nonisolated Task hop，
+        //    做「已锁定分镜真删 → 场景回退 unmatched」；回退纯判据在 Core ScriptMatchRepair，
+        //    fetch/save 发生在 hop 出 post 同步栈之后（由 check_script_pipeline_guards G-S4 钉 hop）。
         // selector 形态必须带 selector: 前缀锚定，否则会误中 GraphBroadcast 里
         // 唯一那处 `post(name: .mixCutDataDidUndo, …)`。
         let observerPattern =
@@ -973,12 +981,13 @@ struct TombstoneReadGuardTests {
                 observerFiles.append(pair.path)
             }
         }
-        #expect(observerFiles.count == 3,
-                "观察者应为 3 处（ContentView 剪枝 + DubbingViewModel 取消作业 + DebugSelfTest 自检探针），实得 \(observerFiles.count)：\(observerFiles)")
+        #expect(observerFiles.count == 4,
+                "观察者应为 4 处（ContentView 剪枝 + DubbingViewModel 取消作业 + ScriptWizardViewModel 匹配回退 + DebugSelfTest 自检探针），实得 \(observerFiles.count)：\(observerFiles)")
         #expect(Set(observerFiles) == [
             "MixCut/App/ContentView.swift",
             "MixCut/App/DebugSelfTest.swift",
-            "MixCut/ViewModels/DubbingViewModel.swift"
+            "MixCut/ViewModels/DubbingViewModel.swift",
+            "MixCut/ViewModels/ScriptWizardViewModel.swift"
         ], "消费者身份漂移：\(observerFiles)")
 
         // 发布口自身那三条承重写法逐字钉住：丢了任一条，上面两条锚就成了空壳。
@@ -1063,13 +1072,13 @@ struct TombstoneReadGuardTests {
         return out
     }
 
-    @Test("G21 DanglingToOneEdge 注册表 ≡ Models 派生三元组（13 条逐条相等）")
+    @Test("G21 DanglingToOneEdge 注册表 ≡ Models 派生三元组（20 条逐条相等；v3.4 含知识库+脚本 7 条）")
     func edgeRegistryTriplesMatchModels() throws {
         let appSource = try #require(load("MixCut/App/MixCutApp.swift"))
         let registered = parseRepairRegistry(appSource)
         let derived = deriveModelTriples(modelSources())
 
-        #expect(registered.count == 13, "注册表应为 13 条，实得 \(registered.count)")
+        #expect(registered.count == 20, "注册表应为 20 条，实得 \(registered.count)")
         let missing = registered.subtracting(derived).sorted()
         let extra = derived.subtracting(registered).sorted()
         #expect(missing.isEmpty,
@@ -1081,4 +1090,210 @@ struct TombstoneReadGuardTests {
 
 private enum GuardError: Error {
     case probeDead
+}
+
+// MARK: - G22 跨边「.live」形态扫描（第三起 SIGTRAP 同族回归门）
+
+struct EdgeLiveFaultScan {
+    /// 危险形态：`.<to-one edge>.live` —— 穿过关系边 fault 目标后再做存活判断。
+    ///
+    /// 不允许的原因（grid16 实测）：悬空边 fault 出的空壳 `isDeleted=false`、
+    /// `modelContext != nil`，`.live` 两信号全假；后续读持久列即 trap。
+    /// 安全形态只能是标识符优先：读边目标的 persistentModelID，查活 fetch 构建的索引。
+    /// 同对象的 `.live`（如 `segmentByID[id]?.live`）不是跨边，本扫描不命中。
+    static func scan(sources: [(path: String, code: String)], edges: Set<String>)
+        -> [RelationshipReadScan.Hit] {
+        guard !edges.isEmpty else { return [] }
+        let alt = edges.sorted().joined(separator: "|")
+        let pattern = "\\.(" + alt + ")\\.live\\b"
+        var hits: [RelationshipReadScan.Hit] = []
+        for (path, code) in sources {
+            for line in code.components(separatedBy: "\n") {
+                forEachMatch(in: line, pattern: pattern) { g in
+                    guard let edge = g(1) else { return }
+                    hits.append(RelationshipReadScan.Hit(
+                        file: path, property: edge,
+                        line: RelationshipReadScan.normalizedLine(line)))
+                }
+            }
+        }
+        return hits.sorted()
+    }
+}
+
+struct EdgeLiveFaultGuardTests {
+
+    /// 从 Models 派生全部 to-one 边名（与 G13/G22 同一来源，不另建表）。
+    private func edgeNames() -> Set<String> {
+        let models = modelSources()
+        let types = RelationshipReadScan.modelTypeNames(modelSources: models)
+        return Set(ToOneReadScan.toOneEdgeDeclarations(
+            modelSources: models, modelTypes: types).map(\.name))
+    }
+
+    @Test("G22 MixCut 源码零「跨 to-one 边 .live」形态（先 fault 再检查；第三起 SIGTRAP 同族）")
+    func noEdgeLiveFaulting() {
+        let hits = EdgeLiveFaultScan.scan(sources: allMixCutSources(), edges: edgeNames())
+        #expect(hits.isEmpty,
+                "存在跨 to-one 边后 .live 的形态，必须改为标识符优先（LiveModelIDIndex）：\(hits.prefix(6))")
+    }
+
+    @Test("G22b 变异自证：危险样本必红；同对象/字典下标 .live 与原语定义不误伤")
+    func gateIsSensitiveAndPrecise() {
+        let edges = Set(["matchedSegment"])
+
+        let bad = [(path: "MixCut/Views/__Injected_BadEdge__.swift",
+                    code: "let id = scene.matchedSegment.live?.id")]
+        #expect(EdgeLiveFaultScan.scan(sources: bad, edges: edges).count == 1,
+                "注入的危险形态没被抓到 ⇒ G22 恒绿")
+
+        let safeSubscript = [(path: "MixCut/Views/__Safe_Subscript__.swift",
+                              code: "let live = viewModel.segmentByID[id]?.live")]
+        #expect(EdgeLiveFaultScan.scan(sources: safeSubscript, edges: edges).isEmpty,
+                "字典下标同对象 .live 被误伤 ⇒ G22 噪音化")
+
+        let safeObject = [(path: "MixCut/Views/__Safe_Object__.swift",
+                           code: "if let seg = oneFetchedObject.live { draw(seg) }")]
+        #expect(EdgeLiveFaultScan.scan(sources: safeObject, edges: edges).isEmpty,
+                "同一活对象的 .live 被误伤")
+
+        let primitive = [(path: "MixCut/Utilities/__Primitive__.swift",
+                          code: "var live: Self? { isGoneFromGraph ? nil : self }")]
+        #expect(EdgeLiveFaultScan.scan(sources: primitive, edges: edges).isEmpty,
+                "过门原语定义被自己的门拦了")
+    }
+}
+
+// MARK: - G23 #Predicate 多层 to-one 链扫描（CoreData SQL 生成异常 abort 回归门）
+
+struct PredicateChainDepthScan {
+    /// 危险形态（均在单个 `#Predicate { … }` 闭包内判定）：
+    ///
+    /// 1. **深链**：一条关系链上出现 ≥2 个 `?.`（如 `x.a?.b?.c`）；
+    /// 2. **重复起链**：同一个链前缀（如 `chunk.document?`）在谓词里出现 ≥2 次
+    ///    （原崩溃谓词对 document 同时访问 product? 与 isEnabled）。
+    ///
+    /// 命中任一即说明该谓词无法被 CoreData SQL 生成器翻译——SQL 生成阶段抛 ObjC 异常、
+    /// Swift 无法捕获，进程 abort。安全替代：无 #Predicate fetch + 标识符优先的 Swift 侧过滤。
+    static func scan(sources: [(path: String, code: String)])
+        -> [RelationshipReadScan.Hit] {
+        var hits: [RelationshipReadScan.Hit] = []
+        for (path, code) in sources {
+            let closures = predicateClosures(in: code)
+            for item in closures {
+                if let reason = violation(in: item.body) {
+                    let line = code.components(separatedBy: "\n")
+                        .dropFirst(item.line).first ?? item.body
+                    hits.append(RelationshipReadScan.Hit(
+                        file: path,
+                        property: reason,
+                        line: RelationshipReadScan.normalizedLine(line)))
+                }
+            }
+        }
+        return hits.sorted()
+    }
+
+    /// 一个 #Predicate 闭包投影（体 + 起始行号）。
+    struct Closure {
+        let body: String
+        let line: Int
+    }
+
+    /// 提取每个 #Predicate 的闭包体及其起始行（按括号配平切取；不做完整 Swift 解析）。
+    static func predicateClosures(in code: String) -> [Closure] {
+        var out: [Closure] = []
+        let ns = code as NSString
+        let re = regexCache.regex("#Predicate(?:<[^>]+>)?\\s*\\{")
+        re?.enumerateMatches(in: code, range: NSRange(location: 0, length: ns.length)) { m, _, _ in
+            guard let m else { return }
+            let braceStart = NSMaxRange(m.range) - 1
+            guard braceStart < code.count else { return }
+            var depth = 0
+            var index = code.index(code.startIndex, offsetBy: braceStart)
+            let startIndex = index
+            var ended = index
+            while index < code.endIndex {
+                let ch = code[index]
+                if ch == "{" { depth += 1 }
+                if ch == "}" {
+                    depth -= 1
+                    if depth == 0 { ended = index; break }
+                }
+                index = code.index(after: index)
+            }
+            let body = String(code[code.index(after: startIndex)..<ended])
+            let prefix = code[..<startIndex]
+            let line = prefix.filter { $0 == "\n" }.count
+            out.append(Closure(body: body, line: line))
+        }
+        return out
+    }
+
+    /// 闭包体内的违规判定；返回违规描述，无违规 nil。
+    static func violation(in body: String) -> String? {
+        // ① 深链：标识符后连续 ≥2 个 ?. 关系跳转。
+        let deepPattern = "\\b\\w+(?:\\?\\.\\w+){2,}"
+        var deep = false
+        forEachMatch(in: body, pattern: deepPattern) { _ in deep = true }
+        if deep { return "multiLevelChain" }
+
+        // ② 重复起链：同一「根.edge?」前缀出现 ≥2 次。
+        var counts: [String: Int] = [:]
+        let chainStart = "\\b(\\w+)\\.(\\w+)\\?"
+        forEachMatch(in: body, pattern: chainStart) { g in
+            guard let root = g(1), let edge = g(2) else { return }
+            let key = root + "." + edge
+            counts[key, default: 0] += 1
+        }
+        if let repeated = counts.first(where: { $0.value >= 2 }) {
+            return "repeatedChain:" + repeated.key
+        }
+        return nil
+    }
+}
+
+struct PredicateChainGuardTests {
+    @Test("G23 MixCut 源码零「#Predicate 多层 to-one 链 / 重复起链」（SQL 生成异常 abort 同族）")
+    func noDeepChainPredicates() {
+        let hits = PredicateChainDepthScan.scan(sources: allMixCutSources())
+        #expect(hits.isEmpty,
+                "存在无法被 CoreData 翻译的 #Predicate，改为无 #Predicate fetch + Swift 侧过滤：\(hits.prefix(6))")
+    }
+
+    @Test("G23b 变异自证：深链/重复起链必红；单层链与谓词外可选链不误伤")
+    func gateIsSensitiveAndPrecise() {
+        let deep = [(path: "MixCut/__Deep__.swift",
+                     code: "predicate(#Predicate { $0.document?.product?.id == x })")]
+        #expect(PredicateChainDepthScan.scan(sources: deep).count == 1,
+                "两层深链没被抓到")
+
+        // 纯规则②：单层 ?. 但同一链前缀对 document 访问两个不同属性。
+        let repeated = [(path: "MixCut/__Repeated__.swift",
+                         code: "#Predicate { c in c.document?.title == x && c.document?.isEnabled == true }")]
+        let repeatedHits = PredicateChainDepthScan.scan(sources: repeated)
+        #expect(repeatedHits.contains { $0.property.hasPrefix("repeatedChain:") },
+                "重复起链（document? 出现两次）没被抓到，实得 \(repeatedHits)")
+
+        // 原崩溃谓词：深链①与重复起链②同时存在。
+        let original = [(path: "MixCut/__OriginalCrash__.swift",
+                         code: "#Predicate { c in c.document?.product?.id == x && c.document?.isEnabled == true }")]
+        #expect(!PredicateChainDepthScan.scan(sources: original).isEmpty,
+                "原崩溃谓词没被抓到")
+
+        let single = [(path: "MixCut/__Single__.swift",
+                       code: "#Predicate { doc in doc.product?.id == x }")]
+        #expect(PredicateChainDepthScan.scan(sources: single).isEmpty,
+                "单层链被误伤 ⇒ G23 噪音化")
+
+        let outside = [(path: "MixCut/__Outside__.swift",
+                        code: "let id = scene.matchedSegment.live?.id")]
+        #expect(PredicateChainDepthScan.scan(sources: outside).isEmpty,
+                "谓词外的普通可选链被误伤")
+
+        let selfColumn = [(path: "MixCut/__Column__.swift",
+                           code: "#Predicate<Video> { $0.contentHash == h }")]
+        #expect(PredicateChainDepthScan.scan(sources: selfColumn).isEmpty,
+                "自有列比较被误伤")
+    }
 }

@@ -1,17 +1,49 @@
 import Foundation
 
+/// 音色分类标签（M1b 选择器 chips 筛选用）。
+///
+/// 性别类 female/male/child/character 对每条「进选择器的音色」必须恰有一个
+/// （由 VoiceCatalogFilterTests 对 CosyVoiceCatalog 全量强制）；commerce 可叠加。
+/// character = 非真人角色音（机器人/美猴王/古风扮演等）；现实老人/僧俗人声器型仍归男女声。
+public enum VoiceTag: String, Equatable, Sendable, CaseIterable {
+    case female
+    case male
+    case child
+    case character
+    case commerce
+
+    /// 性别类（四者互斥；选择器性别 chips 的数据源）。
+    public static let genderTags: Set<VoiceTag> = [.female, .male, .child, .character]
+
+    /// 选择器上的展示名与 chips 顺序。
+    public var displayName: String {
+        switch self {
+        case .female: return "女声"
+        case .male: return "男声"
+        case .child: return "童声"
+        case .character: return "角色"
+        case .commerce: return "带货人设"
+        }
+    }
+}
+
 /// TTS 系统音色（qwen / cosyvoice 通用结构）。
 public struct TTSVoice: Equatable, Sendable, Identifiable {
     public let id: String          // voice 参数值，如 "Cherry" / "longyingxiao"
     public let displayName: String // 中文名，如 "芊悦"
     public let summary: String     // 音色特点
     public let dialect: String?    // 方言（普通话音色为 nil）
+    /// 分类标签。默认空：仅供**已不进选择器的旧 qwen 回退目录**省略；
+    /// CosyVoiceCatalog 每条必须显式标注（VoiceCatalogFilterTests 全量强制）。
+    public let tags: Set<VoiceTag>
 
-    public init(id: String, displayName: String, summary: String, dialect: String? = nil) {
+    public init(id: String, displayName: String, summary: String,
+                dialect: String? = nil, tags: Set<VoiceTag> = []) {
         self.id = id
         self.displayName = displayName
         self.summary = summary
         self.dialect = dialect
+        self.tags = tags
     }
 }
 

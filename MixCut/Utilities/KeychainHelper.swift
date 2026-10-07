@@ -38,6 +38,18 @@ enum KeychainHelper {
     /// 只需改此访问点（或升级为带厂商参数的路由），不必全库搜索 getAPIKey。
     static var dashScopeKey: String? { getAPIKey(for: .qwen) }
 
+    // MARK: 博查搜索（v3.4 知识库调研）
+
+    /// 博查 API Key（独立于 AI 提供商，UserDefaults 存储）。
+    static var bochaKey: String? {
+        let key = defaults.string(forKey: "bocha_api_key")
+        return (key?.isEmpty == true) ? nil : key
+    }
+
+    static func saveBochaKey(_ key: String) {
+        defaults.set(key, forKey: "bocha_api_key")
+    }
+
     // MARK: - 活跃提供商
 
     private static let activeProviderKey = "active_ai_provider"

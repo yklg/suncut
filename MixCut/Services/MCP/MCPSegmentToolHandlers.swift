@@ -554,27 +554,27 @@ extension MCPToolHandlers {
                 guard let video = seg.video else { return nil }
                 return (video, seg)
             }
+            // 项目覆盖串：解析一次，供该任务内所有视频的音色解析使用（与 UI 同一 VoiceResolver）。
+            let projectOverrideRaw: String? = {
+                guard let pid = projectID,
+                      let project = try? ctx.fetch(FetchDescriptor<Project>(
+                        predicate: #Predicate { $0.id == pid })).first else { return nil }
+                return project.preferredVoiceChoiceRaw
+            }()
             let byVideo = Dictionary(grouping: withVideo, by: { $0.0.id })
             for pair in byVideo.values {
                 guard let video = pair.first?.0 else { continue }
                 let group: [Segment] = pair.map(\.1)
-                vm.errorState = nil
-                let cloneOK = await vm.ensureClonedVoice(for: video, context: ctx)
-                guard cloneOK else {
-                    let reason = vm.errorState?.message ?? "克隆原声失败"
-                    for seg in group {
-                        perSegment.append(["segment_index": seg.segmentIndex, "ok": false, "reason": reason])
-                    }
-                    continue
-                }
                 for seg in group {
                     vm.errorState = nil
-                    // 统一改写入口（single 作用域）
+                    // 统一改写入口（single 作用域）。音色解析在 VM 内：已克隆→克隆声；
+                    // 未克隆→项目/全局预置音色（零克隆）；未配置→VM 返回错误，不再强制克隆。
                     await vm.rewrite(
                         video: video,
                         targets: [seg],
                         presentation: DubScopePresentationMapper.presentation(for: .single),
-                        context: ctx)
+                        context: ctx,
+                        projectOverrideRaw: projectOverrideRaw)
                     if let err = vm.errorState?.message {
                         perSegment.append(["segment_index": seg.segmentIndex, "ok": false, "reason": err])
                     } else {
@@ -590,7 +590,7 @@ extension MCPToolHandlers {
         }
         return success([
             "job_id": job.id.uuidString,
-            "note": "生成中：克隆原声→AI 改写→合成→字幕对齐，用 get_job 轮询",
+            "note": "生成中：解析音色（已克隆用原声克隆，否则用全局/项目预置音色）→AI 改写→合成→字幕对齐，用 get_job 轮询；未配置音色会逐段返回失败原因",
         ])
     }
 

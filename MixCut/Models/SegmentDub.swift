@@ -36,6 +36,33 @@ final class SegmentDub {
     /// 逐句字幕行（含每句相对分镜起点的时间窗）。配音(重)生成后由 whisper 对齐自动写入；nil/空=尚未对齐。
     var captionLinesData: Data?
 
+    // MARK: 产品脚本成片（v3.4）
+    /// 配音文案的来源：TranscriptSource raw（aiRewrite/productScript/userScriptReverse…）。
+    /// 默认 "" = 存量数据（不猜测、不报 stale）；经唯一写入口 `setProvenance` 赋值。
+    var textProvenanceRaw: String = ""
+    /// 文案引用的资料出处 [CitationDescriptor]（含出处快照）。
+    var citationsData: Data?
+
+    /// 文案来源（nil = 存量未记录）。
+    var textProvenance: TranscriptSource? {
+        textProvenanceRaw.isEmpty ? nil : TranscriptSource(rawValue: textProvenanceRaw)
+    }
+
+    /// 唯一写入口：只允许设置一次（脚本配音落库时由 ScriptSceneDubBuilder 调用）。
+    func setProvenance(_ source: TranscriptSource) {
+        guard textProvenanceRaw.isEmpty else { return }
+        textProvenanceRaw = source.rawValue
+    }
+
+    /// 引用出处读写。
+    var citations: [CitationDescriptor] {
+        get {
+            guard let d = citationsData else { return [] }
+            return (try? JSONDecoder().decode([CitationDescriptor].self, from: d)) ?? []
+        }
+        set { citationsData = try? JSONEncoder().encode(newValue) }
+    }
+
     var status: SegmentDubStatus {
         get { SegmentDubStatus(rawValue: statusRaw) ?? .pending }
         set { statusRaw = newValue.rawValue }
@@ -66,18 +93,26 @@ extension Segment {
     /// （同一改写版若有多个音色，优先保留本视频「克隆原声」那条）。clone-only 下每版唯一。
     /// 升序返回，供 _A/_B… 命名与笛卡尔积组合使用。
     var effectiveDubVariants: [SegmentDub] {
-        let cloned = video?.clonedVoiceId
-        var byIndex: [Int: SegmentDub] = [:]
-        for d in segmentDubs where d.audioFilePath != nil {
-            if let existing = byIndex[d.textVariantIndex] {
-                if d.voiceId == cloned && existing.voiceId != cloned {
-                    byIndex[d.textVariantIndex] = d
-                }
-            } else {
-                byIndex[d.textVariantIndex] = d
-            }
+        effectiveDubVariants(preferredVoiceID: nil, videoCloneVoiceID: video?.clonedVoiceId)
+    }
+
+    /// M1b R3 口径：同改写版多音色并存时，按「当前解析音色 ＞ 本视频克隆 ＞ 先到先得」去重。
+    /// 判据在 Core DubVariantSelector；本方法只做模型→纯值投影与 id 回映。
+    /// - 无参旧口径保持等价（preferred=nil → 克隆＞先到），导出/MCP/DebugSelfTest 零行为变化。
+    func effectiveDubVariants(preferredVoiceID: String?,
+                              videoCloneVoiceID: String?) -> [SegmentDub] {
+        let values = segmentDubs.map {
+            DubVariantValue(dubID: $0.id,
+                            variantIndex: $0.textVariantIndex,
+                            voiceID: $0.voiceId,
+                            hasAudio: $0.audioFilePath != nil)
         }
-        return byIndex.values.sorted { $0.textVariantIndex < $1.textVariantIndex }
+        let winners = DubVariantSelector.effective(
+            variants: values,
+            preferredVoiceID: preferredVoiceID,
+            videoCloneVoiceID: videoCloneVoiceID)
+        let dubByID = Dictionary(segmentDubs.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        return winners.compactMap { dubByID[$0.dubID] }
     }
 
     /// 参与导出组合的变体（= effectiveDubVariants 里勾选了"参与"的）。所有导出路径的单一真源。

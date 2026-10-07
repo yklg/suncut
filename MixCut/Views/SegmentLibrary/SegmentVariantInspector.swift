@@ -4,6 +4,8 @@ import SwiftUI
 struct SegmentVariantInspector<PropertiesContent: View>: View {
     let segment: Segment
     @Bindable var dubVM: DubbingViewModel
+    /// M1b：当前项目（项目级音色覆盖；R3 有效变体解析需要）。
+    let project: Project?
     /// 当前是否持久选中（驱动关闭按钮显隐；Inspector 不持有素材库 VM）
     let isPinned: Bool
     /// 头部关闭回调
@@ -30,9 +32,13 @@ struct SegmentVariantInspector<PropertiesContent: View>: View {
     private func variantLetter(_ t: Int) -> String { String(Character(UnicodeScalar(65 + t)!)) }
 
     private var voices: [String] { segment.video?.selectedVoiceIds ?? [] }
-    /// 实际已存在的改写版下标（升序），按它渲染变体卡片，数量随设置自适应。
+    /// 实际已存在的改写版下标（VM 投影，已排除未绑定脚本空壳）。
     private var presentVariantIndices: [Int] {
-        Array(Set(segment.segmentDubs.map { $0.textVariantIndex })).sorted()
+        dubVM.presentVariantIndices(segment)
+    }
+    /// 该分镜是否仅有脚本空壳（VM 投影；决定显示引导块而非变体死路）。
+    private var hasOnlyScriptShells: Bool {
+        dubVM.hasOnlyUnboundScriptShells(segment)
     }
     private func voiceName(_ id: String) -> String {
         if id == segment.video?.clonedVoiceId { return "原声克隆" }
@@ -54,9 +60,11 @@ struct SegmentVariantInspector<PropertiesContent: View>: View {
             ?? dub(textVariant: t, voiceId: voices.first ?? "")
             ?? segment.segmentDubs.first { $0.textVariantIndex == t }
     }
-    /// 该改写版参与组合用的"有效变体"（已生成音频、去重后那条）
+    /// 该改写版参与组合用的"有效变体"（已生成音频、去重后那条）。
+    /// M1b：R3 口径经 VM 投影（当前解析音色 dub＞克隆＞先到），视图不再裸读 effectiveDubVariants。
     private func effectiveDub(_ t: Int) -> SegmentDub? {
-        segment.effectiveDubVariants.first { $0.textVariantIndex == t }
+        dubVM.effectiveLegacyVariants(for: segment, project: project)
+            .first { $0.textVariantIndex == t }
     }
     private func f(_ x: Double) -> String { String(format: "%.1f", x) }
 
@@ -215,10 +223,41 @@ struct SegmentVariantInspector<PropertiesContent: View>: View {
     private var variantContent: some View {
         if segment.isVoiceLocked {
             lockBlock
+        } else if hasOnlyScriptShells {
+            // 仅有脚本成片空壳（无任何真实变体）：给方案生成引导，而非死路「改写版 A / —」。
+            scriptShellBlock
         } else if segment.segmentDubs.isEmpty {
             emptyVariantsBlock
         } else {
             variantsBlock
+        }
+    }
+
+    private var scriptShellBlock: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .top, spacing: 8) {
+                Image(systemName: "waveform.badge.exclamationmark")
+                    .font(DesignTokens.Typography.caption)
+                    .foregroundStyle(Color.accentColor)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("脚本成片配音待生成")
+                        .font(DesignTokens.Typography.caption.weight(.semibold))
+                        .foregroundStyle(Color.accentColor)
+                    Text("该分镜的全新配音属于产品脚本成片，请在「混剪方案 → 产品脚本成片」中用全局/项目音色统一生成，无需在此克隆。")
+                        .font(DesignTokens.Typography.microRegular)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            .padding(10)
+            .background(Color.accentColor.opacity(0.06))
+            .clipShape(RoundedRectangle(cornerRadius: 8))
+
+            if let progress = dubVM.videoDubProgress(for: segment) {
+                Label(progress.isEmpty ? "同视频配音处理中…" : progress, systemImage: "hourglass")
+                    .font(DesignTokens.Typography.microRegular)
+                    .foregroundStyle(.secondary)
+            }
         }
     }
 

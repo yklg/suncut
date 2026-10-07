@@ -12,6 +12,8 @@ struct DubSettingsBar: View {
     /// ⚠️ 刻意不做成「组件自己去读 `video.segments`」：那是一次 SwiftData 关系 fault，
     /// 已真删的分镜可能仍挂在这个内存对象上，读到就 SIGTRAP（见 SegmentLibraryView 同处注释）。
     let videoSegments: [Segment]
+    /// 当前项目（提供项目级音色覆盖）。
+    let project: Project
     @Bindable var dubVM: DubbingViewModel
     /// 作用域解析结果（决定按钮文案与禁用态）
     let scope: DubRewriteScopeResolution
@@ -34,14 +36,30 @@ struct DubSettingsBar: View {
     }
     private var eligibleCount: Int { eligibleSegments.count }
 
-    /// 按钮是否禁用：多选无勾选（disabled），或作用域内没有可改写分镜。
+    /// 按钮是否禁用：多选无勾选（disabled）、无可用分镜，或未配置任何音色。
     private var isCTADisabled: Bool {
-        scope.kind == .disabled || eligibleCount == 0
+        scope.kind == .disabled || eligibleCount == 0 || !isVoiceConfigured
+    }
+    private var isVoiceConfigured: Bool {
+        if case .resolved = voiceResolution { return true }
+        return false
+    }
+    /// M1b：该视频存在历史克隆声时，音色状态行才是可切换开关（否则没有「原声克隆」可切）。
+    /// 标量字段读取（非关系边），视图直读合法。
+    private var hasCloneVoice: Bool {
+        guard let id = video.clonedVoiceId?.trimmingCharacters(in: .whitespacesAndNewlines) else { return false }
+        return !id.isEmpty
+    }
+    /// 状态文本颜色（克隆=次要灰，全局/项目预置=品牌蓝，未配置=灰）。
+    private var isVoiceConfigEnabledColor: Color {
+        isVoiceConfigured && usesGlobalVoiceWithoutClone ? Color.accentColor : .secondary
     }
     private var disabledHint: String {
         if scope.kind == .disabled {
             return "多选模式下请先勾选本视频要改写的分镜"
         }
+        if eligibleCount == 0 { return presentation.emptyEligibleError }
+        if !isVoiceConfigured { return "尚未配置配音音色，请到「设置 → 配音」选择全局音色" }
         return presentation.emptyEligibleError
     }
 
@@ -52,10 +70,46 @@ struct DubSettingsBar: View {
     /// 仅在进入/切换视频与配音忙碌状态结束时刷新。
     @State private var variantCount: Int = 0
 
+    /// 当前生效音色解析（视图只展示，真规则在 Core VoiceResolver）。
+    /// M1b：透传视频级「跟随全局/项目」开关（voiceFollowsGlobal），压制历史克隆声。
+    private var voiceResolution: VoiceResolution {
+        VoicePreferences.resolveForLegacy(video: video,
+                                          projectOverrideRaw: project.preferredVoiceChoiceRaw,
+                                          suppressVideoClone: video.voiceFollowsGlobal)
+    }
+    private var voiceStatusText: String {
+        switch voiceResolution {
+        case .resolved(let choice):
+            switch choice {
+            case .videoClone: return "原声克隆（本视频）"
+            case .preset(let id):
+                let name = VoiceCatalog.displayName(id: id)
+                return project.preferredVoiceChoiceRaw != nil
+                    ? "当前音色：\(name)（项目覆盖）"
+                    : "当前音色：\(name)（全局默认）"
+            case .globalClone(_, _, _): return "当前音色：我的复刻"
+            }
+        case .unconfigured:
+            return "未配置音色 · 改写前请先在设置选择"
+        }
+    }
+    /// 是否走零克隆路径（预置/全局复刻）；决定计费文案。
+    private var usesGlobalVoiceWithoutClone: Bool {
+        if case .resolved(let c) = voiceResolution, c.engine == .cosyVoice { return true }
+        return false
+    }
+    private var currentVoiceDisplayName: String {
+        guard case .resolved(let c) = voiceResolution else { return "" }
+        switch c {
+        case .preset(let id): return VoiceCatalog.displayName(id: id)
+        case .videoClone: return "原声克隆"
+        case .globalClone: return "我的复刻"
+        }
+    }
+
     private func refreshVariantCount() {
-        // 吃传入的投影数组，不 fault `video.segments`；元素本身仍是模型对象，
-        // 这里的 `$1.segmentDubs` 是对**存活投影元素**的一次计数，规模与危险度都远低于遍历整条视频关系。
-        variantCount = videoSegments.reduce(0) { $0 + $1.segmentDubs.count }
+        // 关系读取收口在 VM：只计有音频的真实变体，无音频空壳不计，避免数字虚高。
+        variantCount = dubVM.readyDubCount(in: videoSegments)
     }
 
     /// 仅反映本视频的忙碌状态（不同视频互不联动）。
@@ -72,6 +126,50 @@ struct DubSettingsBar: View {
                         .help("已生成 \(variantCount) 个配音变体，点开分镜在右侧查看")
                 }
 
+                // 当前音色状态（全局/项目预置 vs 原声克隆 vs 未配置）。
+                // M1b：该视频有历史克隆声时，状态行即二选一开关（原声克隆 ↔ 跟随全局/项目）；
+                // 无克隆声的视频没有可切对象，保持纯文本。切换只影响此后新生成（VM 收口）。
+                if hasCloneVoice {
+                    Menu {
+                        Button {
+                            dubVM.setVideoFollowsGlobal(false, video: video, context: modelContext)
+                        } label: {
+                            if video.voiceFollowsGlobal {
+                                Text("原声克隆（本视频）")
+                            } else {
+                                Label("原声克隆（本视频）", systemImage: "checkmark")
+                            }
+                        }
+                        Button {
+                            dubVM.setVideoFollowsGlobal(true, video: video, context: modelContext)
+                        } label: {
+                            if video.voiceFollowsGlobal {
+                                Label("跟随全局或项目音色", systemImage: "checkmark")
+                            } else {
+                                Text("跟随全局或项目音色")
+                            }
+                        }
+                    } label: {
+                        HStack(spacing: 3) {
+                            Text(voiceStatusText).font(.system(size: 10)).lineLimit(1)
+                            Image(systemName: "chevron.up.chevron.down").font(.system(size: 8))
+                        }
+                        .foregroundStyle(isVoiceConfigured
+                                         ? (usesGlobalVoiceWithoutClone ? Color.accentColor : .secondary)
+                                         : .secondary)
+                    }
+                    .menuStyle(.borderlessButton)
+                    .controlSize(.small)
+                    .fixedSize()
+                    .help("切换该视频的配音音色来源（仅影响此后新生成，不改动已有配音）")
+                } else {
+                    Text(voiceStatusText)
+                        .font(.system(size: 10))
+                        .foregroundStyle(isVoiceConfigEnabledColor)
+                        .lineLimit(1)
+                        .help(isVoiceConfigured ? voiceStatusText : disabledHint)
+                }
+
                 Stepper(value: $variantCountSetting, in: DubbingViewModel.variantCountRange) {
                     Text("×\(variantCountSetting)")
                         .font(.caption2).foregroundStyle(.secondary).monospacedDigit()
@@ -83,8 +181,6 @@ struct DubSettingsBar: View {
                 scopeLabel
 
                 Button {
-                    // 计费确认：未克隆时这一下会触发 demucs 人声分离 + 音色克隆 + N 套 AI 改写
-                    // + 分镜 × N 段 TTS 合成，是全 App 最贵的操作之一，手滑点到代价很大。
                     showRewriteConfirm = true
                 } label: {
                     Label(ctaTitle, systemImage: "wand.and.stars")
@@ -93,7 +189,7 @@ struct DubSettingsBar: View {
                 .controlSize(.small)
                 .disabled(isCTADisabled)
                 .help(isCTADisabled ? disabledHint
-                      : "自动克隆原声 → 改写台词 → 用克隆嗓音生成配音。作用域：\(presentation.actionNoun)")
+                      : "改写台词并用\(usesGlobalVoiceWithoutClone ? "全局音色" : "克隆嗓音")合成配音。作用域：\(presentation.actionNoun)")
             }
         }
         .confirmationDialog("确定要开始改写台词吗？", isPresented: $showRewriteConfirm) {
@@ -102,11 +198,16 @@ struct DubSettingsBar: View {
                 dubVM.startRewriteTask(video: video,
                                        targets: targets,
                                        presentation: presentation,
-                                       context: modelContext)
+                                       context: modelContext,
+                                       projectOverrideRaw: project.preferredVoiceChoiceRaw)
             }
             Button("取消", role: .cancel) {}
         } message: {
-            Text("将为\(presentation.actionNoun) \(eligibleCount) 个分镜各生成 \(variantCountSetting) 套改写台词，并用克隆嗓音合成约 \(eligibleCount * variantCountSetting) 段配音。按次计费，耗时较长。")
+            if usesGlobalVoiceWithoutClone {
+                Text("将为\(presentation.actionNoun) \(eligibleCount) 个分镜各生成 \(variantCountSetting) 套改写台词，并用音色「\(currentVoiceDisplayName)」合成约 \(eligibleCount * variantCountSetting) 段配音。仅 AI 改写 + TTS 合成费用，无需人声分离与声音注册。")
+            } else {
+                Text("将为\(presentation.actionNoun) \(eligibleCount) 个分镜各生成 \(variantCountSetting) 套改写台词，并用克隆嗓音合成约 \(eligibleCount * variantCountSetting) 段配音。首次克隆含人声分离与声音注册费用，按次计费，耗时较长。")
+            }
         }
         .task(id: video.id) { refreshVariantCount() }
         // 配音跑完（busy 由 true 变 false）时刷新计数

@@ -1,7 +1,11 @@
 import SwiftUI
 
 struct SettingsView: View {
+    /// 设置标签页；默认「通用」——配音/视频处理等常用配置打开即见，API Key 配一次后很少再动。
+    enum SettingsTab: Hashable { case api, general, agent }
+
     @Environment(\.dismiss) private var dismiss
+    @State private var settingsTab: SettingsTab = .general
     @State private var selectedProvider: AIProviderType = KeychainHelper.activeProvider
     @State private var apiKey: String = ""
     /// 文本智能卡的操作结果（保存/测试连接），只在本卡操作行内显示——
@@ -37,6 +41,13 @@ struct SettingsView: View {
     @AppStorage(AgentGateway.portKey) private var agentPort = Int(AgentGateway.defaultPort)
     @State private var selectedAgentClient: AgentClientSnippet = .claudeCode
 
+    /// 全局默认配音音色（VoiceChoiceCoder 串；空=未配置）。
+    @State private var globalVoiceID: String = VoicePreferences.globalDefaultChoice?.voiceID ?? ""
+    /// M1b：音色选择器弹窗（中立 VoicePickerSheet；全局默认的写入仍在本页收口）。
+    @State private var showVoicePicker = false
+    /// 试听用进程级共享服务（播放器挂在单例上，避免临时对象释放导致播放即止）。
+    @State private var auditionPlayer = VoiceAuditionPlayer.shared
+
     var body: some View {
         VStack(spacing: 0) {
             // 顶部标题栏 + 关闭按钮
@@ -58,27 +69,45 @@ struct SettingsView: View {
             .padding(.top, 14)
             .padding(.bottom, 4)
 
-            TabView {
+            TabView(selection: $settingsTab) {
                 apiKeySettings
                     .tabItem {
                         Label("API", systemImage: "key")
                     }
+                    .tag(SettingsTab.api)
 
                 generalSettings
                     .tabItem {
                         Label("通用", systemImage: "gear")
                     }
+                    .tag(SettingsTab.general)
 
                 agentSettings
                     .tabItem {
                         Label("Agent", systemImage: "antenna.radiowaves.left.and.right")
                     }
+                    .tag(SettingsTab.agent)
             }
         }
         .frame(width: 500, height: 470)
         .onAppear {
             loadProviderState()
             refreshASRState()
+        }
+        .sheet(isPresented: $showVoicePicker) {
+            VoicePickerSheet(
+                title: "全局默认音色",
+                contextLine: "所有项目的改写配音与「产品脚本成片」默认使用该音色",
+                current: VoicePreferences.globalDefaultChoice,
+                allowsClear: true,
+                clearLabel: "未配置（不自动配音）",
+                onPick: { choice in
+                    // 全局默认唯一写入点（空 choice = 清除）；与 globalVoiceID 试听态同源更新。
+                    VoicePreferences.globalDefaultRaw = choice.map { VoiceChoiceCoder.encode($0) }
+                    globalVoiceID = choice?.voiceID ?? ""
+                    showVoicePicker = false
+                },
+                onClose: { showVoicePicker = false })
         }
     }
 
@@ -402,6 +431,44 @@ struct SettingsView: View {
     // MARK: - 通用设置
     private var generalSettings: some View {
         Form {
+            Section("配音") {
+                // M1b：音色行（当前值副标题 + 试听 + [更改] 弹中立选择器），不再用 80 项系统 Menu。
+                LabeledContent {
+                    HStack(spacing: 8) {
+                        Button {
+                            auditionPlayer.playPreset(globalVoiceID)
+                        } label: {
+                            Label(auditionPlayer.isAuditioning ? "试听中…" : "试听",
+                                  systemImage: "play.circle")
+                        }
+                        .controlSize(.small)
+                        .disabled(globalVoiceID.isEmpty || auditionPlayer.isAuditioning)
+                        Button("更改") { showVoicePicker = true }
+                            .controlSize(.small)
+                    }
+                } label: {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("全局默认音色")
+                        Text(globalVoiceID.isEmpty
+                             ? "未配置（不自动配音）"
+                             : VoiceCatalog.displayName(id: globalVoiceID))
+                            .font(DesignTokens.Typography.microRegular)
+                            .foregroundStyle(.secondary)
+                        if let err = auditionPlayer.lastError {
+                            Text(err)
+                                .font(DesignTokens.Typography.micro)
+                                .foregroundStyle(.red)
+                                .lineLimit(1)
+                        }
+                    }
+                }
+
+                Text("所有项目的改写配音与「产品脚本成片」默认使用该音色，直接合成、无需逐视频克隆。项目可在概览页单独覆盖；已克隆原声的视频仍保留其克隆音色。")
+                    .font(DesignTokens.Typography.microRegular)
+                    .foregroundStyle(.tertiary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
             Section("视频处理") {
                 LabeledContent("FFmpeg") {
                     let bundled = Bundle.main.path(forResource: "ffmpeg", ofType: nil, inDirectory: "bin") != nil
@@ -955,6 +1022,7 @@ struct SettingsView: View {
     private func formatBytes(_ bytes: Int64) -> String {
         ByteCountFormatter.string(fromByteCount: bytes, countStyle: .binary)
     }
+
 }
 
 // MARK: - Key 管理操作行（两张 Key 卡片唯一真源）
