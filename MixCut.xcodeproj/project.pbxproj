@@ -232,6 +232,7 @@
             AC0000000000000000000065 /* DubVariantSelector.swift in Sources */ = {isa = PBXBuildFile; fileRef = AD0000000000000000000065 /* DubVariantSelector.swift */; };
             AC0000000000000000000060 /* VoiceChoice.swift in Sources */ = {isa = PBXBuildFile; fileRef = AD0000000000000000000060 /* VoiceChoice.swift */; };
             AC0000000000000000000020 /* RawAudioCache.swift in Sources */ = {isa = PBXBuildFile; fileRef = AD0000000000000000000020 /* RawAudioCache.swift */; };
+            AC0000000000000000000022 /* CloneSampleReaper.swift in Sources */ = {isa = PBXBuildFile; fileRef = AD0000000000000000000022 /* CloneSampleReaper.swift */; };
             AC0000000000000000000021 /* CloneVoicePolicy.swift in Sources */ = {isa = PBXBuildFile; fileRef = AD0000000000000000000021 /* CloneVoicePolicy.swift */; };
             AC0000000000000000000061 /* ScriptDubBinding.swift in Sources */ = {isa = PBXBuildFile; fileRef = AD0000000000000000000061 /* ScriptDubBinding.swift */; };
             AC0000000000000000000062 /* BoundedTaskGate.swift in Sources */ = {isa = PBXBuildFile; fileRef = AD0000000000000000000062 /* BoundedTaskGate.swift */; };
@@ -490,6 +491,7 @@
             AD0000000000000000000065 /* DubVariantSelector.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = DubVariantSelector.swift; path = Sources/MixCutCore/DubVariantSelector.swift; sourceTree = "<group>"; };
             AD0000000000000000000060 /* VoiceChoice.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = VoiceChoice.swift; path = Sources/MixCutCore/VoiceChoice.swift; sourceTree = "<group>"; };
             AD0000000000000000000020 /* RawAudioCache.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = RawAudioCache.swift; path = Sources/MixCutCore/RawAudioCache.swift; sourceTree = "<group>"; };
+            AD0000000000000000000022 /* CloneSampleReaper.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = CloneSampleReaper.swift; path = Sources/MixCutCore/CloneSampleReaper.swift; sourceTree = "<group>"; };
             AD0000000000000000000021 /* CloneVoicePolicy.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = CloneVoicePolicy.swift; path = Sources/MixCutCore/CloneVoicePolicy.swift; sourceTree = "<group>"; };
             AD0000000000000000000061 /* ScriptDubBinding.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = ScriptDubBinding.swift; path = Sources/MixCutCore/ScriptDubBinding.swift; sourceTree = "<group>"; };
             AD0000000000000000000062 /* BoundedTaskGate.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = BoundedTaskGate.swift; path = Sources/MixCutCore/BoundedTaskGate.swift; sourceTree = "<group>"; };
@@ -783,6 +785,7 @@
                             AD0000000000000000000065 /* DubVariantSelector.swift */,
                             AD0000000000000000000060 /* VoiceChoice.swift */,
                             AD0000000000000000000020 /* RawAudioCache.swift */,
+                            AD0000000000000000000022 /* CloneSampleReaper.swift */,
                             AD0000000000000000000021 /* CloneVoicePolicy.swift */,
                             AD0000000000000000000061 /* ScriptDubBinding.swift */,
                             AD0000000000000000000062 /* BoundedTaskGate.swift */,
@@ -1376,6 +1379,7 @@
                            AC0000000000000000000065 /* DubVariantSelector.swift in Sources */,
                            AC0000000000000000000060 /* VoiceChoice.swift in Sources */,
                            AC0000000000000000000020 /* RawAudioCache.swift in Sources */,
+                           AC0000000000000000000022 /* CloneSampleReaper.swift in Sources */,
                            AC0000000000000000000021 /* CloneVoicePolicy.swift in Sources */,
                            AC0000000000000000000061 /* ScriptDubBinding.swift in Sources */,
                            AC0000000000000000000062 /* BoundedTaskGate.swift in Sources */,

@@ -185,10 +185,37 @@ run_xcodebuild() {
   local log rc
   log="$(mktemp -t mixcut-appbuild).log"
   set +e
+  # ⚠️ 先按 scheme 跑。**scheme 可能不存在或写坏**（本工程原先靠 Xcode 自动生成的
+  # managed scheme，见 M2 test target 计划；一旦改为显式 shared scheme，它就成了单点故障）。
+  # ⇒ 失败且日志显示是 scheme 问题时，**自动回退到 -target**（带 target 的 build 不依赖 scheme）。
+  # 这样守卫不会被「一个文件写错」整体拖垮。
   xcodebuild -project "$ROOT/MixCut.xcodeproj" -scheme MixCut build >"$log" 2>&1
   rc=$?
-  set -e
   if [ "$rc" -ne 0 ]; then
+    # 判据：scheme 层面的问题才回退。**必须用实测到的确切文案**，不能猜：
+    # 实测（注入坏 scheme 后 xcodebuild 的真实输出）：
+    #   "xcodebuild: error: Scheme MixCut is not currently configured for the build action."
+    #   "xcodebuild: error: Unable to find a scheme named ..."
+    #   "xcodebuild: error: The workspace does not contain a scheme ..."
+    # ⚠️ 不对「编译错误」回退 —— 那样真实错误会被二次尝试掩盖，只会让排查变慢。
+    if grep -Eqi "not currently configured for the build action|unable to find a scheme|does not contain a scheme|could not find scheme|scheme .*not found" "$log"; then
+      echo "[xcodebuild 腿] scheme 不可用，回退到 -target MixCut（不依赖 scheme）"
+      local log2
+      log2="$(mktemp -t mixcut-appbuild-target).log"
+      set +e
+      xcodebuild -project "$ROOT/MixCut.xcodeproj" -target MixCut build >"$log2" 2>&1
+      rc=$?
+      set -e
+      if [ "$rc" -ne 0 ]; then
+        grep -E "error:|The following build commands failed" "$log2" | head -40 || true
+        echo "APP BUILD GATE [xcodebuild]: FAIL（已回退到 -target）—— 完整日志：$log2"
+        return 1
+      fi
+      rm -f "$log2"
+      echo "APP BUILD GATE [xcodebuild]: PASS（-target 回退路径）"
+      rm -f "$log"
+      return 0
+    fi
     grep -E "error:|The following build commands failed" "$log" | head -40 || true
     echo "APP BUILD GATE [xcodebuild]: FAIL —— 完整日志：$log"
     return 1
