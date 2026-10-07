@@ -453,6 +453,63 @@ expect_ge "rewriteService 注入后必须仍回落生产实现 ScriptRewriteServ
   "$(code_count_f "$DUB_VM" 'rewriteService ?? ScriptRewriteService()')" 1
 
 echo
+echo "== G-C M3 原始 TTS 音频缓存（只缓存原始层、绝不复用成品 m4a）=="
+RAW_CACHE_CORE="$CORE/RawAudioCache.swift"
+RAW_CACHE_STORE="$ROOT/MixCut/Services/TTS/RawAudioCacheStore.swift"
+expect_file "Core RawAudioCache 存在（键/LRU 判据纯值层）" "$RAW_CACHE_CORE"
+expect_file "App RawAudioCacheStore 存在（磁盘动作层）" "$RAW_CACHE_STORE"
+
+# ① 核心纪律：缓存原始层，**严禁**把成品 m4a 当缓存复用。
+# 这是 M3 的全部价值所在 —— 成品与targetDuration/fps 强绑定（atempo+补帧），
+# 同一文案在不同时长的分镜里复用成品会得到错误时长。
+# 判据锚在**代码**上而非注释上（code_count 刻意剥掉注释行，注释里的声明不算证据）：
+# 缓存目录必须是独立的 TTSCache（与成品 Dubs 分属不同命名空间），
+# 且落盘后缀是 .audio（原始音频）而非 .m4a。
+expect_ge "缓存目录必须与成品 Dubs 分离（独立命名空间，物理上不可能误用成品）" \
+  "$(code_count_f "$RAW_CACHE_STORE" 'appendingPathComponent("TTSCache", isDirectory: true)')" 1
+expect_ge "缓存落盘后缀必须是 .audio（原始音频），不得是 .m4a" \
+  "$(code_count_f "$RAW_CACHE_STORE" '.audio')" 1
+expect_ge "命中时必须复制副本（finalize 会删传入文件，直接给缓存真身会把缓存删空）" \
+  "$(code_count "$RAW_CACHE_STORE" 'copyItem')" 1
+expect_ge "命中路径必须复制到临时副本而非直接使用缓存路径" \
+  "$(code_count "$DUB_VM" 'copyingTo')" 1
+
+# ② 键的构成：engine+model+voice+textHash+rate 桶+采样率+格式，缺一即误命中。
+expect_ge "Core 键必须含 engine 维度" "$(code_count_f "$RAW_CACHE_CORE" 'engine: Engine')" 1
+expect_ge "Core 键必须含 model 维度" "$(code_count_f "$RAW_CACHE_CORE" 'model: String')" 1
+expect_ge "Core 键必须含 voiceID 维度" "$(code_count_f "$RAW_CACHE_CORE" 'voiceID: String')" 1
+expect_ge "Core 键必须含 sampleRate 维度" "$(code_count_f "$RAW_CACHE_CORE" 'sampleRate: Int')" 1
+expect_ge "Core 键必须含 format 维度" "$(code_count_f "$RAW_CACHE_CORE" 'format: String')" 1
+expect_ge "Core 键必须含 rate 分桶（否则命中率崩）" \
+  "$(code_count_f "$RAW_CACHE_CORE" 'bucket(for rate: Double)')" 1
+
+# ③ 键的构造只有一处（禁止 App 层自己拼 stem —— 拼错就是「界面显示已缓存却永远不命中」）。
+expect_ge "键构造必须收口在 Core（App 层唯一入口）" \
+  "$(code_count_f "$RAW_CACHE_CORE" 'normalizedTextHash')" 1
+
+# ④ LRU 与孤儿判据必须在 Core（纯函数可单测），App 层只做磁盘动作。
+expect_ge "LRU 淘汰判据必须在 Core" "$(code_count_f "$RAW_CACHE_CORE" 'func victims')" 1
+expect_ge "App 层淘汰必须经 Core 判据（禁自己写淘汰顺序）" \
+  "$(code_count "$RAW_CACHE_STORE" 'RawAudioCacheEvictor.victims')" 1
+
+# ⑤ App 层不得出现第二份哈希实现（本仓最忌讳「两处各算」，一旦漂移缓存永不命中）。
+expect_eq "App 层禁止自实现哈希/FNV（必须用 Core 的 fileStem）" \
+  "$(code_count "$RAW_CACHE_STORE" '0x811c9dc5')" 0
+expect_ge "App 层落盘文件名必须用 Core 的 fileStem" \
+  "$(code_count "$RAW_CACHE_STORE" 'fileStem')" 1
+
+# ⑥ pbxproj 四段登记（漏登记沙盒门禁假绿、真机才红）。
+expect_ge "RawAudioCacheStore 必须四段登记进 project.pbxproj" \
+  "$(grep -c 'RawAudioCacheStore\.swift' "$ROOT/MixCut.xcodeproj/project.pbxproj")" 4
+
+# ⑦ 单测覆盖（RA 系列：键构成/分桶/归一化/LRU）。
+expect_file "RawAudioCache 单测存在" "$TESTS/RawAudioCacheTests.swift"
+expect_ge "RA 系列用例 ≥ 20 条" \
+  "$(code_count "$TESTS/RawAudioCacheTests.swift" '@Test')" 20
+expect_ge "rewriteService 注入后必须仍回落生产实现 ScriptRewriteService()" \
+  "$(code_count_f "$DUB_VM" 'rewriteService ?? ScriptRewriteService()')" 1
+
+echo
 if [ "$fail" -eq 0 ]; then
   echo "PASS 脚本管线守卫全部成立"
 else

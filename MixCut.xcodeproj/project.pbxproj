@@ -234,6 +234,7 @@
             AC0000000000000000000062 /* BoundedTaskGate.swift in Sources */ = {isa = PBXBuildFile; fileRef = AD0000000000000000000062 /* BoundedTaskGate.swift */; };
             AE0000000000000000000040 /* VoicePreferences.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF0000000000000000000040 /* VoicePreferences.swift */; };
             AE0000000000000000000041 /* VoiceAuditionPlayer.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF0000000000000000000041 /* VoiceAuditionPlayer.swift */; };
+            AE0000000000000000000042 /* RawAudioCacheStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF0000000000000000000042 /* RawAudioCacheStore.swift */; };
             AE0000000000000000000042 /* VoicePickerSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF0000000000000000000042 /* VoicePickerSheet.swift */; };
             AE0000000000000000000043 /* SheetContainerLayout.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF0000000000000000000043 /* SheetContainerLayout.swift */; };
             AE0000000000000000000002 /* SegmentGridPickerSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF0000000000000000000002 /* SegmentGridPickerSheet.swift */; };
@@ -482,6 +483,7 @@
             AD0000000000000000000062 /* BoundedTaskGate.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = BoundedTaskGate.swift; path = Sources/MixCutCore/BoundedTaskGate.swift; sourceTree = "<group>"; };
             AF0000000000000000000040 /* VoicePreferences.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = VoicePreferences.swift; sourceTree = "<group>"; };
             AF0000000000000000000041 /* VoiceAuditionPlayer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoiceAuditionPlayer.swift; sourceTree = "<group>"; };
+            AF0000000000000000000042 /* RawAudioCacheStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RawAudioCacheStore.swift; sourceTree = "<group>"; };
             AF0000000000000000000042 /* VoicePickerSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoicePickerSheet.swift; sourceTree = "<group>"; };
             AF0000000000000000000043 /* SheetContainerLayout.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SheetContainerLayout.swift; sourceTree = "<group>"; };
             AF0000000000000000000002 /* SegmentGridPickerSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SegmentGridPickerSheet.swift; sourceTree = "<group>"; };
@@ -1037,6 +1039,7 @@
 				B3A7F2E91C4D58A30E6F1D2B /* QwenTTSClient.swift */,
 				7DD8F10E220C49CFB4D2DBDA /* CosyVoiceTTSClient.swift */,
 				AF0000000000000000000041 /* VoiceAuditionPlayer.swift */,
+				AF0000000000000000000042 /* RawAudioCacheStore.swift */,
 				77F93B7C1DE045DA9A8F371B /* VocalSeparationService.swift */,
 				8125257167654959A82159EF /* VoiceCloneService.swift */,
 				90381051D2F94A9AB912BC86 /* DubAudioFinalizer.swift */,
@@ -1140,6 +1143,7 @@
 				C8D4E5F60A1B27C93E8D4A15 /* QwenTTSClient.swift in Sources */,
 				E45A697280C04799918959ED /* CosyVoiceTTSClient.swift in Sources */,
 				AE0000000000000000000041 /* VoiceAuditionPlayer.swift in Sources */,
+				AE0000000000000000000042 /* RawAudioCacheStore.swift in Sources */,
 				AE0000000000000000000042 /* VoicePickerSheet.swift in Sources */,
 				AE0000000000000000000043 /* SheetContainerLayout.swift in Sources */,
 				1A5F60C136724AEFB9C4CCF8 /* VocalSeparationService.swift in Sources */,

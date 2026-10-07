@@ -779,6 +779,80 @@ final class DubbingViewModel {
         return best!
     }
 
+    /// 缓存未命中时的真实合成路径，并在**返回前**把原始音频存入缓存。
+    ///
+    /// 抽成独立函数而非内联在 `generateAudio` 里，有两个原因：
+    /// ① **可读性**：命中/未命中两条路径对称，`generateAudio` 里只留「选哪条」；
+    /// ② **可验证性**：存缓存必须在 finalize 之前（finalize 会删掉传入文件），
+    /// 收在一个函数里才不会在后续改动中被挪到 finalize 之后。
+    private static func synthesizeFresh(client: TTSClient,
+                                        voiceID: String,
+                                        text: String,
+                                        targetDuration: Double,
+                                        bias: Double,
+                                        cloned: Bool,
+                                        cacheSpec: (engine: RawAudioCacheKey.Engine,
+                                                    model: String,
+                                                    sampleRate: Int,
+                                                    format: String)?) async throws -> TTSResult {
+        let firstRate = 1.0
+        let result: TTSResult
+        if cloned {
+            // qwen克隆 TTS 间歇性"续读参考内容/跑飞"(音频比台词长，混进下一段)：
+            // 干净版必然最短 → 重试取最短，看着干净(时长≤字数×阈值)即提前采用。
+            result = try await synthesizeCloneRobust(client: client, text: text, voiceId: voiceID)
+        } else {
+            var r = try await client.synthesize(text: text, voiceId: voiceID,
+                                                languageType: "Chinese", rate: firstRate)
+            if let retarget = SpeechRatePlanner.retargetRate(
+                targetDuration: targetDuration, measuredDuration: r.rawDuration,
+                measuredAtRate: firstRate, bias: bias) {
+                r = try await client.synthesize(text: text, voiceId: voiceID,
+                                                languageType: "Chinese", rate: retarget)
+            }
+            result = r
+        }
+        // 存入缓存（键用 rate=1.0 —— 与下次查询用的键严格一致；命中率靠分桶保证）。
+        if let cacheSpec {
+            let key = RawAudioCacheStore.key(engine: cacheSpec.engine, model: cacheSpec.model,
+                                             voiceID: voiceID, text: text, rate: firstRate,
+                                             sampleRate: cacheSpec.sampleRate, format: cacheSpec.format)
+            await RawAudioCacheStore.shared.store(key: key,
+                                                  audioURL: URL(fileURLWithPath: result.wavPath),
+                                                  rawDuration: result.rawDuration)
+        }
+        return result
+    }
+
+    // MARK: - M3 原始音频缓存（M3：只缓存原始 TTS，绝不复用成品 m4a）
+
+    /// 该音色身份是否可缓存，以及缓存键所需的固定维度（model/采样率/格式）。
+    /// 返回 nil = 该组合不进缓存（调用方按原路径合成）。
+    ///
+    /// 为什么只对 CosyVoice 引擎开：qwen-vc 克隆分支带「重试取最短」健壮逻辑，
+    /// 且克隆音色按视频隔离、跨分镜复用收益低；把重试产出当代表反而会缓存下一份
+    /// 「可能跑飞」的音频。宁可少缓存，不可缓存坏音频。
+    private static func rawCacheSpec(for choice: VoiceChoice,
+                                     voiceID: String) -> (engine: RawAudioCacheKey.Engine,
+                                                          model: String,
+                                                          sampleRate: Int,
+                                                          format: String)? {
+        switch choice.engine {
+        case .cosyVoice:
+            return (.cosyVoice,
+                    choice.cosyVoiceModel ?? CosyVoiceCatalog.model,
+                    CosyVoiceTTSClient.sampleRateForCache,
+                    CosyVoiceTTSClient.formatForCache)
+        case .qwenVC:
+            return nil
+        }
+    }
+
+    /// 缓存命中/临时副本用的唯一临时路径出口（finalize 会删传入文件，故必须是副本）。
+    private static func ttsTempURL(prefix: String) -> URL {
+        FileHelper.tempDirectory.appendingPathComponent("\(prefix)-\(UUID().uuidString).tmp")
+    }
+
     /// 同 (分镜, 音色, 改写版) 已存在则更新文本（文本变更则清空旧音频），否则新建。
     private func upsertDub(segment: Segment, voiceId: String, textVariantIndex: Int,
                            text: String, context: ModelContext) {
@@ -870,21 +944,42 @@ final class DubbingViewModel {
             // CosyVoice 引擎（预置/全局复刻）走 rate 对齐。客户端按音色身份路由。
             let client = synthesisClient(for: choice)
             let synthVoiceID = choice.voiceID
-            var result: TTSResult
-            if cloned {
-                // qwen 克隆 TTS 间歇性"续读参考内容/跑飞"(音频比台词长，混进下一段)：
-                // 干净版必然最短 → 重试取最短，看着干净(时长≤字数×阈值)即提前采用。
-                result = try await Self.synthesizeCloneRobust(
-                    client: client, text: dub.rewrittenText, voiceId: synthVoiceID)
+
+            // M3 原始音频缓存：命中即省一次 TTS 计费。
+            // ⚠️ 缓存的是**原始 TTS 音频**，不是成品 m4a —— 成品与 targetDuration/fps
+            // 强绑定（atempo+补帧），同一文案出现在不同时长的分镜里无法复用成品；
+            // 命中后各分镜仍各自 finalize（自己的 atempo），故时长各自正确。
+            // ⚠️ 命中时必须把缓存**复制**到临时文件再交给 finalize —— finalize
+            // 会删掉传入的文件，直接给缓存真身会把缓存删空。
+            //
+            // 只对 **CosyVoice 引擎**开缓存：qwen-vc 克隆分支带「重试取最短」健壮性逻辑
+            // （synthesizeCloneRobust 可能连合成三次），把它塞进缓存会把「重试产出的
+            // 那一份」当成该文案的代表；且克隆音色按视频隔离，跨分镜复用收益本就低。
+            let cacheSpec = Self.rawCacheSpec(for: choice, voiceID: synthVoiceID)
+
+            // 两条路径（命中 / 新合成）各自返回「可交给 finalize 的 TTSResult」。
+            // ⚠️ 刻意用 if/else **表达式**而不是「先 var result 再分支赋值」——
+            // 后者 Swift 无法证明所有路径都已初始化（silgen 腿实测报
+            // "variable 'result' used before being initialized"，而 typecheck 放行）。
+            let hitURL = Self.ttsTempURL(prefix: "cachhit")
+            let cachedDuration: Double? = if let cacheSpec {
+                await RawAudioCacheStore.shared.hit(
+                    key: RawAudioCacheStore.key(engine: cacheSpec.engine, model: cacheSpec.model,
+                                               voiceID: synthVoiceID, text: dub.rewrittenText,
+                                               rate: 1.0, sampleRate: cacheSpec.sampleRate,
+                                               format: cacheSpec.format),
+                    copyingTo: hitURL)
             } else {
-                result = try await client.synthesize(text: dub.rewrittenText, voiceId: synthVoiceID,
-                                                     languageType: "Chinese", rate: 1.0)
-                if let retarget = SpeechRatePlanner.retargetRate(
-                    targetDuration: target, measuredDuration: result.rawDuration,
-                    measuredAtRate: 1.0, bias: bias) {
-                    result = try await client.synthesize(text: dub.rewrittenText, voiceId: synthVoiceID,
-                                                         languageType: "Chinese", rate: retarget)
-                }
+                nil
+            }
+            let result: TTSResult
+            if let cachedDuration {
+                MixLog.info("[TTSCache] 命中 raw=\(String(format: "%.2f", cachedDuration))s voice=\(synthVoiceID)")
+                result = TTSResult(wavPath: hitURL.path, rawDuration: cachedDuration)
+            } else {
+                result = try await Self.synthesizeFresh(
+                    client: client, voiceID: synthVoiceID, text: dub.rewrittenText,
+                    targetDuration: target, bias: bias, cloned: cloned, cacheSpec: cacheSpec)
             }
             let finalized = try await finalizer.finalize(
                 tts: result, targetDuration: target, fps: video.fps > 0 ? video.fps : 30,

@@ -47,6 +47,8 @@ struct SettingsView: View {
     @State private var showVoicePicker = false
     /// 试听用进程级共享服务（播放器挂在单例上，避免临时对象释放导致播放即止）。
     @State private var auditionPlayer = VoiceAuditionPlayer.shared
+    /// M3：原始音频缓存用量（nil = 尚未扫盘，UI 显示进度指示）。
+    @State private var cacheUsage: RawAudioCacheStore.Usage?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -93,6 +95,7 @@ struct SettingsView: View {
         .onAppear {
             loadProviderState()
             refreshASRState()
+            Task { await refreshCacheUsage() }
         }
         .sheet(isPresented: $showVoicePicker) {
             VoicePickerSheet(
@@ -464,6 +467,35 @@ struct SettingsView: View {
                 }
 
                 Text("所有项目的改写配音与「产品脚本成片」默认使用该音色，直接合成、无需逐视频克隆。项目可在概览页单独覆盖；已克隆原声的视频仍保留其克隆音色。")
+                    .font(DesignTokens.Typography.microRegular)
+                    .foregroundStyle(.tertiary)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                // M3：原始音频缓存用量与清理。放在「存储」外的「配音」区，
+                // 因为它是配音成本的一部分（命中即省一次 TTS 计费）。
+                Divider()
+                LabeledContent("原始音频缓存") {
+                    HStack(spacing: 8) {
+                        if let usage = cacheUsage {
+                            Text(usage.fileCount == 0
+                                 ? "暂无缓存"
+                                 : "\(usage.fileCount) 项 · \(formatBytes(usage.bytes))"
+                                 + (usage.isOverBudget ? "（超上限）" : ""))
+                                .font(DesignTokens.Typography.microRegular)
+                                .foregroundStyle(.secondary)
+                        } else {
+                            ProgressView().controlSize(.mini)
+                        }
+                        Button("刷新") { Task { await refreshCacheUsage() } }
+                            .controlSize(.small)
+                        Button("清空") {
+                            Task { await clearRawAudioCache() }
+                        }
+                        .controlSize(.small)
+                        .disabled(cacheUsage?.fileCount ?? 0 == 0)
+                    }
+                }
+                Text("缓存的是 TTS 原始音频（同一段文案换分镜重生成时可直接复用，省一次合成计费）；每个分镜仍按各自时长单独对齐。已生成配音是独立的成品文件，清空缓存不影响它们。")
                     .font(DesignTokens.Typography.microRegular)
                     .foregroundStyle(.tertiary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -1021,6 +1053,19 @@ struct SettingsView: View {
     /// 把字节数格式化为 KB / MB / GB
     private func formatBytes(_ bytes: Int64) -> String {
         ByteCountFormatter.string(fromByteCount: bytes, countStyle: .binary)
+    }
+
+    // MARK: - M3 原始音频缓存
+
+    /// 扫盘刷新用量读数。
+    private func refreshCacheUsage() async {
+        cacheUsage = await RawAudioCacheStore.shared.usage()
+    }
+
+    /// 清空缓存。缓存与成品配音解耦（成品是独立自包含的 m4a），故可全清。
+    private func clearRawAudioCache() async {
+        _ = await RawAudioCacheStore.shared.clearAll()
+        await refreshCacheUsage()
     }
 
 }

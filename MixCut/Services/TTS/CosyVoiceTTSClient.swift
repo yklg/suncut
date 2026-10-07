@@ -7,6 +7,10 @@ actor CosyVoiceTTSClient: TTSClient {
     /// 合成型号：预置音色默认 cosyvoice-v2；全局复刻音色可经注册时绑定的型号注入。
     private let model: String
     private static let sampleRate = 24000
+    /// 缓存维度（M3）：采样率与格式进缓存键 —— 客户端改这两项时音频内容会变，
+    /// 键自然不同，不会误命中旧产物。暴露为内部常量供 DubbingViewModel 建键（单一真源）。
+    nonisolated static let sampleRateForCache = sampleRate
+    nonisolated static let formatForCache = "mp3"
     private static let overallTimeout: TimeInterval = 45
     /// rate 合法区间（基准 1.0）
     private static let rateMin = 0.5

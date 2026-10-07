@@ -14,7 +14,8 @@ DIRTY="$PROBE_ROOT/dirty"
 CORE_FILES=(ScriptGroundingGate ScriptMatchRepair DubOnlyExportPolicy ScriptTextExporter
             SegmentGridPicker SchemeFocus SchemeSelection
             VoiceChoice ScriptDubBinding
-            VoiceCatalogFilter DubVariantSelector)
+            VoiceCatalogFilter DubVariantSelector
+            RawAudioCache)
 APP_FILES=(Services/Export/DubExportService.swift
            Services/Script/MaterializationService.swift
            ViewModels/ScriptWizardViewModel.swift
@@ -34,10 +35,12 @@ APP_FILES=(Services/Export/DubExportService.swift
            Models/SchemeSegment.swift
            Models/SegmentDub.swift
            Services/TTS/VoiceAuditionPlayer.swift
+           Services/TTS/RawAudioCacheStore.swift
            Views/Export/ExportView.swift)
 TEST_FILES=(PastedScriptLinesTests AudioTrackPolicyTests ScriptTextExporterTests
             SegmentGridPickerTests SchemeSelectionTests
-            VoiceCatalogFilterTests DubVariantSelectorTests)
+            VoiceCatalogFilterTests DubVariantSelectorTests
+            RawAudioCacheTests)
 
 build_tree() {
   local dest="$1"
@@ -359,6 +362,51 @@ else
   echo "NOTE G-V8⑤：shim 优先环境下该门**抓不到**违规 = 恒假绿形态真实存在，PATH 根治是必要防线"
 fi
 
+
+# ===== G-C M3 原始音频缓存变异腿 =====
+# 这条缓存链的两条核心主张各自可能退化，判据必须能抓住：
+#   ①「命中必须复制副本」退化为「直接用缓存真身」⇒ finalize 会把缓存删空，缓存永续为空；
+#   ②「App 层自实现哈希」⇒ 与 Core 的 fileStem 漂移，界面显示已缓存却永远不命中。
+
+# G-C① 命中不复制（把 copyingTo 改成直接返回缓存路径）
+build_tree "$DIRTY"
+python3 - "$DIRTY/MixCut/ViewModels/DubbingViewModel.swift" <<'PY'
+import sys
+p = sys.argv[1]
+s = open(p, encoding="utf-8").read()
+s = s.replace("copyingTo: hitURL", "copyingTo: URL(fileURLWithPath: \"/dev/null\")")
+open(p, "w", encoding="utf-8").write(s)
+PY
+if run_isolated_guard "$DIRTY" "命中路径必须复制到临时副本"; then
+  :
+else
+  echo "FAIL G-C① 变异腿：命中不复制副本应红却没红"
+  exit 1
+fi
+
+# G-C② App 层绕过 Core fileStem（自实现 stem）
+build_tree "$DIRTY"
+cat >> "$DIRTY/MixCut/Services/TTS/RawAudioCacheStore.swift" <<'EOF'
+// probe: app layer grows its own file naming (drifts from Core fileStem)
+private func probeOwnStem(_ key: RawAudioCacheKey) -> String { key.voiceID + key.textHash }
+EOF
+if run_isolated_guard "$DIRTY" "App 层落盘文件名必须用 Core 的 fileStem"; then
+  :
+else
+  echo "FAIL G-C② 变异腿：App 层自实现命名应红却没红"
+  exit 1
+fi
+
+# G-C③ 缓存目录与成品 Dubs 混用（退化成"缓存成品 m4a"这一 M3 最核心的反面）
+build_tree "$DIRTY"
+sed -i '' 's/appendingPathComponent("TTSCache", isDirectory: true)/appendingPathComponent("Dubs", isDirectory: true)/' \
+  "$DIRTY/MixCut/Services/TTS/RawAudioCacheStore.swift"
+if run_isolated_guard "$DIRTY" "缓存目录必须与成品 Dubs 分离"; then
+  :
+else
+  echo "FAIL G-C③ 变异腿：缓存目录混入成品 Dubs 应红却没红"
+  exit 1
+fi
 
 # 综合脏树：在最终脏树上叠加全部 G-V7 变异（供既有「总体应红」总判）
 build_tree "$DIRTY"
