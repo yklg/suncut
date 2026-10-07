@@ -415,10 +415,14 @@ final class DubbingViewModel {
             let ref = try await vocalSep.referenceClip(fromVocals: stems.vocalsPath, maxSeconds: 6)
             guard !video.isDroppedFromContext else { return false }
             setStage(vid, .prepareClone, "注册克隆音色…")
-            let voiceId = try await cloneService.enroll(referenceAudioPath: ref,
-                                                        preferredName: "\(Brand.shortName)\(hash.prefix(8))")
+            // 返回值改为 EnrollResult（M2）：逐视频克隆只关心 voiceId。
+            // ⚠️ 传入的是纯 ASCII（品牌短名 + hash 前8 位）⇒ 清洗后不变 ⇒ 行为零变化。
+            let enrolled = try await cloneService.enroll(
+                referenceAudioPath: ref,
+                preferredName: "\(Brand.shortName)\(hash.prefix(8))")
+            let voiceId = enrolled.voiceId
             guard !video.isDroppedFromContext else { return false }
-            MixLog.info("[Clone] 克隆成功: voiceId=\(voiceId)")
+            MixLog.info("[Clone] 克隆成功: voiceId=\(voiceId) providerName=\(enrolled.providerName)")
             video.clonedVoiceId = voiceId
             video.selectedVoiceIds = [voiceId]
             if let fp = currentFP { UserDefaults.standard.set(fp, forKey: fpKey) }   // 记录注册时的 Key 指纹

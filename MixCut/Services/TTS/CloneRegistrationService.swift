@@ -193,14 +193,16 @@ actor CloneRegistrationService {
             throw PrepError.sampleRejected("给这个音色起个名字吧")
         }
 
-        let voiceId = try await cloneService.enroll(
+        // 传**原始中文名**，清洗在 enroll 内收口（唯一真源）。
+        // ⚠️ providerName 取返回值而非本地重算：清洗依赖转写，两处算就会不一致
+        // （这正是本字段此前恒定对不上远端的原因）。
+        let enrolled = try await cloneService.enroll(
             referenceAudioPath: samplePath, preferredName: trimmedName)
 
         return VoiceProfile(
             name: trimmedName,
-            voiceId: voiceId,
-            providerName: CloneVoiceNaming.sanitizeForProvider(
-                trimmedName, maxLength: CloneVoiceNaming.ProviderLimit.qwenPreferredName),
+            voiceId: enrolled.voiceId,
+            providerName: enrolled.providerName,
             rawModel: VoiceCloneService.targetModel,
             kind: kind,
             keyFingerprint: keyFingerprint,

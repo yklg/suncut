@@ -294,8 +294,10 @@ enum DebugSelfTest {
             var r = ["# 短参考 clean 率测试 ref=\(refSecs)s", "台词29字(\(text.count)字)"]
             do {
                 let ref = try await sep.referenceClip(fromVocals: vocals, maxSeconds: refSecs)
-                let vid = try await clone.enroll(referenceAudioPath: ref, preferredName: "shortref\(Int(refSecs))")
-                r.append("新克隆 voice=\(vid.prefix(34))")
+                let enrolled = try await clone.enroll(
+                    referenceAudioPath: ref, preferredName: "shortref\(Int(refSecs))")
+                let vid = enrolled.voiceId          // 下方循环要用（返回类型变更后需显式解包）
+                r.append("新克隆 voice=\(vid.prefix(34)) providerName=\(enrolled.providerName)")
                 var clean = 0
                 for i in 1...5 {
                     let res = try await vc.synthesize(text: text, voiceId: vid, languageType: "Chinese", rate: 1.0)
