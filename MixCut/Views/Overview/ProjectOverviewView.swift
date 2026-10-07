@@ -4,6 +4,9 @@ struct ProjectOverviewView: View {
     let project: Project
     @Bindable var projectVM: ProjectViewModel
     @Binding var selectedNavItem: NavigationItem?
+    @State private var showScriptWizard = false
+    /// M1b：项目级音色覆盖选择器（写入经 ProjectViewModel.setProjectVoiceOverride 收口）。
+    @State private var showProjectVoicePicker = false
 
     /// 概览的数字与视频列表快照。真源在 `ProjectViewModel` —— 视图实例每次切模块都被销毁重建，
     /// 把快照存在这儿会让同项目再进入先画一帧「0 视频 · 0 分镜」。
@@ -36,6 +39,23 @@ struct ProjectOverviewView: View {
         .task(id: project.id) {
             projectVM.refreshOverviewSnapshot(for: project)
             ThumbnailCache.shared.prewarm(paths: snapshot.videos.compactMap(\.thumbnailPath), for: project.id)
+        }
+        .sheet(isPresented: $showScriptWizard) {
+            ScriptWizardView(project: project)
+        }
+        .sheet(isPresented: $showProjectVoicePicker) {
+            VoicePickerSheet(
+                title: "项目配音音色",
+                contextLine: "项目「\(project.name)」将以此音色覆盖全局默认（改写配音与产品脚本成片均生效）",
+                current: VoiceChoiceCoder.decode(project.preferredVoiceChoiceRaw),
+                allowsClear: true,
+                clearLabel: "跟随全局默认",
+                onPick: { choice in
+                    projectVM.setProjectVoiceOverride(
+                        raw: choice.map { VoiceChoiceCoder.encode($0) }, project: project)
+                    showProjectVoicePicker = false
+                },
+                onClose: { showProjectVoicePicker = false })
         }
     }
 
@@ -98,17 +118,28 @@ struct ProjectOverviewView: View {
 
                         ActionButton(
                             title: "导出视频",
-                            icon: "square.and.arrow.up",
+                            icon: "square.and.up",
                             color: .accentColor,
                             disabled: snapshot.schemeCount == 0,
                             isPrimary: nextStep == .export
                         ) {
                             selectedNavItem = .export
                         }
+
+                        ActionButton(
+                            title: "产品脚本成片",
+                            icon: "wand.and.stars",
+                            color: .accentColor
+                        ) {
+                            showScriptWizard = true
+                        }
                     }
                 }
 
                 Divider()
+
+                // M1b：项目配音音色覆盖行（面板式：标题 + 当前值副标题 + 右侧[更改]）。
+                projectVoiceRow
 
                 // 视频列表预览（读 VM 快照，避免重绘时反复触发 SwiftData fetch）
                 if snapshot.videos.isEmpty {
@@ -174,6 +205,49 @@ struct ProjectOverviewView: View {
         }
         .navigationTitle("项目概览")
     }   // end mainContent
+
+    // MARK: 项目配音音色覆盖行（M1b）
+
+    /// 当前生效音色的副标题：项目覆盖 ＞「跟随全局（X）」＞「跟随全局（未配置）」。
+    /// 纯字符串 decode（非 SwiftData 关系边），G08 不受限。
+    private var projectVoiceDetail: String {
+        if let override = VoiceChoiceCoder.decode(project.preferredVoiceChoiceRaw) {
+            return VoiceCatalog.displayName(id: override.voiceID)
+        }
+        if let global = VoicePreferences.globalDefaultChoice {
+            return "跟随全局（\(VoiceCatalog.displayName(id: global.voiceID))）"
+        }
+        return "跟随全局（未配置）"
+    }
+
+    private var projectVoiceRow: some View {
+        HStack(spacing: DesignTokens.Spacing.compact) {
+            Image(systemName: "waveform.circle")
+                .font(DesignTokens.Typography.labelStrong)
+                .foregroundStyle(Color.accentColor)
+            VStack(alignment: .leading, spacing: 2) {
+                Text("配音音色")
+                    .font(DesignTokens.Typography.labelEmphasis)
+                Text(projectVoiceDetail)
+                    .font(DesignTokens.Typography.microRegular)
+                    .foregroundStyle(.secondary)
+            }
+            Spacer(minLength: 0)
+            Button("更改") { showProjectVoicePicker = true }
+                .controlSize(.small)
+        }
+        .padding(.horizontal, DesignTokens.Spacing.comfortable)
+        .padding(.vertical, DesignTokens.Spacing.normal)
+        .frame(maxWidth: 1060, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: DesignTokens.Corner.medium, style: DesignTokens.Corner.style)
+                .fill(DesignTokens.Palette.cardFill.opacity(0.55))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: DesignTokens.Corner.medium, style: DesignTokens.Corner.style)
+                .stroke(DesignTokens.Palette.border, lineWidth: 1)
+        )
+    }
 }
 
 // MARK: - 子组件

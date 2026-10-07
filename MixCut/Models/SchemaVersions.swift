@@ -37,6 +37,17 @@ enum AppSchemaV1: VersionedSchema {
             // V1 之后新增（optional 字段 + optional to-one + 新实体，走轻量迁移，
             // 经 .scratch 真实 store 副本 spike 验证；未冻结 V2 副本）：
             Product.self,
+            // v3.4 产品脚本成片：知识库 + 脚本四个新实体（新表无存量行，非可选字段无需默认值；
+            // SegmentDub/MixScheme 新增字段均带默认值；首次启动新版 SchemaGuard 自动改前备份）。
+            KnowledgeDocument.self,
+            KnowledgeChunk.self,
+            ScriptDocument.self,
+            ScriptScene.self,
+            // 全局配音音色：Project 新增 optional preferredVoiceChoiceRaw（nil=跟随全局默认，
+            // VoiceChoiceCoder 版本化解码，坏串回落 nil）。无新实体，轻量迁移。
+            // M1b 音色三级覆盖再补两个带默认值字段（同属轻量迁移，无新实体）：
+            //   Video.voiceFollowsGlobal: Bool = false（视频级「跟随全局/项目」开关）；
+            //   SchemeSegment.preferredVoiceChoiceRaw: String?（脚本成片段级音色覆盖）。
         ]
     }
 }

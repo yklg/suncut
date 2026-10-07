@@ -339,7 +339,8 @@ struct SidebarView: View {
         case .overview:       return "⌘1"
         case .importMedia:    return "⌘2"
         case .segmentLibrary: return "⌘3"
-        case .schemes:        return "⌘4"
+        case .knowledge:     return "⌘7"
+        case .schemes:       return "⌘4"
         case .export:         return "⌘5"
         case .bgmLibrary:     return "⌘6"
         }

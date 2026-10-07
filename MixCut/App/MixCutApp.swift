@@ -1390,8 +1390,9 @@ struct MixCutApp: App {
 
 /// 一条裸 to-one 边的存储映射（owner 表.外键列 → 目标表 Z_PK）。
 ///
-/// 13 条与 `ToOneReadScan.toOneEdgeDeclarations`（模型源码派生）同源 ——
+/// 20 条与 `ToOneReadScan.toOneEdgeDeclarations`（模型源码派生）同源 ——
 /// G-对账用例按三元组逐条核对，多、少、改名、列名拼错皆红。
+/// v3.4：新增知识库 + 脚本 7 条边（13 → 20）。
 struct DanglingToOneEdge: Hashable {
     let ownerTable: String
     let column: String
@@ -1411,6 +1412,14 @@ struct DanglingToOneEdge: Hashable {
         .init(ownerTable: "ZSEGMENTDUB", column: "ZSEGMENT", destinationTable: "ZSEGMENT"),
         .init(ownerTable: "ZPHYSICALSHOT", column: "ZPARENTSEGMENT", destinationTable: "ZSEGMENT"),
         .init(ownerTable: "ZSHOTVARIANT", column: "ZSHOT", destinationTable: "ZPHYSICALSHOT"),
+        // v3.4 产品脚本成片
+        .init(ownerTable: "ZKNOWLEDGEDOCUMENT", column: "ZPRODUCT", destinationTable: "ZPRODUCT"),
+        .init(ownerTable: "ZKNOWLEDGECHUNK", column: "ZDOCUMENT", destinationTable: "ZKNOWLEDGEDOCUMENT"),
+        .init(ownerTable: "ZSCRIPTDOCUMENT", column: "ZPROJECT", destinationTable: "ZPROJECT"),
+        .init(ownerTable: "ZSCRIPTDOCUMENT", column: "ZPRODUCT", destinationTable: "ZPRODUCT"),
+        .init(ownerTable: "ZSCRIPTDOCUMENT", column: "ZREALIZEDSCHEME", destinationTable: "ZMIXSCHEME"),
+        .init(ownerTable: "ZSCRIPTSCENE", column: "ZSCRIPT", destinationTable: "ZSCRIPTDOCUMENT"),
+        .init(ownerTable: "ZSCRIPTSCENE", column: "ZMATCHEDSEGMENT", destinationTable: "ZSEGMENT"),
     ]
 }
 

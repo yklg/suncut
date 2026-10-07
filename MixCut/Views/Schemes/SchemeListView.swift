@@ -9,6 +9,8 @@ struct SchemeListView: View {
     @State private var customPrompt = ""
     /// 当前正在编辑的叙事结构（驱动编辑器 sheet）
     @State private var editingNarrativeStrategy: MixStrategy?
+    /// 是否呈现「产品脚本成片」向导（混剪模块内发起入口）。
+    @State private var showScriptWizard = false
 
     var body: some View {
         HStack(spacing: 0) {
@@ -79,6 +81,9 @@ struct SchemeListView: View {
                 viewModel: viewModel
             )
         }
+        .sheet(isPresented: $showScriptWizard) {
+            ScriptWizardView(project: project)
+        }
         // 其余四个主页面都设了 navigationTitle，唯独这里没有，窗口标题会退回成「MixCut」，
         // 切到本页时标题栏与其他页表现不一致。
         .navigationTitle("混剪方案")
@@ -141,7 +146,8 @@ struct SchemeListView: View {
                     StrategySection(
                         strategy: strategy,
                         viewModel: viewModel,
-                        isExpanded: viewModel.selectedStrategy?.id == strategy.id
+                        isExpanded: viewModel.selectedStrategy?.id == strategy.id,
+                        onNewScript: { showScriptWizard = true }
                     )
                 }
 
@@ -458,6 +464,8 @@ struct StrategySection: View {
     var isExpanded: Bool
     /// 叙事结构专用：点击"编辑"打开编辑器（非叙事结构传 nil 即不显示编辑入口）
     var onEdit: (() -> Void)? = nil
+    /// 「产品脚本成片」容器专用：点击「＋ 新建脚本成片」打开向导（非脚本组为 nil）。
+    var onNewScript: (() -> Void)? = nil
 
     @State private var strategyToDelete: MixStrategy?
     @State private var schemeToDelete: MixScheme?
@@ -486,6 +494,10 @@ struct StrategySection: View {
                                 Image(systemName: "sparkles")
                                     .font(DesignTokens.Typography.microRegular)
                                     .foregroundStyle(.purple)
+                            } else if strategy.isScriptGroup {
+                                Image(systemName: "scope")
+                                    .font(DesignTokens.Typography.microRegular)
+                                    .foregroundStyle(Color.accentColor)
                             } else if strategy.isNarrativeTemplate {
                                 Image(systemName: "list.bullet.indent")
                                     .font(DesignTokens.Typography.microRegular)
@@ -504,6 +516,10 @@ struct StrategySection: View {
                             Text("自定义叙事结构")
                                 .font(DesignTokens.Typography.microRegular)
                                 .foregroundStyle(.tertiary)
+                        } else if strategy.isScriptGroup {
+                            Text("知识库写文案 / 粘贴逆向文案 · 全新配音，不使用原声")
+                                .font(DesignTokens.Typography.microRegular)
+                                .foregroundStyle(Color.accentColor.opacity(0.9))
                         } else if !strategy.isCustomGroup {
                             HStack(spacing: 6) {
                                 HStack(spacing: 3) {
@@ -546,12 +562,14 @@ struct StrategySection: View {
                 Button(strategy.isNarrativeTemplate ? "删除结构" : "删除策略", role: .destructive) {
                     strategyToDelete = strategy
                 }
-                .disabled(strategy.isCustomGroup)
+                .disabled(strategy.isCustomGroup || strategy.isScriptGroup)
             }
 
             // 展开后显示变体列表（LazyVStack 懒加载：屏幕外的变体行不同步实例化）
             if isExpanded {
-                if strategy.isCustomGroup && strategy.schemes.isEmpty {
+                if strategy.isScriptGroup && strategy.schemes.isEmpty {
+                    scriptGroupEmptyState
+                } else if strategy.isCustomGroup && strategy.schemes.isEmpty {
                     // 自定义组合空状态引导
                     customGroupEmptyState
                 } else if strategy.isNarrativeTemplate && strategy.schemes.isEmpty {
@@ -562,6 +580,22 @@ struct StrategySection: View {
                         ForEach(strategy.orderedSchemes) { scheme in
                             schemeRow(scheme)
                         }
+                    }
+                    if strategy.isScriptGroup, let onNewScript {
+                        Button {
+                            onNewScript()
+                        } label: {
+                            HStack(spacing: 5) {
+                                Image(systemName: "plus.circle.fill")
+                                Text("新建脚本成片")
+                            }
+                            .font(DesignTokens.Typography.captionStrong)
+                            .foregroundStyle(Color.accentColor)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.horizontal, 14)
+                            .padding(.vertical, 9)
+                        }
+                        .buttonStyle(.plain)
                     }
                 }
             }
@@ -601,7 +635,8 @@ struct StrategySection: View {
     private func schemeRow(_ scheme: MixScheme) -> some View {
         SchemeVariationRow(
             scheme: scheme,
-            isSelected: viewModel.selectedScheme?.id == scheme.id
+            isSelected: viewModel.selectedScheme?.id == scheme.id,
+            scriptDirection: viewModel.scriptDirectionBySchemeID[scheme.id]
         )
         .onTapGesture { viewModel.selectedScheme = scheme }
         .contextMenu {
@@ -672,6 +707,32 @@ struct StrategySection: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(Color.purple.opacity(0.04))
     }
+
+    /// 「产品脚本成片」空状态：混剪模块内的就近发起入口（打开脚本向导）。
+    private var scriptGroupEmptyState: some View {
+        VStack(alignment: .leading, spacing: DesignTokens.Spacing.compact) {
+            Text("还没有脚本成片方案")
+                .font(DesignTokens.Typography.caption)
+                .foregroundStyle(.secondary)
+            if let onNewScript {
+                Button(action: onNewScript) {
+                    HStack(spacing: DesignTokens.Spacing.tight) {
+                        Image(systemName: "plus.circle.fill")
+                            .font(DesignTokens.Typography.caption)
+                        Text("新建脚本成片")
+                            .font(DesignTokens.Typography.captionStrong)
+                    }
+                    .foregroundStyle(Color.accentColor)
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 10)
+        .padding(.leading, 16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.accentColor.opacity(0.05))
+    }
 }
 
 // MARK: - 变体行
@@ -679,6 +740,8 @@ struct StrategySection: View {
 struct SchemeVariationRow: View {
     let scheme: MixScheme
     var isSelected: Bool = false
+    /// 非 nil = 产品脚本物化方案（正向/逆向），经冻结 ScriptDocument 反查。
+    var scriptDirection: ScriptDirection? = nil
     @State private var isHovering = false
 
     var body: some View {
@@ -710,6 +773,18 @@ struct SchemeVariationRow: View {
                     Text(String(format: "%.0fs", scheme.totalDuration))
                         .font(DesignTokens.Typography.microRounded)
                         .foregroundStyle(.secondary)
+                    if let scriptDirection {
+                        Text("·")
+                            .foregroundStyle(.quaternary)
+                        HStack(spacing: 2) {
+                            Image(systemName: scriptDirection == .reverse
+                                  ? "arrow.left.to.line" : "text.cursor")
+                            Text(scriptDirection == .reverse ? "逆向文案" : "产品脚本")
+                        }
+                        .font(DesignTokens.Typography.microRegular)
+                        .foregroundStyle(Color.accentColor)
+                        .accessibilityLabel(scriptDirection == .reverse ? "逆向文案脚本" : "产品资料脚本")
+                    }
                 }
             }
 

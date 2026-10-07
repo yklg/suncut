@@ -158,6 +158,7 @@
 		AB02C0A2E5E04B2A9C020004 /* SegmentSource.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB02C0A2E5E04B2A9C020003 /* SegmentSource.swift */; };
 		AB02C0A2E5E04B2A9C020006 /* ProductCatalogDefaults.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB02C0A2E5E04B2A9C020005 /* ProductCatalogDefaults.swift */; };
 		AB02C0A2E5E04B2A9C020008 /* SegmentPickerCatalog.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB02C0A2E5E04B2A9C020007 /* SegmentPickerCatalog.swift */; };
+            AC0700000000000000000001 /* KnowledgeDocumentFilter.swift in Sources */ = {isa = PBXBuildFile; fileRef = AC0700000000000000000002 /* KnowledgeDocumentFilter.swift */; };
 		AB02C0A2E5E04B2A9C02000A /* ProductOwnershipBackfill.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB02C0A2E5E04B2A9C020009 /* ProductOwnershipBackfill.swift */; };
 		AB02C0A2E5E04B2A9C02000C /* SegmentSourceBadge.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB02C0A2E5E04B2A9C02000B /* SegmentSourceBadge.swift */; };
 		AB03C0A3E5E04B2A9C030002 /* SidebarProductGrouping.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB03C0A3E5E04B2A9C030001 /* SidebarProductGrouping.swift */; };
@@ -189,6 +190,66 @@
 		FF00BB11CC22DD3344EE55AB /* DubStaleness.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF00BB11CC22DD3344EE55AA /* DubStaleness.swift */; };
 		FF66AA77BB88CC99DD00EE11 /* SubtitleFontSizePopover.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF66AA77BB88CC99DD00EE12 /* SubtitleFontSizePopover.swift */; };
 		FF77AA88BB99CC0011DD22EE /* RewriteResultMapper.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF77AA88BB99CC0011DD22EF /* RewriteResultMapper.swift */; };
+		AC0000000000000000000001 /* TextChunker.swift in Sources */ = {isa = PBXBuildFile; fileRef = AD0000000000000000000001 /* TextChunker.swift */; };
+		AC0000000000000000000002 /* ChineseTextTokenizer.swift in Sources */ = {isa = PBXBuildFile; fileRef = AD0000000000000000000002 /* ChineseTextTokenizer.swift */; };
+		AC0000000000000000000003 /* HTMLTextStripper.swift in Sources */ = {isa = PBXBuildFile; fileRef = AD0000000000000000000003 /* HTMLTextStripper.swift */; };
+		AC0000000000000000000004 /* VectorCoding.swift in Sources */ = {isa = PBXBuildFile; fileRef = AD0000000000000000000004 /* VectorCoding.swift */; };
+		AC0000000000000000000005 /* KnowledgeTypes.swift in Sources */ = {isa = PBXBuildFile; fileRef = AD0000000000000000000005 /* KnowledgeTypes.swift */; };
+		AC0000000000000000000006 /* ScriptTypes.swift in Sources */ = {isa = PBXBuildFile; fileRef = AD0000000000000000000006 /* ScriptTypes.swift */; };
+		AC0000000000000000000007 /* ScriptFlowPhase.swift in Sources */ = {isa = PBXBuildFile; fileRef = AD0000000000000000000007 /* ScriptFlowPhase.swift */; };
+		AC0000000000000000000012 /* AudioTrackPolicy.swift in Sources */ = {isa = PBXBuildFile; fileRef = AD0000000000000000000012 /* AudioTrackPolicy.swift */; };
+		AC0000000000000000000013 /* BM25Index.swift in Sources */ = {isa = PBXBuildFile; fileRef = AD0000000000000000000013 /* BM25Index.swift */; };
+		AC0000000000000000000014 /* VectorIndex.swift in Sources */ = {isa = PBXBuildFile; fileRef = AD0000000000000000000014 /* VectorIndex.swift */; };
+		AC0000000000000000000015 /* HybridRetrievalEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = AD0000000000000000000015 /* HybridRetrievalEngine.swift */; };
+		AC0000000000000000000016 /* SlotRetrievalIntent.swift in Sources */ = {isa = PBXBuildFile; fileRef = AD0000000000000000000016 /* SlotRetrievalIntent.swift */; };
+		AC0000000000000000000017 /* BochaResponse.swift in Sources */ = {isa = PBXBuildFile; fileRef = AD0000000000000000000017 /* BochaResponse.swift */; };
+		AE0000000000000000000020 /* BochaSearchClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF0000000000000000000020 /* BochaSearchClient.swift */; };
+		AE0000000000000000000021 /* ProductResearchService.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF0000000000000000000021 /* ProductResearchService.swift */; };
+		AE0000000000000000000022 /* URLTextFetcher.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF0000000000000000000022 /* URLTextFetcher.swift */; };
+		AA99BB00CC11DD22EE33FF45 /* product_research_prompt.md in Resources */ = {isa = PBXBuildFile; fileRef = BB00CC11DD22EE33FF4455AB /* product_research_prompt.md */; };
+		AC0000000000000000000008 /* KnowledgeDocument.swift in Sources */ = {isa = PBXBuildFile; fileRef = AD0000000000000000000008 /* KnowledgeDocument.swift */; };
+		AC0000000000000000000009 /* KnowledgeChunk.swift in Sources */ = {isa = PBXBuildFile; fileRef = AD0000000000000000000009 /* KnowledgeChunk.swift */; };
+		AC000000000000000000000A /* ScriptDocument.swift in Sources */ = {isa = PBXBuildFile; fileRef = AD000000000000000000000A /* ScriptDocument.swift */; };
+		AC000000000000000000000B /* ScriptScene.swift in Sources */ = {isa = PBXBuildFile; fileRef = AD000000000000000000000B /* ScriptScene.swift */; };
+		AC000000000000000000000C /* DocumentTextExtractor.swift in Sources */ = {isa = PBXBuildFile; fileRef = AD000000000000000000000C /* DocumentTextExtractor.swift */; };
+		AC000000000000000000000D /* EmbeddingClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = AD000000000000000000000D /* EmbeddingClient.swift */; };
+		AC000000000000000000000E /* EmbeddingClients.swift in Sources */ = {isa = PBXBuildFile; fileRef = AD000000000000000000000E /* EmbeddingClients.swift */; };
+		AC000000000000000000000F /* KnowledgeIngestService.swift in Sources */ = {isa = PBXBuildFile; fileRef = AD000000000000000000000F /* KnowledgeIngestService.swift */; };
+		AC0000000000000000000010 /* KnowledgeLibraryViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = AD0000000000000000000010 /* KnowledgeLibraryViewModel.swift */; };
+		AC0000000000000000000011 /* KnowledgeLibraryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AD0000000000000000000011 /* KnowledgeLibraryView.swift */; };
+		AC0000000000000000000030 /* ScriptMatcher.swift in Sources */ = {isa = PBXBuildFile; fileRef = AD0000000000000000000030 /* ScriptMatcher.swift */; };
+		AC0000000000000000000031 /* GroundingChecker.swift in Sources */ = {isa = PBXBuildFile; fileRef = AD0000000000000000000031 /* GroundingChecker.swift */; };
+		AC0000000000000000000032 /* ComplianceChecker.swift in Sources */ = {isa = PBXBuildFile; fileRef = AD0000000000000000000032 /* ComplianceChecker.swift */; };
+		AC0000000000000000000033 /* ScriptResponseParser.swift in Sources */ = {isa = PBXBuildFile; fileRef = AD0000000000000000000033 /* ScriptResponseParser.swift */; };
+		AC0000000000000000000034 /* SpeechDuration.swift in Sources */ = {isa = PBXBuildFile; fileRef = AD0000000000000000000034 /* SpeechDuration.swift */; };
+		AC0000000000000000000035 /* PastedScriptLines.swift in Sources */ = {isa = PBXBuildFile; fileRef = AD0000000000000000000035 /* PastedScriptLines.swift */; };
+		AC0000000000000000000036 /* ScriptGroundingGate.swift in Sources */ = {isa = PBXBuildFile; fileRef = AD0000000000000000000036 /* ScriptGroundingGate.swift */; };
+            AC0000000000000000000040 /* SegmentGridPicker.swift in Sources */ = {isa = PBXBuildFile; fileRef = AD0000000000000000000040 /* SegmentGridPicker.swift */; };
+            AC0000000000000000000041 /* SchemeFocus.swift in Sources */ = {isa = PBXBuildFile; fileRef = AD0000000000000000000041 /* SchemeFocus.swift */; };
+            AC0000000000000000000063 /* SchemeSelection.swift in Sources */ = {isa = PBXBuildFile; fileRef = AD0000000000000000000063 /* SchemeSelection.swift */; };
+            AC0000000000000000000064 /* VoiceCatalogFilter.swift in Sources */ = {isa = PBXBuildFile; fileRef = AD0000000000000000000064 /* VoiceCatalogFilter.swift */; };
+            AC0000000000000000000065 /* DubVariantSelector.swift in Sources */ = {isa = PBXBuildFile; fileRef = AD0000000000000000000065 /* DubVariantSelector.swift */; };
+            AC0000000000000000000060 /* VoiceChoice.swift in Sources */ = {isa = PBXBuildFile; fileRef = AD0000000000000000000060 /* VoiceChoice.swift */; };
+            AC0000000000000000000061 /* ScriptDubBinding.swift in Sources */ = {isa = PBXBuildFile; fileRef = AD0000000000000000000061 /* ScriptDubBinding.swift */; };
+            AC0000000000000000000062 /* BoundedTaskGate.swift in Sources */ = {isa = PBXBuildFile; fileRef = AD0000000000000000000062 /* BoundedTaskGate.swift */; };
+            AE0000000000000000000040 /* VoicePreferences.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF0000000000000000000040 /* VoicePreferences.swift */; };
+            AE0000000000000000000041 /* VoiceAuditionPlayer.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF0000000000000000000041 /* VoiceAuditionPlayer.swift */; };
+            AE0000000000000000000042 /* VoicePickerSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF0000000000000000000042 /* VoicePickerSheet.swift */; };
+            AE0000000000000000000043 /* SheetContainerLayout.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF0000000000000000000043 /* SheetContainerLayout.swift */; };
+            AE0000000000000000000002 /* SegmentGridPickerSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF0000000000000000000002 /* SegmentGridPickerSheet.swift */; };
+		AC0000000000000000000037 /* ScriptMatchRepair.swift in Sources */ = {isa = PBXBuildFile; fileRef = AD0000000000000000000037 /* ScriptMatchRepair.swift */; };
+		AC0000000000000000000038 /* DubOnlyExportPolicy.swift in Sources */ = {isa = PBXBuildFile; fileRef = AD0000000000000000000038 /* DubOnlyExportPolicy.swift */; };
+		AC0000000000000000000039 /* ScriptTextExporter.swift in Sources */ = {isa = PBXBuildFile; fileRef = AD0000000000000000000039 /* ScriptTextExporter.swift */; };
+		AE0000000000000000000030 /* KnowledgeRetrievalService.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF0000000000000000000030 /* KnowledgeRetrievalService.swift */; };
+		AE0000000000000000000031 /* ScriptWritingService.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF0000000000000000000031 /* ScriptWritingService.swift */; };
+		AE0000000000000000000032 /* ScriptStructureServices.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF0000000000000000000032 /* ScriptStructureServices.swift */; };
+		AE0000000000000000000033 /* MaterializationService.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF0000000000000000000033 /* MaterializationService.swift */; };
+		AE0000000000000000000034 /* ScriptExportAssembly.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF0000000000000000000034 /* ScriptExportAssembly.swift */; };
+		AC0000000000000000000050 /* ScriptWizardViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = AD0000000000000000000050 /* ScriptWizardViewModel.swift */; };
+		AC0000000000000000000051 /* ScriptWizardView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AD0000000000000000000051 /* ScriptWizardView.swift */; };
+		AA99BB00CC11DD22EE33FF60 /* script_writing_prompt.md in Resources */ = {isa = PBXBuildFile; fileRef = BB00CC11DD22EE33FF4455D0 /* script_writing_prompt.md */; };
+		AA99BB00CC11DD22EE33FF61 /* reverse_structuring_prompt.md in Resources */ = {isa = PBXBuildFile; fileRef = BB00CC11DD22EE33FF4455D1 /* reverse_structuring_prompt.md */; };
+		AA99BB00CC11DD22EE33FF62 /* structure_generation_prompt.md in Resources */ = {isa = PBXBuildFile; fileRef = BB00CC11DD22EE33FF4455D2 /* structure_generation_prompt.md */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -342,6 +403,7 @@
 		AB02C0A2E5E04B2A9C020003 /* SegmentSource.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = SegmentSource.swift; path = Sources/MixCutCore/SegmentSource.swift; sourceTree = "<group>"; };
 		AB02C0A2E5E04B2A9C020005 /* ProductCatalogDefaults.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = ProductCatalogDefaults.swift; path = Sources/MixCutCore/ProductCatalogDefaults.swift; sourceTree = "<group>"; };
 		AB02C0A2E5E04B2A9C020007 /* SegmentPickerCatalog.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = SegmentPickerCatalog.swift; path = Sources/MixCutCore/SegmentPickerCatalog.swift; sourceTree = "<group>"; };
+            AC0700000000000000000002 /* KnowledgeDocumentFilter.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = KnowledgeDocumentFilter.swift; path = Sources/MixCutCore/KnowledgeDocumentFilter.swift; sourceTree = "<group>"; };
 		AB02C0A2E5E04B2A9C020009 /* ProductOwnershipBackfill.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = ProductOwnershipBackfill.swift; path = Sources/MixCutCore/ProductOwnershipBackfill.swift; sourceTree = "<group>"; };
 		AB02C0A2E5E04B2A9C02000B /* SegmentSourceBadge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SegmentSourceBadge.swift; sourceTree = "<group>"; };
 		AB03C0A3E5E04B2A9C030001 /* SidebarProductGrouping.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = SidebarProductGrouping.swift; path = Sources/MixCutCore/SidebarProductGrouping.swift; sourceTree = "<group>"; };
@@ -376,6 +438,66 @@
 		FF77AA88BB99CC0011DD22EF /* RewriteResultMapper.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = RewriteResultMapper.swift; path = Sources/MixCutCore/RewriteResultMapper.swift; sourceTree = "<group>"; };
 		FF88AA99BB00CC1122DD33EE /* QwenVoice.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = QwenVoice.swift; path = Sources/MixCutCore/QwenVoice.swift; sourceTree = "<group>"; };
 		FFC59912B0CFE892506831DB /* ShotEditRules.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = ShotEditRules.swift; path = Sources/MixCutCore/ShotEditRules.swift; sourceTree = "<group>"; };
+		AD0000000000000000000001 /* TextChunker.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = TextChunker.swift; path = Sources/MixCutCore/TextChunker.swift; sourceTree = "<group>"; };
+		AD0000000000000000000002 /* ChineseTextTokenizer.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = ChineseTextTokenizer.swift; path = Sources/MixCutCore/ChineseTextTokenizer.swift; sourceTree = "<group>"; };
+		AD0000000000000000000003 /* HTMLTextStripper.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = HTMLTextStripper.swift; path = Sources/MixCutCore/HTMLTextStripper.swift; sourceTree = "<group>"; };
+		AD0000000000000000000004 /* VectorCoding.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = VectorCoding.swift; path = Sources/MixCutCore/VectorCoding.swift; sourceTree = "<group>"; };
+		AD0000000000000000000005 /* KnowledgeTypes.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = KnowledgeTypes.swift; path = Sources/MixCutCore/KnowledgeTypes.swift; sourceTree = "<group>"; };
+		AD0000000000000000000006 /* ScriptTypes.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = ScriptTypes.swift; path = Sources/MixCutCore/ScriptTypes.swift; sourceTree = "<group>"; };
+		AD0000000000000000000007 /* ScriptFlowPhase.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = ScriptFlowPhase.swift; path = Sources/MixCutCore/ScriptFlowPhase.swift; sourceTree = "<group>"; };
+		AD0000000000000000000012 /* AudioTrackPolicy.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = AudioTrackPolicy.swift; path = Sources/MixCutCore/AudioTrackPolicy.swift; sourceTree = "<group>"; };
+		AD0000000000000000000013 /* BM25Index.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = BM25Index.swift; path = Sources/MixCutCore/BM25Index.swift; sourceTree = "<group>"; };
+		AD0000000000000000000014 /* VectorIndex.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = VectorIndex.swift; path = Sources/MixCutCore/VectorIndex.swift; sourceTree = "<group>"; };
+		AD0000000000000000000015 /* HybridRetrievalEngine.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = HybridRetrievalEngine.swift; path = Sources/MixCutCore/HybridRetrievalEngine.swift; sourceTree = "<group>"; };
+		AD0000000000000000000016 /* SlotRetrievalIntent.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = SlotRetrievalIntent.swift; path = Sources/MixCutCore/SlotRetrievalIntent.swift; sourceTree = "<group>"; };
+		AD0000000000000000000017 /* BochaResponse.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = BochaResponse.swift; path = Sources/MixCutCore/BochaResponse.swift; sourceTree = "<group>"; };
+		AF0000000000000000000020 /* BochaSearchClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BochaSearchClient.swift; sourceTree = "<group>"; };
+		AF0000000000000000000021 /* ProductResearchService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProductResearchService.swift; sourceTree = "<group>"; };
+		AF0000000000000000000022 /* URLTextFetcher.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = URLTextFetcher.swift; sourceTree = "<group>"; };
+		BB00CC11DD22EE33FF4455AB /* product_research_prompt.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = product_research_prompt.md; sourceTree = "<group>"; };
+		AD0000000000000000000008 /* KnowledgeDocument.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KnowledgeDocument.swift; sourceTree = "<group>"; };
+		AD0000000000000000000009 /* KnowledgeChunk.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KnowledgeChunk.swift; sourceTree = "<group>"; };
+		AD000000000000000000000A /* ScriptDocument.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScriptDocument.swift; sourceTree = "<group>"; };
+		AD000000000000000000000B /* ScriptScene.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScriptScene.swift; sourceTree = "<group>"; };
+		AD000000000000000000000C /* DocumentTextExtractor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DocumentTextExtractor.swift; sourceTree = "<group>"; };
+		AD000000000000000000000D /* EmbeddingClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EmbeddingClient.swift; sourceTree = "<group>"; };
+		AD000000000000000000000E /* EmbeddingClients.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EmbeddingClients.swift; sourceTree = "<group>"; };
+		AD000000000000000000000F /* KnowledgeIngestService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KnowledgeIngestService.swift; sourceTree = "<group>"; };
+		AD0000000000000000000010 /* KnowledgeLibraryViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KnowledgeLibraryViewModel.swift; sourceTree = "<group>"; };
+		AD0000000000000000000011 /* KnowledgeLibraryView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KnowledgeLibraryView.swift; sourceTree = "<group>"; };
+		AD0000000000000000000030 /* ScriptMatcher.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = ScriptMatcher.swift; path = Sources/MixCutCore/ScriptMatcher.swift; sourceTree = "<group>"; };
+		AD0000000000000000000031 /* GroundingChecker.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = GroundingChecker.swift; path = Sources/MixCutCore/GroundingChecker.swift; sourceTree = "<group>"; };
+		AD0000000000000000000032 /* ComplianceChecker.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = ComplianceChecker.swift; path = Sources/MixCutCore/ComplianceChecker.swift; sourceTree = "<group>"; };
+		AD0000000000000000000033 /* ScriptResponseParser.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = ScriptResponseParser.swift; path = Sources/MixCutCore/ScriptResponseParser.swift; sourceTree = "<group>"; };
+		AD0000000000000000000034 /* SpeechDuration.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = SpeechDuration.swift; path = Sources/MixCutCore/SpeechDuration.swift; sourceTree = "<group>"; };
+		AD0000000000000000000035 /* PastedScriptLines.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = PastedScriptLines.swift; path = Sources/MixCutCore/PastedScriptLines.swift; sourceTree = "<group>"; };
+		AD0000000000000000000036 /* ScriptGroundingGate.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = ScriptGroundingGate.swift; path = Sources/MixCutCore/ScriptGroundingGate.swift; sourceTree = "<group>"; };
+            AD0000000000000000000040 /* SegmentGridPicker.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = SegmentGridPicker.swift; path = Sources/MixCutCore/SegmentGridPicker.swift; sourceTree = "<group>"; };
+            AD0000000000000000000041 /* SchemeFocus.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = SchemeFocus.swift; path = Sources/MixCutCore/SchemeFocus.swift; sourceTree = "<group>"; };
+            AD0000000000000000000063 /* SchemeSelection.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = SchemeSelection.swift; path = Sources/MixCutCore/SchemeSelection.swift; sourceTree = "<group>"; };
+            AD0000000000000000000064 /* VoiceCatalogFilter.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = VoiceCatalogFilter.swift; path = Sources/MixCutCore/VoiceCatalogFilter.swift; sourceTree = "<group>"; };
+            AD0000000000000000000065 /* DubVariantSelector.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = DubVariantSelector.swift; path = Sources/MixCutCore/DubVariantSelector.swift; sourceTree = "<group>"; };
+            AD0000000000000000000060 /* VoiceChoice.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = VoiceChoice.swift; path = Sources/MixCutCore/VoiceChoice.swift; sourceTree = "<group>"; };
+            AD0000000000000000000061 /* ScriptDubBinding.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = ScriptDubBinding.swift; path = Sources/MixCutCore/ScriptDubBinding.swift; sourceTree = "<group>"; };
+            AD0000000000000000000062 /* BoundedTaskGate.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = BoundedTaskGate.swift; path = Sources/MixCutCore/BoundedTaskGate.swift; sourceTree = "<group>"; };
+            AF0000000000000000000040 /* VoicePreferences.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = VoicePreferences.swift; sourceTree = "<group>"; };
+            AF0000000000000000000041 /* VoiceAuditionPlayer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoiceAuditionPlayer.swift; sourceTree = "<group>"; };
+            AF0000000000000000000042 /* VoicePickerSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoicePickerSheet.swift; sourceTree = "<group>"; };
+            AF0000000000000000000043 /* SheetContainerLayout.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SheetContainerLayout.swift; sourceTree = "<group>"; };
+            AF0000000000000000000002 /* SegmentGridPickerSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SegmentGridPickerSheet.swift; sourceTree = "<group>"; };
+		AD0000000000000000000037 /* ScriptMatchRepair.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = ScriptMatchRepair.swift; path = Sources/MixCutCore/ScriptMatchRepair.swift; sourceTree = "<group>"; };
+		AD0000000000000000000038 /* DubOnlyExportPolicy.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = DubOnlyExportPolicy.swift; path = Sources/MixCutCore/DubOnlyExportPolicy.swift; sourceTree = "<group>"; };
+		AD0000000000000000000039 /* ScriptTextExporter.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = ScriptTextExporter.swift; path = Sources/MixCutCore/ScriptTextExporter.swift; sourceTree = "<group>"; };
+		AF0000000000000000000030 /* KnowledgeRetrievalService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KnowledgeRetrievalService.swift; sourceTree = "<group>"; };
+		AF0000000000000000000031 /* ScriptWritingService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScriptWritingService.swift; sourceTree = "<group>"; };
+		AF0000000000000000000032 /* ScriptStructureServices.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScriptStructureServices.swift; sourceTree = "<group>"; };
+		AF0000000000000000000033 /* MaterializationService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MaterializationService.swift; sourceTree = "<group>"; };
+		AF0000000000000000000034 /* ScriptExportAssembly.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScriptExportAssembly.swift; sourceTree = "<group>"; };
+		AD0000000000000000000050 /* ScriptWizardViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScriptWizardViewModel.swift; sourceTree = "<group>"; };
+		AD0000000000000000000051 /* ScriptWizardView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScriptWizardView.swift; sourceTree = "<group>"; };
+		BB00CC11DD22EE33FF4455D0 /* script_writing_prompt.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = script_writing_prompt.md; sourceTree = "<group>"; };
+		BB00CC11DD22EE33FF4455D1 /* reverse_structuring_prompt.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = reverse_structuring_prompt.md; sourceTree = "<group>"; };
+		BB00CC11DD22EE33FF4455D2 /* structure_generation_prompt.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = structure_generation_prompt.md; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -427,6 +549,10 @@
 				B70C8945D73934676D6D58BB /* video_recombination_prompt.md */,
 				B37CFECCAC0B22A7103027BF /* video_segmentation_prompt.md */,
 				BB00CC11DD22EE33FF4455AA /* script_rewrite_prompt.md */,
+				BB00CC11DD22EE33FF4455AB /* product_research_prompt.md */,
+				BB00CC11DD22EE33FF4455D0 /* script_writing_prompt.md */,
+				BB00CC11DD22EE33FF4455D1 /* reverse_structuring_prompt.md */,
+				BB00CC11DD22EE33FF4455D2 /* structure_generation_prompt.md */,
 			);
 			path = Prompts;
 			sourceTree = "<group>";
@@ -451,6 +577,8 @@
 				4C4CC2EDACAE4BFBA8750741 /* DubbingViewModel.swift */,
 				091FFFADF81C22E2358CF840 /* SegmentLibraryViewModel.swift */,
 				1B3405BACFEFDF9218B606DD /* ShotEditViewModel.swift */,
+				AD0000000000000000000010 /* KnowledgeLibraryViewModel.swift */,
+				AD0000000000000000000050 /* ScriptWizardViewModel.swift */,
 			);
 			path = ViewModels;
 			sourceTree = "<group>";
@@ -482,6 +610,7 @@
 				D268ED8CFC95CC4998F21CA3 /* NarrativeStructureEditorView.swift */,
 				C16DFD07ED592109D034C02B /* InsertGapButton.swift */,
 				55675ED99B8EF371214D495C /* SegmentPickerDrawer.swift */,
+				AF0000000000000000000002 /* SegmentGridPickerSheet.swift */,
 			);
 			path = Schemes;
 			sourceTree = "<group>";
@@ -570,6 +699,7 @@
 				AB02C0A2E5E04B2A9C020003 /* SegmentSource.swift */,
 				AB02C0A2E5E04B2A9C020005 /* ProductCatalogDefaults.swift */,
 				AB02C0A2E5E04B2A9C020007 /* SegmentPickerCatalog.swift */,
+				AC0700000000000000000002 /* KnowledgeDocumentFilter.swift */,
 				AB02C0A2E5E04B2A9C020009 /* ProductOwnershipBackfill.swift */,
 				AB03C0A3E5E04B2A9C030001 /* SidebarProductGrouping.swift */,
 				AB03C0A3E5E04B2A9C030003 /* ProductColor.swift */,
@@ -605,9 +735,48 @@
 				AC9AEA63EB3F5902A10DAADE /* CaptionLine.swift */,
 				2DEF5175904C2A272B9CDE44 /* SentenceTimingAligner.swift */,
 				00BB297E748A24807AAFAB9D /* CaptionBoundaryEditor.swift */,
+				AD0000000000000000000001 /* TextChunker.swift */,
+				AD0000000000000000000002 /* ChineseTextTokenizer.swift */,
+				AD0000000000000000000003 /* HTMLTextStripper.swift */,
+				AD0000000000000000000004 /* VectorCoding.swift */,
+				AD0000000000000000000005 /* KnowledgeTypes.swift */,
+				AD0000000000000000000006 /* ScriptTypes.swift */,
+				AD0000000000000000000007 /* ScriptFlowPhase.swift */,
+				AD0000000000000000000012 /* AudioTrackPolicy.swift */,
+				AD0000000000000000000013 /* BM25Index.swift */,
+				AD0000000000000000000014 /* VectorIndex.swift */,
+				AD0000000000000000000015 /* HybridRetrievalEngine.swift */,
+				AD0000000000000000000016 /* SlotRetrievalIntent.swift */,
+				AD0000000000000000000017 /* BochaResponse.swift */,
+				AD0000000000000000000030 /* ScriptMatcher.swift */,
+				AD0000000000000000000031 /* GroundingChecker.swift */,
+				AD0000000000000000000032 /* ComplianceChecker.swift */,
+				AD0000000000000000000033 /* ScriptResponseParser.swift */,
+				AD0000000000000000000034 /* SpeechDuration.swift */,
+				AD0000000000000000000035 /* PastedScriptLines.swift */,
+				AD0000000000000000000036 /* ScriptGroundingGate.swift */,
+                            AD0000000000000000000040 /* SegmentGridPicker.swift */,
+                            AD0000000000000000000041 /* SchemeFocus.swift */,
+                            AD0000000000000000000063 /* SchemeSelection.swift */,
+                            AD0000000000000000000064 /* VoiceCatalogFilter.swift */,
+                            AD0000000000000000000065 /* DubVariantSelector.swift */,
+                            AD0000000000000000000060 /* VoiceChoice.swift */,
+                            AD0000000000000000000061 /* ScriptDubBinding.swift */,
+                            AD0000000000000000000062 /* BoundedTaskGate.swift */,
+				AD0000000000000000000037 /* ScriptMatchRepair.swift */,
+				AD0000000000000000000038 /* DubOnlyExportPolicy.swift */,
+				AD0000000000000000000039 /* ScriptTextExporter.swift */,
 			);
 			name = MixCutCore;
 			sourceTree = SOURCE_ROOT;
+		};
+		C0050000000000000000AA5 /* Script */ = {
+			isa = PBXGroup;
+			children = (
+				AD0000000000000000000051 /* ScriptWizardView.swift */,
+			);
+			path = Script;
+			sourceTree = "<group>";
 		};
 		8C6DA1E3764D8476916DE41F /* Views */ = {
 			isa = PBXGroup;
@@ -620,6 +789,8 @@
 				BDE6E987826E8271F7686267 /* SegmentLibrary */,
 				E4B1B39E261849EFC177BB8B /* Settings */,
 				95741E68467A65CBC1921DE5 /* Shared */,
+				C0020000000000000000AA2 /* Knowledge */,
+				C0050000000000000000AA5 /* Script */,
 				AEC6CCBEBF78A9D50B6EBD0D /* Sidebar */,
 			);
 			path = Views;
@@ -639,6 +810,8 @@
 				AB03C0A3E5E04B2A9C030005 /* ProductPresentation.swift */,
 				B9989E690AD7737E922DDAE5 /* PendingDeletionCenter.swift */,
 				F0A1B2C3D4E5F60718293A03 /* HoverTip.swift */,
+				AF0000000000000000000042 /* VoicePickerSheet.swift */,
+				AF0000000000000000000043 /* SheetContainerLayout.swift */,
 			);
 			path = Shared;
 			sourceTree = "<group>";
@@ -663,6 +836,48 @@
 			path = ASR;
 			sourceTree = "<group>";
 		};
+
+		C0010000000000000000AA1 /* Knowledge */ = {
+			isa = PBXGroup;
+			children = (
+				AD000000000000000000000C /* DocumentTextExtractor.swift */,
+				AD000000000000000000000D /* EmbeddingClient.swift */,
+				AD000000000000000000000E /* EmbeddingClients.swift */,
+				AD000000000000000000000F /* KnowledgeIngestService.swift */,
+			);
+			path = Knowledge;
+			sourceTree = "<group>";
+		};
+		C0020000000000000000AA2 /* Knowledge */ = {
+			isa = PBXGroup;
+			children = (
+				AD0000000000000000000011 /* KnowledgeLibraryView.swift */,
+			);
+			path = Knowledge;
+			sourceTree = "<group>";
+		};
+		C0030000000000000000AA3 /* Research */ = {
+			isa = PBXGroup;
+			children = (
+				AF0000000000000000000020 /* BochaSearchClient.swift */,
+				AF0000000000000000000021 /* ProductResearchService.swift */,
+				AF0000000000000000000022 /* URLTextFetcher.swift */,
+			);
+			path = Research;
+			sourceTree = "<group>";
+		};
+		C0040000000000000000AA4 /* Script */ = {
+			isa = PBXGroup;
+			children = (
+				AF0000000000000000000030 /* KnowledgeRetrievalService.swift */,
+				AF0000000000000000000031 /* ScriptWritingService.swift */,
+				AF0000000000000000000032 /* ScriptStructureServices.swift */,
+				AF0000000000000000000033 /* MaterializationService.swift */,
+				AF0000000000000000000034 /* ScriptExportAssembly.swift */,
+			);
+			path = Script;
+			sourceTree = "<group>";
+		};
 		AE073B968956A1CDE09CCF8E /* Services */ = {
 			isa = PBXGroup;
 			children = (
@@ -675,6 +890,9 @@
 				EB77528DEFE174D0648B34DA /* TTS */,
 				024B0DBF6FF3DBB26DE1380C /* VideoProcessing */,
 				0CEAB88F3F511E6AFE7C121D /* ShotEdit */,
+				C0010000000000000000AA1 /* Knowledge */,
+				C0030000000000000000AA3 /* Research */,
+				C0040000000000000000AA4 /* Script */,
 				B2C10E4D5A671829304B6001 /* PlaybackCoordinator.swift */,
 			);
 			path = Services;
@@ -704,6 +922,7 @@
 				DD012F47D617AF470003A855 /* DesignTokens.swift */,
 				1A9002373E37600803745419 /* FileHelper.swift */,
 				E57FE62ED6EB761E16B527C6 /* KeychainHelper.swift */,
+				AF0000000000000000000040 /* VoicePreferences.swift */,
 				33A42DE9B350BF619D35E08C /* ModelContextExtension.swift */,
 			);
 			path = Utilities;
@@ -759,6 +978,10 @@
 				DCC2B67D64CE6EB9CF9C1E6E /* Video.swift */,
 				9CF0353E8D72771B05CD795D /* PhysicalShot.swift */,
 				7F99A2236A49807C21EBA460 /* ShotVariant.swift */,
+				AD0000000000000000000008 /* KnowledgeDocument.swift */,
+				AD0000000000000000000009 /* KnowledgeChunk.swift */,
+				AD000000000000000000000A /* ScriptDocument.swift */,
+				AD000000000000000000000B /* ScriptScene.swift */,
 			);
 			path = Models;
 			sourceTree = "<group>";
@@ -813,6 +1036,7 @@
 				2DF8DE894214A5E2C1B54FE0 /* TTSClient.swift */,
 				B3A7F2E91C4D58A30E6F1D2B /* QwenTTSClient.swift */,
 				7DD8F10E220C49CFB4D2DBDA /* CosyVoiceTTSClient.swift */,
+				AF0000000000000000000041 /* VoiceAuditionPlayer.swift */,
 				77F93B7C1DE045DA9A8F371B /* VocalSeparationService.swift */,
 				8125257167654959A82159EF /* VoiceCloneService.swift */,
 				90381051D2F94A9AB912BC86 /* DubAudioFinalizer.swift */,
@@ -879,6 +1103,10 @@
 				EB80D04E1734C1921A33372B /* video_recombination_prompt.md in Resources */,
 				55C48D531739EAEDDEE856D5 /* video_segmentation_prompt.md in Resources */,
 				AA99BB00CC11DD22EE33FF44 /* script_rewrite_prompt.md in Resources */,
+				AA99BB00CC11DD22EE33FF45 /* product_research_prompt.md in Resources */,
+				AA99BB00CC11DD22EE33FF60 /* script_writing_prompt.md in Resources */,
+				AA99BB00CC11DD22EE33FF61 /* reverse_structuring_prompt.md in Resources */,
+				AA99BB00CC11DD22EE33FF62 /* structure_generation_prompt.md in Resources */,
 				511A88191D5816DE1CF92754 /* Assets.xcassets in Resources */,
 				254DA9454040AEFB4B6E8E05 /* bin in Resources */,
 			);
@@ -911,6 +1139,9 @@
 				A0C53D2B52CBD5A50C7ADDFB /* TTSClient.swift in Sources */,
 				C8D4E5F60A1B27C93E8D4A15 /* QwenTTSClient.swift in Sources */,
 				E45A697280C04799918959ED /* CosyVoiceTTSClient.swift in Sources */,
+				AE0000000000000000000041 /* VoiceAuditionPlayer.swift in Sources */,
+				AE0000000000000000000042 /* VoicePickerSheet.swift in Sources */,
+				AE0000000000000000000043 /* SheetContainerLayout.swift in Sources */,
 				1A5F60C136724AEFB9C4CCF8 /* VocalSeparationService.swift in Sources */,
 				3B616E15A9854D3A92E837E3 /* VoiceCloneService.swift in Sources */,
 				AB411BB69DBC4EBBB62E1984 /* DubAudioFinalizer.swift in Sources */,
@@ -970,6 +1201,7 @@
 				AB02C0A2E5E04B2A9C02000C /* SegmentSourceBadge.swift in Sources */,
 				AB03C0A3E5E04B2A9C030006 /* ProductPresentation.swift in Sources */,
 				8BA0DD196B2CB35D0199F751 /* SegmentPickerDrawer.swift in Sources */,
+				AE0000000000000000000002 /* SegmentGridPickerSheet.swift in Sources */,
 				E17F20BCEC4DF2B07BE00B0D /* ArrangeOrderSheet.swift in Sources */,
 				1A613852B34EE99F8438AAA2 /* NarrativeModels.swift in Sources */,
 				1D0D7A9086A5EF0295451C24 /* NarrativeStructureEngine.swift in Sources */,
@@ -1000,6 +1232,7 @@
 				AB02C0A2E5E04B2A9C020004 /* SegmentSource.swift in Sources */,
 				AB02C0A2E5E04B2A9C020006 /* ProductCatalogDefaults.swift in Sources */,
 				AB02C0A2E5E04B2A9C020008 /* SegmentPickerCatalog.swift in Sources */,
+				AC0700000000000000000001 /* KnowledgeDocumentFilter.swift in Sources */,
 				AB02C0A2E5E04B2A9C02000A /* ProductOwnershipBackfill.swift in Sources */,
 				AB03C0A3E5E04B2A9C030002 /* SidebarProductGrouping.swift in Sources */,
 				AB03C0A3E5E04B2A9C030004 /* ProductColor.swift in Sources */,
@@ -1065,6 +1298,58 @@
 				7DE42945234F9320F44B676E /* MCPProtocol.swift in Sources */,
 				04DB6D00B607A959902A5CCE /* MCPServer.swift in Sources */,
 				20BA0A1C2D8CD5D541FC9CE7 /* AgentJobRegistry.swift in Sources */,
+				AC0000000000000000000001 /* TextChunker.swift in Sources */,
+				AC0000000000000000000002 /* ChineseTextTokenizer.swift in Sources */,
+				AC0000000000000000000003 /* HTMLTextStripper.swift in Sources */,
+				AC0000000000000000000004 /* VectorCoding.swift in Sources */,
+				AC0000000000000000000005 /* KnowledgeTypes.swift in Sources */,
+				AC0000000000000000000006 /* ScriptTypes.swift in Sources */,
+				AC0000000000000000000007 /* ScriptFlowPhase.swift in Sources */,
+				AC0000000000000000000012 /* AudioTrackPolicy.swift in Sources */,
+				AC0000000000000000000013 /* BM25Index.swift in Sources */,
+				AC0000000000000000000014 /* VectorIndex.swift in Sources */,
+				AC0000000000000000000015 /* HybridRetrievalEngine.swift in Sources */,
+				AC0000000000000000000016 /* SlotRetrievalIntent.swift in Sources */,
+				AC0000000000000000000017 /* BochaResponse.swift in Sources */,
+				AE0000000000000000000020 /* BochaSearchClient.swift in Sources */,
+				AE0000000000000000000021 /* ProductResearchService.swift in Sources */,
+				AE0000000000000000000022 /* URLTextFetcher.swift in Sources */,
+				AC0000000000000000000008 /* KnowledgeDocument.swift in Sources */,
+				AC0000000000000000000009 /* KnowledgeChunk.swift in Sources */,
+				AC000000000000000000000A /* ScriptDocument.swift in Sources */,
+				AC000000000000000000000B /* ScriptScene.swift in Sources */,
+				AC000000000000000000000C /* DocumentTextExtractor.swift in Sources */,
+				AC000000000000000000000D /* EmbeddingClient.swift in Sources */,
+				AC000000000000000000000E /* EmbeddingClients.swift in Sources */,
+				AC000000000000000000000F /* KnowledgeIngestService.swift in Sources */,
+				AC0000000000000000000010 /* KnowledgeLibraryViewModel.swift in Sources */,
+				AC0000000000000000000011 /* KnowledgeLibraryView.swift in Sources */,
+				AC0000000000000000000030 /* ScriptMatcher.swift in Sources */,
+				AC0000000000000000000031 /* GroundingChecker.swift in Sources */,
+				AC0000000000000000000032 /* ComplianceChecker.swift in Sources */,
+				AC0000000000000000000033 /* ScriptResponseParser.swift in Sources */,
+				AC0000000000000000000034 /* SpeechDuration.swift in Sources */,
+				AC0000000000000000000035 /* PastedScriptLines.swift in Sources */,
+				AC0000000000000000000036 /* ScriptGroundingGate.swift in Sources */,
+                           AC0000000000000000000040 /* SegmentGridPicker.swift in Sources */,
+                           AC0000000000000000000041 /* SchemeFocus.swift in Sources */,
+                           AC0000000000000000000063 /* SchemeSelection.swift in Sources */,
+                           AC0000000000000000000064 /* VoiceCatalogFilter.swift in Sources */,
+                           AC0000000000000000000065 /* DubVariantSelector.swift in Sources */,
+                           AC0000000000000000000060 /* VoiceChoice.swift in Sources */,
+                           AC0000000000000000000061 /* ScriptDubBinding.swift in Sources */,
+                           AC0000000000000000000062 /* BoundedTaskGate.swift in Sources */,
+                           AE0000000000000000000040 /* VoicePreferences.swift in Sources */,
+				AC0000000000000000000037 /* ScriptMatchRepair.swift in Sources */,
+				AC0000000000000000000038 /* DubOnlyExportPolicy.swift in Sources */,
+				AC0000000000000000000039 /* ScriptTextExporter.swift in Sources */,
+				AE0000000000000000000030 /* KnowledgeRetrievalService.swift in Sources */,
+				AE0000000000000000000031 /* ScriptWritingService.swift in Sources */,
+				AE0000000000000000000032 /* ScriptStructureServices.swift in Sources */,
+				AE0000000000000000000033 /* MaterializationService.swift in Sources */,
+				AE0000000000000000000034 /* ScriptExportAssembly.swift in Sources */,
+				AC0000000000000000000050 /* ScriptWizardViewModel.swift in Sources */,
+				AC0000000000000000000051 /* ScriptWizardView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

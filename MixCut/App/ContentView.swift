@@ -6,6 +6,9 @@ extension Notification.Name {
     static let mixCutNavigate = Notification.Name("mixCutNavigate")
     static let mixCutNewProject = Notification.Name("mixCutNewProject")
     static let mixCutShowShortcuts = Notification.Name("mixCutShowShortcuts")
+    /// 脚本物化为方案后请求在「混剪方案」页聚焦选中（object = scheme UUID）。
+    /// 与 mixCutNavigate(schemes) 配对投递；SchemeListView 经 loadSchemes 后消费。
+    static let mixCutFocusScheme = Notification.Name("mixCutFocusScheme")
     /// 打开设置窗口（配音缺凭证报错 → 点「去设置配置」时广播，侧栏接收开 sheet）
     static let mixCutShowSettings = Notification.Name("mixCutShowSettings")
     /// 撤销 / 重做后广播：当前视图据此重载，避免显示已回滚 / 恢复前的陈旧数据
@@ -63,6 +66,7 @@ enum NavigationItem: String, Hashable, CaseIterable, Identifiable {
     case overview = "项目概览"
     case importMedia = "素材导入"
     case segmentLibrary = "分镜素材库"
+    case knowledge = "知识库"
     case schemes = "混剪方案"
     case bgmLibrary = "BGM 库"
     case export = "导出"
@@ -74,6 +78,7 @@ enum NavigationItem: String, Hashable, CaseIterable, Identifiable {
         case .overview: return "rectangle.3.group"
         case .importMedia: return "square.and.arrow.down"
         case .segmentLibrary: return "film.stack"
+        case .knowledge: return "books.vertical"
         case .schemes: return "list.bullet.clipboard"
         case .bgmLibrary: return "music.note.list"
         case .export: return "square.and.arrow.up"
@@ -152,6 +157,17 @@ struct ContentView: View {
             if let item = notification.object as? NavigationItem {
                 withAnimation(DesignTokens.Motion.transition) {
                     selectedNavItem = item
+                }
+            }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .mixCutFocusScheme)) { note in
+            // 仅登记 pending；SchemeListView onAppear/onChange 的 loadSchemes 末尾统一消费，
+            // 保证先切到方案页、数据重载后再选中（焦点不会被 loadSchemes 的清空覆盖）。
+            if let id = note.object as? UUID {
+                schemeVM.requestFocus(schemeID: id)
+                // 若当前已在方案页（不会再触发 onAppear），立即重载消费一次。
+                if selectedNavItem == .schemes, let project = projectVM.selectedProject {
+                    schemeVM.loadSchemes(for: project)
                 }
             }
         }
@@ -243,6 +259,8 @@ struct ContentView: View {
             ImportView(project: project, importVM: importVM)
         case .segmentLibrary:
             SegmentLibraryView(project: project, viewModel: segmentLibraryVM, schemeVM: schemeVM)
+        case .knowledge:
+            KnowledgeLibraryView(project: project)
         case .schemes:
             SchemeListView(project: project, viewModel: schemeVM, segmentLibraryVM: segmentLibraryVM)
         case .bgmLibrary:

@@ -39,24 +39,131 @@ final class SchemeViewModel {
     private var modelContext: ModelContext?
     private let schemeService = SchemeGenerationService()
 
+    /// 方案 id → 脚本创作方向（仅产品脚本物化方案有条目）。
+    /// 经冻结 ScriptDocument.realizedScheme 标识符解边（不 fault backing）；
+    /// 方案列表的「产品脚本/逆向文案」标签的唯一数据源。
+    private(set) var scriptDirectionBySchemeID: [UUID: ScriptDirection] = [:]
+
+    /// 物化完成后待聚焦选中的方案 id（跨 loadSchemes 的清空-重载闭环保留）。
+    /// 通知可能早于 SchemeListView appear；loadSchemes 末尾消费，**消费即清空**。
+    /// 定位失败（跨项目陈旧事件/已删）静默丢弃且不改选中——判定在 Core SchemeFocus.locate。
+    private(set) var pendingFocusSchemeID: UUID?
+
     func setModelContext(_ context: ModelContext) {
         self.modelContext = context
     }
 
-    /// 加载项目的所有策略和方案
+    /// 上次装载数据所属项目（同项目重载连续性判据；nil = 本进程尚未装载过）。
+    /// 切项目铁律靠它：isSameProject=false 时策略绝不保留旧项目选中。
+    private var lastLoadedProjectID: UUID?
+
+    /// 加载项目的所有策略和方案。
+    ///
+    /// 「刷新快照数据」与「选中谁」彻底分开：选中裁决全部下沉 Core SchemeSelection.resolve
+    /// （焦点 → 同项目连续性 → 展示序第一非空容器 → 全空清空），本方法只做投影与应用。
+    /// 禁止再在此写 `strategies.first` 式硬编码默认——空「自定义组合」随项目一起创建、
+    /// createdAt 最早，旧默认必选空组导致右栏空白（G-S9 守卫钉死此回归）。
     func loadSchemes(for project: Project) {
         // 重载前先把待删除项真正删除，避免隐藏项在重载后又冒出来
         PendingDeletionCenter.shared.flushNow()
-        // 切项目铁律：先清空跨项目残留的选中（避免显示上一个项目的方案）
-        selectedStrategy = nil
-        selectedScheme = nil
+
+        let previous = SchemeSelection.Current(strategyID: selectedStrategy?.id,
+                                               schemeID: selectedScheme?.id)
+        let isSameProject = lastLoadedProjectID == project.id
+        let focus = pendingFocusSchemeID
 
         strategies = project.strategies.sorted { $0.createdAt < $1.createdAt }
-        // 默认选第一个策略 + 它的第一个方案
-        if let first = strategies.first {
-            selectedStrategy = first
-            selectedScheme = first.orderedSchemes.first
+
+        // 选中树必须覆盖 UI 上全部可选容器：AI → 产品脚本成片（含内存占位）→ 自定义组合，
+        // 再并底部「自定义结构」分组——否则叙事结构变体的选中在同项目 keep 时会定位不到。
+        // 空容器（含内存占位脚本组）保留在树里，由策略层负责跳过。
+        let groupsForSelection = orderedStrategiesForDisplay + narrativeTemplates
+        let trees = groupsForSelection.map {
+            SchemeFocus.Tree(strategyID: $0.id, orderedSchemeIDs: $0.orderedSchemes.map(\.id))
         }
+        let decision = SchemeSelection.resolve(pendingFocus: focus,
+                                               current: previous,
+                                               trees: trees,
+                                               isSameProject: isSameProject)
+        // 焦点令牌一次即焚：命中已转 select；陈旧（跨项目/已删）也吞掉，
+        // 防后续同项目重载被过期意图反复夺选。
+        pendingFocusSchemeID = nil
+        applySelection(decision, previous: previous, groups: groupsForSelection)
+
+        lastLoadedProjectID = project.id
+        refreshScriptProjections()
+    }
+
+    /// 把 Core 选中裁决映射回模型对象：一律按 id 从本次新加载的图里重取，不握重载前的旧引用。
+    private func applySelection(_ decision: SchemeSelection.Decision,
+                                previous: SchemeSelection.Current,
+                                groups: [MixStrategy]) {
+        switch decision {
+        case .select(let strategyID, let schemeID):
+            guard let group = groups.first(where: { $0.id == strategyID }),
+                  let scheme = group.orderedSchemes.first(where: { $0.id == schemeID }) else {
+                selectedStrategy = nil
+                selectedScheme = nil
+                return
+            }
+            selectedStrategy = group
+            selectedScheme = scheme
+        case .keep:
+            // 策略已保证同项目且 schemeID 在树中；此处仍防御式重取（取不到则安全清空）。
+            guard let schemeID = previous.schemeID,
+                  let group = groups.first(where: { $0.orderedSchemes.contains { $0.id == schemeID } }),
+                  let scheme = group.orderedSchemes.first(where: { $0.id == schemeID }) else {
+                selectedStrategy = nil
+                selectedScheme = nil
+                return
+            }
+            selectedStrategy = group
+            selectedScheme = scheme
+        case .clear:
+            selectedStrategy = nil
+            selectedScheme = nil
+        }
+    }
+
+    /// 请求物化后聚焦某方案（由 ContentView 收到 .mixCutFocusScheme 通知时调用）。
+    /// 不直接选中：作为一次性意图在下一次 loadSchemes 经 SchemeSelection 统一裁决，
+    /// 这样「立即消费」与「SchemeListView.onAppear 装载」谁先谁后结果都一致。
+    func requestFocus(schemeID: UUID) {
+        pendingFocusSchemeID = schemeID
+    }
+
+    /// 重建「方案 → 脚本方向」投影（全量活 fetch + 标识符解边；脚本方案数量少）。
+    func refreshScriptProjections() {
+        guard let modelContext else { return }
+        let documents = (try? modelContext.fetch(FetchDescriptor<ScriptDocument>())) ?? []
+        guard !documents.isEmpty else {
+            if !scriptDirectionBySchemeID.isEmpty { scriptDirectionBySchemeID = [:] }
+            return
+        }
+        let schemes = (try? modelContext.fetch(FetchDescriptor<MixScheme>())) ?? []
+        var index = LiveModelIDIndex()
+        index.insert(schemes, id: \.id)
+        var map: [UUID: ScriptDirection] = [:]
+        for document in documents {
+            if let schemeID = index.uuid(for: document.realizedScheme) {
+                map[schemeID] = document.direction
+            }
+        }
+        scriptDirectionBySchemeID = map
+    }
+
+    /// dubOnly 方案的新配音就绪度（纯值读数：已生成音频的槽位数 / 总槽位数）。
+    /// 计算放 VM 而不是视图：视图层跨模型关系读取有 G08 名册守卫（零新增）。
+    func dubbingReadiness(for scheme: MixScheme) -> (ready: Int, total: Int) {
+        let ordered = scheme.orderedSegments
+        var ready = 0
+        for ss in ordered {
+            guard let id = ss.selectedSegmentDubId,
+                  let path = ss.segment?.segmentDubs.first(where: { $0.id == id })?.audioFilePath,
+                  FileManager.default.fileExists(atPath: path) else { continue }
+            ready += 1
+        }
+        return (ready, ordered.count)
     }
 
     /// 所有方案的扁平列表（兼容旧接口）
@@ -64,9 +171,10 @@ final class SchemeViewModel {
         strategies.flatMap(\.orderedSchemes)
     }
 
-    /// AI 生成的策略（排除"自定义组合"容器 + 用户自定义叙事结构）
+    /// AI 生成的策略（排除三类容器：自定义组合 / 自定义叙事结构 / 产品脚本成片）。
+    /// 新增容器类型必须在此显式排除——G-S7 守卫钉死此三字段组合。
     var aiStrategies: [MixStrategy] {
-        strategies.filter { !$0.isCustomGroup && !$0.isNarrativeTemplate }
+        strategies.filter { !$0.isCustomGroup && !$0.isNarrativeTemplate && !$0.isScriptGroup }
     }
 
     /// 当前项目的"自定义组合"策略容器
@@ -79,13 +187,41 @@ final class SchemeViewModel {
         strategies.filter { $0.isNarrativeTemplate }
     }
 
-    /// 列表渲染用的有序策略：AI 策略在前，自定义组合在后
-    var orderedStrategiesForDisplay: [MixStrategy] {
-        aiStrategies + (customGroup.map { [$0] } ?? [])
+    /// 已持久化的「产品脚本成片」容器（首个脚本物化时由 MaterializationService 懒建）。
+    private var persistedScriptGroup: MixStrategy? {
+        strategies.first { $0.isScriptGroup }
     }
 
-    /// 导出页用：所有含方案的策略（AI 策略 + 自定义组合 + 自定义结构）。
-    /// 导出列表必须含 narrativeTemplates，否则自定义结构生成的方案在导出页看不到、勾不到。
+    /// 「产品脚本成片」容器：持久化容器优先；缺失时返回**内存占位组**（不 insert、不参与任何 save）。
+    /// 使空组与「＋新建脚本成片」入口对存量/新建项目恒定可见；占位由工厂构造，见 makeScriptPlaceholder()。
+    var scriptGroup: MixStrategy {
+        persistedScriptGroup ?? Self.makeScriptPlaceholder()
+    }
+
+    /// 内存占位组（禁落库）。
+    /// !! 非持久化对象：禁止 context.insert/delete/save；deleteStrategy 对其必须直接 return（G-S7 守卫）。
+    static func makeScriptPlaceholder() -> MixStrategy {
+        let placeholder = MixStrategy(
+            name: "产品脚本成片",
+            style: "产品脚本成片",
+            description: "知识库写文案 / 粘贴逆向文案，逐段锁定分镜 · 全新配音",
+            targetAudience: "",
+            narrativeStructure: "",
+            targetDuration: 0
+        )
+        placeholder.isScriptGroup = true
+        // 刻意不 insert：它是 UI 占位，首个脚本物化时 MaterializationService 才建真实容器。
+        return placeholder
+    }
+
+    /// 列表渲染用的有序策略：AI 策略 → 产品脚本成片 → 自定义组合。
+    /// （自定义叙事结构 narrativeTemplates 仍由列表底部独立分组渲染。）
+    var orderedStrategiesForDisplay: [MixStrategy] {
+        aiStrategies + [scriptGroup] + (customGroup.map { [$0] } ?? [])
+    }
+
+    /// 导出页用：所有含方案的策略。占位脚本组无方案，扁平后不贡献条目（无需特判）；
+    /// 真实脚本容器物化后自动出现在这里，dubOnly 组合链路即导出可见。
     var exportableStrategies: [MixStrategy] {
         orderedStrategiesForDisplay + narrativeTemplates
     }
@@ -379,6 +515,9 @@ final class SchemeViewModel {
     /// 删除整个策略及其所有变体（延迟删除 + 撤销浮条）
     func deleteStrategy(_ strategy: MixStrategy) {
         guard modelContext != nil else { return }
+        // P1-1：内存占位的「产品脚本成片」空组不在已加载 strategies 中（未落库），
+        // 直接拒绝，禁止进入延迟删除/save 路径。
+        guard strategies.contains(where: { $0 === strategy }) else { return }
         let id = strategy.id
         if selectedStrategy?.id == id {
             selectedStrategy = nil
@@ -419,6 +558,9 @@ final class SchemeViewModel {
             message: "已删除方案",
             commit: { [weak self] in
                 guard let context = self?.modelContext else { return GraphChange() }
+                // 脚本配音归属回收：仅在永久阶段（commit）执行——undo 只恢复界面关系、
+                // 已删磁盘音频无法恢复。只删脚本族、被本方案绑定、且无其他存活方案引用的 dub。
+                Self.reapScriptDubs(deleting: scheme, context: context)
                 context.delete(scheme)
                 context.safeSave()
                 // 同 deleteStrategy：`strategies` 里的内存关系已在 schedule 前摘除，`.scheme` 尚无剪枝消费者
@@ -430,6 +572,39 @@ final class SchemeViewModel {
                 self.strategies = self.strategies.map { $0 }
             }
         )
+    }
+
+    /// 脚本成片配音回收（删方案永久阶段）。
+    /// 判据在 Core ScriptDubReap；这里只做模型→纯值投影与实际删除（记录+磁盘音频）。
+    /// 跨边读取收口在本 VM（活 fetch + 标识符集合），不写 #Predicate 深链（G23）。
+    private static func reapScriptDubs(deleting scheme: MixScheme, context: ModelContext) {
+        let deletingBoundIDs = Set(scheme.schemeSegments.compactMap { $0.selectedSegmentDubId })
+        guard !deletingBoundIDs.isEmpty else { return }
+
+        // 其余存活方案仍绑定的全部 dub id（排除待删方案自身）。
+        let allSchemes = (try? context.fetch(FetchDescriptor<MixScheme>())) ?? []
+        let survivingBoundIDs = Set(
+            allSchemes
+                .filter { $0.id != scheme.id }
+                .flatMap { $0.schemeSegments.compactMap { $0.selectedSegmentDubId } }
+        )
+
+        let dubs = (try? context.fetch(FetchDescriptor<SegmentDub>())) ?? []
+        let candidates = dubs.filter {
+            ScriptDubReap.scriptProvenanceRaws.contains($0.textProvenanceRaw)
+        }
+        let doomed = ScriptDubReap.reapableCandidates(
+            provenanceScriptDubIDs: candidates.map(\.id),
+            boundByDeletingSchemeIDs: deletingBoundIDs,
+            referencedBySurvivingSchemeIDs: survivingBoundIDs)
+        guard !doomed.isEmpty else { return }
+
+        for id in doomed {
+            guard let d = dubs.first(where: { $0.id == id }) else { continue }
+            if let path = d.audioFilePath { try? FileManager.default.removeItem(atPath: path) }
+            context.delete(d)
+        }
+        MixLog.info("[Scheme] 删除方案回收脚本配音 \(doomed.count) 条")
     }
 
     // MARK: - 分镜编辑

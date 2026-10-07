@@ -32,6 +32,15 @@ final class MixScheme: Identifiable {
 
     var createdAt: Date
 
+    /// 声音策略 raw（AudioTrackPolicy）；默认 keepOriginal = 现有行为（逐段回退原声）。
+    /// 产品脚本成片方案 = .dubOnly（全槽必取新配音，绝不回退原声）。
+    var audioTrackPolicyRaw: String = AudioTrackPolicy.keepOriginal.rawValue
+
+    var audioTrackPolicy: AudioTrackPolicy {
+        get { AudioTrackPolicy(rawValue: audioTrackPolicyRaw) ?? .keepOriginal }
+        set { audioTrackPolicyRaw = newValue.rawValue }
+    }
+
     /// true = AI 方案被用户手动改过分镜（添加/删除/替换/换序任一动作触发）
     var isManuallyEdited: Bool = false
 
