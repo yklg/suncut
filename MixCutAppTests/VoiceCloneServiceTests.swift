@@ -1,6 +1,8 @@
 import Foundation
 import Testing
-@testable import MixCut
+// ⚠️ module 名是 **SunCut**：App target 的 PRODUCT_NAME = SunCut 且未设
+// PRODUCT_MODULE_NAME ⇒ Swift module 名默认取 PRODUCT_NAME（同 TEST_HOST 那个 SunCut）。
+@testable import SunCut
 
 // ============================================================================
 // EN · `VoiceCloneService.enroll` 网络路径契约（M2 test target 首批用例）
@@ -84,100 +86,107 @@ private func sentPreferredName() throws -> String {
 
 // MARK: - EN-1..3：缺陷的直接契约
 
-@Test("EN-1 送出的 preferred_name 必须是纯 ASCII（400 InvalidParameter 的直接根因）")
-func en1_sentNameIsPureASCII() async throws {
-    let (svc, tmp) = try makeService()
-    defer { try? FileManager.default.removeItem(at: tmp) }
+/// EN 用例**串行**执行：mock 的响应体/请求体存在**静态可变状态**里，而 Swift Testing
+/// 默认并行 ⇒ A 用例设的响应会被 B 用例在断言前改掉（实测：6 条里 4 条失败、
+/// 单独跑却全绿）。mock 必须能跨 `URLProtocol.startLoading`（另一个对象）传状态，
+/// 只能走静态 ⇒ 正解是序列化 suite，而不是给每条用例各建一个 mock（那就无法断言了）。
+@Suite(.serialized)
+struct VoiceCloneServiceContractTests {
+    @Test("EN-1 送出的 preferred_name 必须是纯 ASCII（400 InvalidParameter 的直接根因）")
+    func en1_sentNameIsPureASCII() async throws {
+        let (svc, tmp) = try makeService()
+        defer { try? FileManager.default.removeItem(at: tmp) }
 
-    // 用户实测场景：中文名直接发给服务端 ⇒ 服务端 400。
-    _ = try await svc.enroll(referenceAudioPath: tmp.path, preferredName: "市土产仓库 5")
+        // 用户实测场景：中文名直接发给服务端 ⇒ 服务端 400。
+        _ = try await svc.enroll(referenceAudioPath: tmp.path, preferredName: "市土产仓库 5")
 
-    let sent = try sentPreferredName()
-    #expect(sent.unicodeScalars.allSatisfy { $0.isASCII },
-            "送出的标识名含非ASCII 字符：\(sent) ⇒ 服务端会 400")
-}
-
-@Test("EN-2 EnrollResult.providerName 等于实际送出的值（对账字段不得本地重算）")
-func en2_providerNameMatchesSentValue() async throws {
-    let (svc, tmp) = try makeService()
-    defer { try? FileManager.default.removeItem(at: tmp) }
-
-    let result = try await svc.enroll(referenceAudioPath: tmp.path, preferredName: "我的声音")
-    let sent = try sentPreferredName()
-
-    #expect(result.providerName == sent,
-            "返回值声称发了「\(result.providerName)」，实际发出「\(sent)」⇒ 对账字段会与远端不一致")
-    #expect(result.voiceId == "mocked_voice_id", "voiceId 应来自响应体 output.voice")
-}
-
-@Test("EN-3 请求体结构符合官方契约（model/action/target_model 三者齐备）")
-func en3_requestBodyMatchesOfficialContract() async throws {
-    let (svc, tmp) = try makeService()
-    defer { try? FileManager.default.removeItem(at: tmp) }
-
-    _ = try await svc.enroll(referenceAudioPath: tmp.path, preferredName: "测试")
-
-    guard let body = MockURLProtocol.lastRequestBody,
-          let obj = try JSONSerialization.jsonObject(with: body) as? [String: Any],
-          let input = obj["input"] as? [String: Any] else {
-        Issue.record("没抓到请求体")
-        return
+        let sent = try sentPreferredName()
+        #expect(sent.unicodeScalars.allSatisfy { $0.isASCII },
+                "送出的标识名含非ASCII 字符：\(sent) ⇒ 服务端会 400")
     }
-    #expect(obj["model"] as? String == "qwen-voice-enrollment")
-    #expect(input["action"] as? String == "create")
-    #expect(input["target_model"] as? String == VoiceCloneService.targetModel,
-            "target_model 必须与合成时用的型号一致，否则服务端合成会失败")
-    #expect(input["audio"] != nil, "audio.data 必须存在（base64 内联）")
-}
 
-// MARK: - EN-4：零回归（逐视频克隆链路）
+    @Test("EN-2 EnrollResult.providerName 等于实际送出的值（对账字段不得本地重算）")
+    func en2_providerNameMatchesSentValue() async throws {
+        let (svc, tmp) = try makeService()
+        defer { try? FileManager.default.removeItem(at: tmp) }
 
-@Test("EN-4 纯 ASCII 名不被改写（逐视频克隆链路零回归）")
-func en4_pureASCIINameUnchanged() async throws {
-    // 🔵 负向哨兵：这条防的是「给所有名字都跑一遍转写 / 消歧」。
-    // 逐视频克隆传的是 `Brand.shortName + hash`（纯 ASCII），必须逐字不变。
-    let (svc, tmp) = try makeService()
-    defer { try? FileManager.default.removeItem(at: tmp) }
+        let result = try await svc.enroll(referenceAudioPath: tmp.path, preferredName: "我的声音")
+        let sent = try sentPreferredName()
 
-    let input = Brand.shortName + "1a2b3c4d"
-    let result = try await svc.enroll(referenceAudioPath: tmp.path, preferredName: input)
+        #expect(result.providerName == sent,
+                "返回值声称发了「\(result.providerName)」，实际发出「\(sent)」⇒ 对账字段会与远端不一致")
+        #expect(result.voiceId == "mocked_voice_id", "voiceId 应来自响应体 output.voice")
+    }
 
-    #expect(result.providerName == input,
-            "纯 ASCII 名被改写：「\(input)」→ 「\(result.providerName)」⇒ 逐视频克隆链路会回归")
-    #expect(try sentPreferredName() == input)
-}
+    @Test("EN-3 请求体结构符合官方契约（model/action/target_model 三者齐备）")
+    func en3_requestBodyMatchesOfficialContract() async throws {
+        let (svc, tmp) = try makeService()
+        defer { try? FileManager.default.removeItem(at: tmp) }
 
-// MARK: - EN-5/6：错误路径
-
-@Test("EN-5 服务端 400 时抛错而非静默成功")
-func en5_serverErrorThrows() async throws {
-    let (svc, tmp) = try makeService()
-    defer { try? FileManager.default.removeItem(at: tmp) }
-
-    MockURLProtocol.statusCode = 400
-    MockURLProtocol.responseJSON =
-        #"{"request_id":"r","code":"InvalidParameter","message":"Required input 'preferred_name' is invalid"}"#
-
-    await #expect(throws: VoiceCloneService.CloneError.self) {
         _ = try await svc.enroll(referenceAudioPath: tmp.path, preferredName: "测试")
+
+        guard let body = MockURLProtocol.lastRequestBody,
+              let obj = try JSONSerialization.jsonObject(with: body) as? [String: Any],
+              let input = obj["input"] as? [String: Any] else {
+            Issue.record("没抓到请求体")
+            return
+        }
+        #expect(obj["model"] as? String == "qwen-voice-enrollment")
+        #expect(input["action"] as? String == "create")
+        #expect(input["target_model"] as? String == VoiceCloneService.targetModel,
+                "target_model 必须与合成时用的型号一致，否则服务端合成会失败")
+        #expect(input["audio"] != nil, "audio.data 必须存在（base64 内联）")
     }
-}
 
-@Test("EN-6 未配置 API Key 时不发起请求（省一次无谓往返）")
-func en6_missingAPIKeyFailsBeforeRequest() async throws {
-    let tmp = FileHelper.tempDirectory
-        .appendingPathComponent("enroll-test-\(UUID().uuidString).mp3")
-    try Data([0xFF, 0xFB, 0x90, 0x00]).write(to: tmp)
-    defer { try? FileManager.default.removeItem(at: tmp) }
+    // MARK: - EN-4：零回归（逐视频克隆链路）
 
-    let cfg = URLSessionConfiguration.ephemeral
-    cfg.protocolClasses = [MockURLProtocol.self]
-    let svc = VoiceCloneService(apiKeyProvider: { nil },
-                                session: URLSession(configuration: cfg))
-    MockURLProtocol.lastRequestBody = nil
+    @Test("EN-4 纯 ASCII 名不被改写（逐视频克隆链路零回归）")
+    func en4_pureASCIINameUnchanged() async throws {
+        // 🔵 负向哨兵：这条防的是「给所有名字都跑一遍转写 / 消歧」。
+        // 逐视频克隆传的是 `Brand.shortName + hash`（纯 ASCII），必须逐字不变。
+        let (svc, tmp) = try makeService()
+        defer { try? FileManager.default.removeItem(at: tmp) }
 
-    await #expect(throws: VoiceCloneService.CloneError.self) {
-        _ = try await svc.enroll(referenceAudioPath: tmp.path, preferredName: "测试")
+        let input = Brand.shortName + "1a2b3c4d"
+        let result = try await svc.enroll(referenceAudioPath: tmp.path, preferredName: input)
+
+        #expect(result.providerName == input,
+                "纯 ASCII 名被改写：「\(input)」→ 「\(result.providerName)」⇒ 逐视频克隆链路会回归")
+        #expect(try sentPreferredName() == input)
     }
-    #expect(MockURLProtocol.lastRequestBody == nil, "无 Key 时不该发出请求（不该消耗网络往返）")
+
+    // MARK: - EN-5/6：错误路径
+
+    @Test("EN-5 服务端 400 时抛错而非静默成功")
+    func en5_serverErrorThrows() async throws {
+        let (svc, tmp) = try makeService()
+        defer { try? FileManager.default.removeItem(at: tmp) }
+
+        MockURLProtocol.statusCode = 400
+        MockURLProtocol.responseJSON =
+            #"{"request_id":"r","code":"InvalidParameter","message":"Required input 'preferred_name' is invalid"}"#
+
+        await #expect(throws: VoiceCloneService.CloneError.self) {
+            _ = try await svc.enroll(referenceAudioPath: tmp.path, preferredName: "测试")
+        }
+    }
+
+    @Test("EN-6 未配置 API Key 时不发起请求（省一次无谓往返）")
+    func en6_missingAPIKeyFailsBeforeRequest() async throws {
+        let tmp = FileHelper.tempDirectory
+            .appendingPathComponent("enroll-test-\(UUID().uuidString).mp3")
+        try Data([0xFF, 0xFB, 0x90, 0x00]).write(to: tmp)
+        defer { try? FileManager.default.removeItem(at: tmp) }
+
+        let cfg = URLSessionConfiguration.ephemeral
+        cfg.protocolClasses = [MockURLProtocol.self]
+        let svc = VoiceCloneService(apiKeyProvider: { nil },
+                                    session: URLSession(configuration: cfg))
+        MockURLProtocol.lastRequestBody = nil
+
+        await #expect(throws: VoiceCloneService.CloneError.self) {
+            _ = try await svc.enroll(referenceAudioPath: tmp.path, preferredName: "测试")
+        }
+        #expect(MockURLProtocol.lastRequestBody == nil, "无 Key 时不该发出请求（不该消耗网络往返）")
+    }
 }
