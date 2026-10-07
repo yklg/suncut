@@ -36,6 +36,16 @@ if not phase_block:
 in_phase = set(re.findall(r"/\* ([\w.]+\.swift) in Sources \*/", phase_block.group(1)))
 filerefs = set(re.findall(r"/\* ([\w.]+\.swift) \*/ = \{isa = PBXFileReference", text))
 
+# 第四段对账：每个 swift FileRef 的 object id 必须挂在某个 PBXGroup 的 children 里。
+# 漏挂 group 时 <group> sourceTree 会把文件解析到工程根，xcodebuild 报
+# "Build input file cannot be found: $SRCROOT/<File>.swift"（2026-10-05 实测）。
+fileref_ids = dict(re.findall(
+    r"([0-9A-F]{24}) /\* ([\w.]+\.swift) \*/ = \{isa = PBXFileReference", text))
+group_refs = set()
+for group_block in re.findall(r"isa = PBXGroup;.*?children = \((.*?)\);", text, re.S):
+    group_refs.update(re.findall(r"([0-9A-F]{24}) /\*", group_block))
+ungrouped = sorted((name, oid) for oid, name in fileref_ids.items() if oid not in group_refs)
+
 missing = []
 for n in sorted(set(names)):
     gaps = [k for k, s in (("PBXBuildFile", build_files), ("SourcesPhase", in_phase), ("PBXFileReference", filerefs)) if n not in s]
@@ -65,8 +75,13 @@ if dangling:
 if phase_vs_build:
     print(f"FAIL[阶段不一致] BuildFile 与 Sources phase 互差: {phase_vs_build}")
     failed = True
-if not missing and not dangling and not dupes and not phase_vs_build:
-    print("PASS 源码树与 pbxproj 引用双向守恒")
+if ungrouped:
+    print(f"FAIL[漏挂分组] {len(ungrouped)} 个文件引用不在任何 PBXGroup 里（会被解析到工程根）:")
+    for n, oid in ungrouped:
+        print(f"   {n}  ({oid})")
+    failed = True
+if not missing and not dangling and not dupes and not phase_vs_build and not ungrouped:
+    print("PASS 源码树与 pbxproj 引用双向守恒（含 PBXGroup 挂载）")
 
 # 显示身份对账：菜单栏/Dock/Finder 上的名字来自 pbxproj 的 PRODUCT_NAME，它不在 Brand.swift 里，
 # 是第二处身份来源。上一轮的教训正是「界面文案翻干净了，另一处还写着旧名」—— 这里把两处钉成一处。

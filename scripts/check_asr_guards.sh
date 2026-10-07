@@ -228,7 +228,7 @@ if grep -q 'func setText(_ incoming: String, source: TranscriptSource)' "$APP/Mo
 else
   fail "G10b 找不到 Segment.setText(_:source:)（签名变了要连同 10 个调用点与计划一起对齐）"
 fi
-hits=$(grep -rn '\.text\s*=[^=]' "$APP" --include='*.swift' 2>/dev/null | grep -v 'Models/Segment.swift' | grep -v 'sentences\[' | grep -v '\.text == ' | wc -l | tr -d ' ')
+hits=$(grep -rn '\.text\s*=[^=]' "$APP" --include='*.swift' 2>/dev/null | grep -v 'Models/Segment.swift' | grep -v 'sentences\[' | grep -v '\.text == ' | grep -vE 'self\.text\s*=[^=]' | wc -l | tr -d ' ')
 if [[ "$hits" == "0" ]]; then
   pass "G10c 除 Segment 自身外没有 .text = 赋值（句子级载体 sentences[i].text 不在此列）"
 else

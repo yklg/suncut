@@ -1,0 +1,787 @@
+## [4.3.6](https://github.com/appium/appium-mac2-driver/compare/v4.3.5...v4.3.6) (2026-10-02)
+
+### Bug Fixes
+
+* Isolated process-exit state, page-source xml, Reused geometry during XML serialization ([#423](https://github.com/appium/appium-mac2-driver/issues/423)) ([b4dc1f8](https://github.com/appium/appium-mac2-driver/commit/b4dc1f8aa403e18b3b6c1807403144fd19552492))
+
+## [4.3.5](https://github.com/appium/appium-mac2-driver/compare/v4.3.4...v4.3.5) (2026-09-10)
+
+### Miscellaneous Chores
+
+* **ci:** publish via bundled dependencies instead of npm-shrinkwrap ([#420](https://github.com/appium/appium-mac2-driver/issues/420)) ([a2ac9d6](https://github.com/appium/appium-mac2-driver/commit/a2ac9d68a3fc4d5f5b8db5f254c29fe941685376))
+
+## [4.3.4](https://github.com/appium/appium-mac2-driver/compare/v4.3.3...v4.3.4) (2026-09-02)
+
+### Bug Fixes
+
+* harden AMHTTPServer's HTTP/1.1 request framing  ([#418](https://github.com/appium/appium-mac2-driver/issues/418)) ([0d487d6](https://github.com/appium/appium-mac2-driver/commit/0d487d66a7834edb077a90119da312743b7ac640))
+
+## [4.3.3](https://github.com/appium/appium-mac2-driver/compare/v4.3.2...v4.3.3) (2026-09-01)
+
+### Miscellaneous Chores
+
+* bump support-related dependencies ([#419](https://github.com/appium/appium-mac2-driver/issues/419)) ([60d1605](https://github.com/appium/appium-mac2-driver/commit/60d160545e5e6aadf484ea1784794dd42aaf407d))
+
+## [4.3.2](https://github.com/appium/appium-mac2-driver/compare/v4.3.1...v4.3.2) (2026-08-31)
+
+### Miscellaneous Chores
+
+* **deps:** bump @appium/strongbox from 1.1.3 to 2.0.0 ([#416](https://github.com/appium/appium-mac2-driver/issues/416)) ([affff16](https://github.com/appium/appium-mac2-driver/commit/affff16d12e0348e4fab5e219e6ba4e1a1228cc9))
+
+## [4.3.1](https://github.com/appium/appium-mac2-driver/compare/v4.3.0...v4.3.1) (2026-08-30)
+
+### Miscellaneous Chores
+
+* **deps-dev:** bump @appium/docutils from 2.5.2 to 3.0.0 ([#417](https://github.com/appium/appium-mac2-driver/issues/417)) ([277db80](https://github.com/appium/appium-mac2-driver/commit/277db80af726d55810a15202582a841c97f37da1))
+
+## [4.3.0](https://github.com/appium/appium-mac2-driver/compare/v4.2.0...v4.3.0) (2026-08-26)
+
+### Features
+
+* port WebDriverAgentMac's HTTP server to Network.framework ([#415](https://github.com/appium/appium-mac2-driver/issues/415)) ([f4ff684](https://github.com/appium/appium-mac2-driver/commit/f4ff68477925a0839c004a280bdda447cf9a4e17))
+
+## [4.2.0](https://github.com/appium/appium-mac2-driver/compare/v4.1.1...v4.2.0) (2026-08-10)
+
+### Features
+
+* locate WKWebView web elements via predicate string and class chain ([#412](https://github.com/appium/appium-mac2-driver/issues/412)) ([42a49aa](https://github.com/appium/appium-mac2-driver/commit/42a49aa8c321a2b554facfcf330d61d4feff99ed))
+
+## [4.1.1](https://github.com/appium/appium-mac2-driver/compare/v4.1.0...v4.1.1) (2026-08-08)
+
+### Bug Fixes
+
+* support WebDriverAgent builds with Xcode 27 ([#411](https://github.com/appium/appium-mac2-driver/issues/411)) ([8cd23fc](https://github.com/appium/appium-mac2-driver/commit/8cd23fc7485b0c6f0a0711374df627376ad4657e))
+
+## [4.1.0](https://github.com/appium/appium-mac2-driver/compare/v4.0.7...v4.1.0) (2026-08-07)
+
+### Features
+
+* locate WKWebView web elements by DOM id via AXDOMIdentifier (opt-in) ([#405](https://github.com/appium/appium-mac2-driver/issues/405)) ([9f7cf35](https://github.com/appium/appium-mac2-driver/commit/9f7cf3570fef0c8a449dcef038563427807e8cd7))
+
+## [4.0.7](https://github.com/appium/appium-mac2-driver/compare/v4.0.6...v4.0.7) (2026-08-06)
+
+### Miscellaneous Chores
+
+* rename JWProxy to WebDriverProxy ([#409](https://github.com/appium/appium-mac2-driver/issues/409)) ([a503cb4](https://github.com/appium/appium-mac2-driver/commit/a503cb41e2f2bcf8b616cd093571862dd9e8fc89))
+
+## [4.0.6](https://github.com/appium/appium-mac2-driver/compare/v4.0.5...v4.0.6) (2026-08-04)
+
+### Miscellaneous Chores
+
+* **deps:** bump appium-xcode from 6.2.6 to 7.1.0 ([#407](https://github.com/appium/appium-mac2-driver/issues/407)) ([c0afb2e](https://github.com/appium/appium-mac2-driver/commit/c0afb2e8eb07418078d474279e4f9a535240db1a))
+
+## [4.0.5](https://github.com/appium/appium-mac2-driver/compare/v4.0.4...v4.0.5) (2026-07-27)
+
+### Miscellaneous Chores
+
+* Integrate oxc and release configs ([#406](https://github.com/appium/appium-mac2-driver/issues/406)) ([ab72a91](https://github.com/appium/appium-mac2-driver/commit/ab72a91355724f668276d03772a2f47a8a0e6cdf))
+
+## [4.0.4](https://github.com/appium/appium-mac2-driver/compare/v4.0.3...v4.0.4) (2026-07-15)
+
+### Miscellaneous Chores
+
+* **deps:** bump actions/setup-node from 6 to 7 ([#402](https://github.com/appium/appium-mac2-driver/issues/402)) ([d040f78](https://github.com/appium/appium-mac2-driver/commit/d040f7883663c1b64911bcd019236fb338f4a4e8))
+
+## [4.0.3](https://github.com/appium/appium-mac2-driver/compare/v4.0.2...v4.0.3) (2026-07-01)
+
+### Miscellaneous Chores
+
+* downgrade conventional-changelog-conventionalcommits to v9 ([#394](https://github.com/appium/appium-mac2-driver/issues/394)) ([b110f43](https://github.com/appium/appium-mac2-driver/commit/b110f438b920acfd40a25f9f72c3610408ea6647))
+
+## [4.0.2](https://github.com/appium/appium-mac2-driver/compare/v4.0.1...v4.0.2) (2026-06-29)
+
+## [4.0.1](https://github.com/appium/appium-mac2-driver/compare/v4.0.0...v4.0.1) (2026-06-19)
+
+### Miscellaneous Chores
+
+* **deps-dev:** bump @types/node from 25.9.4 to 26.0.0 ([#391](https://github.com/appium/appium-mac2-driver/issues/391)) ([0cc24fd](https://github.com/appium/appium-mac2-driver/commit/0cc24fde67b7a2cddf206660d47afd7d761d038c))
+* **deps:** bump actions/checkout from 6 to 7 ([#392](https://github.com/appium/appium-mac2-driver/issues/392)) ([ba749dc](https://github.com/appium/appium-mac2-driver/commit/ba749dc5e01811e33babacd7f840e873212e0165))
+
+## [4.0.0](https://github.com/appium/appium-mac2-driver/compare/v3.5.0...v4.0.0) (2026-06-15)
+
+### ⚠ BREAKING CHANGES
+
+* The package is now ESM-only. require('appium-mac2-driver') and other CommonJS require() usage will no longer work. Consumers must use ESM import.
+
+### Features
+
+* Migrate package to ESM ([#388](https://github.com/appium/appium-mac2-driver/issues/388)) ([e226446](https://github.com/appium/appium-mac2-driver/commit/e2264460f89cfbe5b454de7ac05aeba155d67b40))
+
+## [3.5.0](https://github.com/appium/appium-mac2-driver/compare/v3.4.3...v3.5.0) (2026-05-15)
+
+### Features
+
+* Add doctor check to verify full disk access permissions ([#385](https://github.com/appium/appium-mac2-driver/issues/385)) ([e58943b](https://github.com/appium/appium-mac2-driver/commit/e58943b985056869bf9c8140f0a718c4dfe819f0))
+
+## [3.4.3](https://github.com/appium/appium-mac2-driver/compare/v3.4.2...v3.4.3) (2026-05-15)
+
+### Miscellaneous Chores
+
+* Avoid excessive logging on server exit ([#386](https://github.com/appium/appium-mac2-driver/issues/386)) ([5a0aaa0](https://github.com/appium/appium-mac2-driver/commit/5a0aaa087c4777418636f904dd8a45471034dd37))
+
+## [3.4.2](https://github.com/appium/appium-mac2-driver/compare/v3.4.1...v3.4.2) (2026-05-13)
+
+### Bug Fixes
+
+* native video broadcast cleanup ([#384](https://github.com/appium/appium-mac2-driver/issues/384)) ([ea81c2f](https://github.com/appium/appium-mac2-driver/commit/ea81c2fd7b5177de2f8d7ae9f157c1ec73c55d3d))
+
+## [3.4.1](https://github.com/appium/appium-mac2-driver/compare/v3.4.0...v3.4.1) (2026-05-13)
+
+### Bug Fixes
+
+* Unhandled error for native video recording ([#383](https://github.com/appium/appium-mac2-driver/issues/383)) ([22a8bff](https://github.com/appium/appium-mac2-driver/commit/22a8bff4efc731b81737fa6d5c36de63582db4f3))
+
+## [3.4.0](https://github.com/appium/appium-mac2-driver/compare/v3.3.4...v3.4.0) (2026-05-09)
+
+### Features
+
+* Ditch bluebird ([#382](https://github.com/appium/appium-mac2-driver/issues/382)) ([da024bd](https://github.com/appium/appium-mac2-driver/commit/da024bd350a18b3cb27788a9d51a90aefc09d5f5))
+
+## [3.3.4](https://github.com/appium/appium-mac2-driver/compare/v3.3.3...v3.3.4) (2026-05-06)
+
+### Miscellaneous Chores
+
+* **deps-dev:** bump sinon from 21.1.2 to 22.0.0 ([#381](https://github.com/appium/appium-mac2-driver/issues/381)) ([82ad104](https://github.com/appium/appium-mac2-driver/commit/82ad1048958ba57f4fe1b56fe336889b1e195c61))
+
+## [3.3.3](https://github.com/appium/appium-mac2-driver/compare/v3.3.2...v3.3.3) (2026-05-06)
+
+### Miscellaneous Chores
+
+* fix lint warnings ([#380](https://github.com/appium/appium-mac2-driver/issues/380)) ([d380f37](https://github.com/appium/appium-mac2-driver/commit/d380f375e9aaf76e80b1163bda4518cfdff18c82))
+
+## [3.3.2](https://github.com/appium/appium-mac2-driver/compare/v3.3.1...v3.3.2) (2026-05-06)
+
+### Miscellaneous Chores
+
+* drop lodash ([#379](https://github.com/appium/appium-mac2-driver/issues/379)) ([9501e03](https://github.com/appium/appium-mac2-driver/commit/9501e030b659bad833f987dff597de8f7f358ad9))
+
+## [3.3.1](https://github.com/appium/appium-mac2-driver/compare/v3.3.0...v3.3.1) (2026-04-15)
+
+### Bug Fixes
+
+* video record API args parsing ([#378](https://github.com/appium/appium-mac2-driver/issues/378)) ([3bafa83](https://github.com/appium/appium-mac2-driver/commit/3bafa83d45d74dc28b81a473f1978655abc0226c))
+
+## [3.3.0](https://github.com/appium/appium-mac2-driver/compare/v3.2.17...v3.3.0) (2026-04-11)
+
+### Features
+
+* Add `macos: performAccessibilityAudit` extension ([#377](https://github.com/appium/appium-mac2-driver/issues/377)) ([6d618ec](https://github.com/appium/appium-mac2-driver/commit/6d618ec7c33d0deea07c080c2ef07624dde1ba4b))
+
+## [3.2.17](https://github.com/appium/appium-mac2-driver/compare/v3.2.16...v3.2.17) (2026-04-10)
+
+### Miscellaneous Chores
+
+* **deps-dev:** bump typescript from 5.9.3 to 6.0.2 ([#376](https://github.com/appium/appium-mac2-driver/issues/376)) ([9e1bf35](https://github.com/appium/appium-mac2-driver/commit/9e1bf354462b05e02dabee06067774bcc48c9156))
+
+## [3.2.16](https://github.com/appium/appium-mac2-driver/compare/v3.2.15...v3.2.16) (2026-02-16)
+
+### Bug Fixes
+
+* format ([#375](https://github.com/appium/appium-mac2-driver/issues/375)) ([7d10435](https://github.com/appium/appium-mac2-driver/commit/7d1043564a16c7ab7793854b206752c2204623dd))
+
+## [3.2.15](https://github.com/appium/appium-mac2-driver/compare/v3.2.14...v3.2.15) (2026-01-28)
+
+### Miscellaneous Chores
+
+* **deps-dev:** bump @appium/eslint-config-appium-ts from 2.0.5 to 3.0.0 ([#374](https://github.com/appium/appium-mac2-driver/issues/374)) ([0be5cc6](https://github.com/appium/appium-mac2-driver/commit/0be5cc6fa7352ee6bb458840a5ff19eff14cb10c))
+
+## [3.2.14](https://github.com/appium/appium-mac2-driver/compare/v3.2.13...v3.2.14) (2026-01-27)
+
+### Miscellaneous Chores
+
+* **deps:** bump asyncbox from 4.1.1 to 6.0.1 ([#373](https://github.com/appium/appium-mac2-driver/issues/373)) ([b52fbd4](https://github.com/appium/appium-mac2-driver/commit/b52fbd45d807d345f7ef4dca672a9b42cf861d5a))
+
+## [3.2.13](https://github.com/appium/appium-mac2-driver/compare/v3.2.12...v3.2.13) (2025-12-22)
+
+### Miscellaneous Chores
+
+* bump teen_process ([#369](https://github.com/appium/appium-mac2-driver/issues/369)) ([ef313f7](https://github.com/appium/appium-mac2-driver/commit/ef313f7b4973ba5f74c792c90bc7a3e3b0fd0eca))
+
+## [3.2.12](https://github.com/appium/appium-mac2-driver/compare/v3.2.11...v3.2.12) (2025-12-19)
+
+### Miscellaneous Chores
+
+* convert remianing js to ts ([#368](https://github.com/appium/appium-mac2-driver/issues/368)) ([ccef9ea](https://github.com/appium/appium-mac2-driver/commit/ccef9ea92a5081fb220167f5a7e7509e6f670a95))
+
+## [3.2.11](https://github.com/appium/appium-mac2-driver/compare/v3.2.10...v3.2.11) (2025-12-18)
+
+### Miscellaneous Chores
+
+* **deps:** bump asyncbox from 3.0.0 to 4.0.1 ([#367](https://github.com/appium/appium-mac2-driver/issues/367)) ([4189a87](https://github.com/appium/appium-mac2-driver/commit/4189a8760f2a63ba8086ea76c81102fab81f770f))
+
+## [3.2.10](https://github.com/appium/appium-mac2-driver/compare/v3.2.9...v3.2.10) (2025-12-13)
+
+### Miscellaneous Chores
+
+* **deps:** remove source-map-support ([#366](https://github.com/appium/appium-mac2-driver/issues/366)) ([c86daf8](https://github.com/appium/appium-mac2-driver/commit/c86daf865764b70c5ce08f5a47fd74c171dbfec9))
+
+## [3.2.9](https://github.com/appium/appium-mac2-driver/compare/v3.2.8...v3.2.9) (2025-12-11)
+
+### Miscellaneous Chores
+
+* **deps-dev:** bump @types/node from 24.10.3 to 25.0.0 ([#365](https://github.com/appium/appium-mac2-driver/issues/365)) ([5524282](https://github.com/appium/appium-mac2-driver/commit/55242822dd3c94e9bfaf432d6ed0044589d00d22))
+
+## [3.2.8](https://github.com/appium/appium-mac2-driver/compare/v3.2.7...v3.2.8) (2025-11-29)
+
+### Miscellaneous Chores
+
+* **deps-dev:** bump chai from 5.3.3 to 6.2.1 ([#360](https://github.com/appium/appium-mac2-driver/issues/360)) ([3d3f75e](https://github.com/appium/appium-mac2-driver/commit/3d3f75e084a13eee8889bb3c8d89a42aa16acc29))
+* **deps-dev:** bump mocha from 10.8.2 to 11.7.5 ([#362](https://github.com/appium/appium-mac2-driver/issues/362)) ([097c8e5](https://github.com/appium/appium-mac2-driver/commit/097c8e5cac8fc08dc178a3092393c97f697db04b))
+* **deps:** bump actions/checkout from 2 to 6 ([#357](https://github.com/appium/appium-mac2-driver/issues/357)) ([5bff976](https://github.com/appium/appium-mac2-driver/commit/5bff9764034c73ba0bcc23fcf9abd5de8361a41e))
+
+## [3.2.7](https://github.com/appium/appium-mac2-driver/compare/v3.2.6...v3.2.7) (2025-11-29)
+
+### Miscellaneous Chores
+
+* **deps-dev:** bump @types/node from 20.19.25 to 24.10.1 ([#359](https://github.com/appium/appium-mac2-driver/issues/359)) ([3910da3](https://github.com/appium/appium-mac2-driver/commit/3910da3ecc999d306c9da8951cb0aaf20b77e738))
+* **deps-dev:** bump conventional-changelog-conventionalcommits ([#361](https://github.com/appium/appium-mac2-driver/issues/361)) ([7366476](https://github.com/appium/appium-mac2-driver/commit/7366476a81feb0866cb6b3880adbb39a1408fcdd))
+* **deps-dev:** bump sinon from 17.0.2 to 21.0.0 ([#363](https://github.com/appium/appium-mac2-driver/issues/363)) ([41c9ba6](https://github.com/appium/appium-mac2-driver/commit/41c9ba6625109ce29ed0561ec8c94b6d620fd98e))
+* **deps:** bump actions/setup-node from 3 to 6 ([#358](https://github.com/appium/appium-mac2-driver/issues/358)) ([bd8f310](https://github.com/appium/appium-mac2-driver/commit/bd8f310d1dca643a25f5e46581492aa08380bb7e))
+
+## <small>3.2.6 (2025-11-15)</small>
+
+* chore: add index.d.ts (#355) ([86d5ecd](https://github.com/appium/appium-mac2-driver/commit/86d5ecd)), closes [#355](https://github.com/appium/appium-mac2-driver/issues/355)
+
+## <small>3.2.5 (2025-11-15)</small>
+
+* chore: publish via trusted publisher (#354) ([31fc388](https://github.com/appium/appium-mac2-driver/commit/31fc388)), closes [#354](https://github.com/appium/appium-mac2-driver/issues/354)
+
+## [3.2.4](https://github.com/appium/appium-mac2-driver/compare/v3.2.3...v3.2.4) (2025-11-15)
+
+
+### Miscellaneous Chores
+
+* Migrate the rest of driver commands to typescript ([#353](https://github.com/appium/appium-mac2-driver/issues/353)) ([760ae72](https://github.com/appium/appium-mac2-driver/commit/760ae72b7c76d62c52c1a190f44854c70b2190a5))
+
+## [3.2.3](https://github.com/appium/appium-mac2-driver/compare/v3.2.2...v3.2.3) (2025-11-15)
+
+
+### Miscellaneous Chores
+
+* Migrate doctor checks to typescript ([#351](https://github.com/appium/appium-mac2-driver/issues/351)) ([66057a4](https://github.com/appium/appium-mac2-driver/commit/66057a41612d5ac71cfa10a04da1eea4fddbdc17))
+* Migrate logger and utils to typescipt ([#352](https://github.com/appium/appium-mac2-driver/issues/352)) ([9a51427](https://github.com/appium/appium-mac2-driver/commit/9a514271f1169ff29b878b7ea53b330bed5ab3c5))
+
+## [3.2.2](https://github.com/appium/appium-mac2-driver/compare/v3.2.1...v3.2.2) (2025-11-14)
+
+
+### Miscellaneous Chores
+
+* Migrate driver.js to typescript ([#350](https://github.com/appium/appium-mac2-driver/issues/350)) ([e1b351f](https://github.com/appium/appium-mac2-driver/commit/e1b351f05de0c48d2c67bfaff22f04193e699943))
+
+## [3.2.1](https://github.com/appium/appium-mac2-driver/compare/v3.2.0...v3.2.1) (2025-11-12)
+
+
+### Miscellaneous Chores
+
+* Port lib/wda-mac.js to Typescript ([#348](https://github.com/appium/appium-mac2-driver/issues/348)) ([0a5a78a](https://github.com/appium/appium-mac2-driver/commit/0a5a78ac0e615b5af30da1128a9ac83b007d324d))
+
+## [3.2.0](https://github.com/appium/appium-mac2-driver/compare/v3.1.0...v3.2.0) (2025-11-11)
+
+
+### Features
+
+* Add a setting that allows to fetch full element text ([#347](https://github.com/appium/appium-mac2-driver/issues/347)) ([a8b9e7e](https://github.com/appium/appium-mac2-driver/commit/a8b9e7ee1c0b576c04eaafb8af0d8649330ffc3b))
+
+## [3.1.0](https://github.com/appium/appium-mac2-driver/compare/v3.0.1...v3.1.0) (2025-10-01)
+
+
+### Features
+
+* Add clipboard support ([#346](https://github.com/appium/appium-mac2-driver/issues/346)) ([a3652fd](https://github.com/appium/appium-mac2-driver/commit/a3652fd2e29c68a30f677200ad8a2dd9148898d8))
+
+## [3.0.1](https://github.com/appium/appium-mac2-driver/compare/v3.0.0...v3.0.1) (2025-09-28)
+
+
+### Miscellaneous Chores
+
+* fix typos ([#344](https://github.com/appium/appium-mac2-driver/issues/344)) ([3687efa](https://github.com/appium/appium-mac2-driver/commit/3687efa3b43c83e2ec2a3f1414c6fa3b7f7da5c0))
+
+## [3.0.0](https://github.com/appium/appium-mac2-driver/compare/v2.2.2...v3.0.0) (2025-08-17)
+
+
+### ⚠ BREAKING CHANGES
+
+* Required Node.js version has been bumped to ^20.19.0 || ^22.12.0 || >=24.0.0
+* Required npm version has been bumped to >=10
+* Required Appium server version has been bumped to >=3.0.0-rc.2
+
+### Features
+
+* Update server compatibility ([#342](https://github.com/appium/appium-mac2-driver/issues/342)) ([7aa4858](https://github.com/appium/appium-mac2-driver/commit/7aa4858f61d44adbcf65dbdd888064d3980128bd))
+
+## [2.2.2](https://github.com/appium/appium-mac2-driver/compare/v2.2.1...v2.2.2) (2025-02-21)
+
+
+### Bug Fixes
+
+* Tune session startup ([#335](https://github.com/appium/appium-mac2-driver/issues/335)) ([7dbdbe8](https://github.com/appium/appium-mac2-driver/commit/7dbdbe8dccb74d337c2d9f5381c326803d9d61a4))
+
+## [2.2.1](https://github.com/appium/appium-mac2-driver/compare/v2.2.0...v2.2.1) (2025-02-21)
+
+
+### Bug Fixes
+
+* Accept reqBasePath proxy option ([#334](https://github.com/appium/appium-mac2-driver/issues/334)) ([52585cc](https://github.com/appium/appium-mac2-driver/commit/52585cc32558d40771a3dab17e975c9712f32def))
+
+## [2.2.0](https://github.com/appium/appium-mac2-driver/compare/v2.1.1...v2.2.0) (2025-02-11)
+
+
+### Features
+
+* Publish native video chunks over bidi ([#333](https://github.com/appium/appium-mac2-driver/issues/333)) ([6cf4f6d](https://github.com/appium/appium-mac2-driver/commit/6cf4f6d341798290e8416120de2ac93e1263f051))
+
+## [2.1.1](https://github.com/appium/appium-mac2-driver/compare/v2.1.0...v2.1.1) (2025-02-08)
+
+
+### Miscellaneous Chores
+
+* Update the documentation for the `macos: stopNativeScreenRecording` API ([#331](https://github.com/appium/appium-mac2-driver/issues/331)) ([612b0a0](https://github.com/appium/appium-mac2-driver/commit/612b0a04814fdebd4ec910ad0691aed460251d47))
+
+## [2.1.0](https://github.com/appium/appium-mac2-driver/compare/v2.0.0...v2.1.0) (2025-02-07)
+
+
+### Features
+
+* Add support for native screen recording ([#330](https://github.com/appium/appium-mac2-driver/issues/330)) ([d2f5b25](https://github.com/appium/appium-mac2-driver/commit/d2f5b2564f4b25fefbcce60d77718031d438bf60))
+
+## [2.0.0](https://github.com/appium/appium-mac2-driver/compare/v1.20.5...v2.0.0) (2025-02-06)
+
+
+### ⚠ BREAKING CHANGES
+
+* Arguments of the following driver methods were changed:
+- macosSetValue
+- macosClick
+- macosScroll
+- macosSwipe
+- macosRightClick
+- macosHover
+- macosClickAndDrag
+- macosClickAndDragAndHold
+- macosKeys
+- macosTap
+- doubleTap
+- macosPressAndHold
+- macosPressAndDrag
+- macosPressAndDragAndHold
+- macosSource
+- macosDeepLink
+- macosExecAppleScript
+- macosScreenshots
+- macosLaunchApp
+- macosActivateApp
+- macosTerminateApp
+- macosQueryAppState
+- startRecordingScreen
+- stopRecordingScreen
+
+### Features
+
+* Add support of executeMethodMap ([#327](https://github.com/appium/appium-mac2-driver/issues/327)) ([a6c9a6b](https://github.com/appium/appium-mac2-driver/commit/a6c9a6b0ae029bcbfebf027103eb9bc20622bf75))
+
+## [1.20.5](https://github.com/appium/appium-mac2-driver/compare/v1.20.4...v1.20.5) (2025-01-08)
+
+
+### Miscellaneous Chores
+
+* bump eslint-config-appium-ts ([#326](https://github.com/appium/appium-mac2-driver/issues/326)) ([2c4ec3d](https://github.com/appium/appium-mac2-driver/commit/2c4ec3d850d1cee5ce83240b690c9e41839fd996))
+
+## [1.20.4](https://github.com/appium/appium-mac2-driver/compare/v1.20.3...v1.20.4) (2024-12-12)
+
+
+### Miscellaneous Chores
+
+* Replace occurrences of the deprecated errorAndThrow API ([#322](https://github.com/appium/appium-mac2-driver/issues/322)) ([11f8514](https://github.com/appium/appium-mac2-driver/commit/11f85149b18e752620b3f68a07824417ed0939c5))
+
+## [1.20.3](https://github.com/appium/appium-mac2-driver/compare/v1.20.2...v1.20.3) (2024-12-01)
+
+
+### Miscellaneous Chores
+
+* Update deprecated method name ([#321](https://github.com/appium/appium-mac2-driver/issues/321)) ([dc577ec](https://github.com/appium/appium-mac2-driver/commit/dc577ec9d1022bf80c5e225296f117b5a490a1cb))
+
+## [1.20.2](https://github.com/appium/appium-mac2-driver/compare/v1.20.1...v1.20.2) (2024-10-28)
+
+
+### Bug Fixes
+
+* Support non-strict XPath queries ([#318](https://github.com/appium/appium-mac2-driver/issues/318)) ([f596a61](https://github.com/appium/appium-mac2-driver/commit/f596a6171440004089e2a890511e523c4d72bf2e))
+
+## [1.20.1](https://github.com/appium/appium-mac2-driver/compare/v1.20.0...v1.20.1) (2024-10-16)
+
+
+### Miscellaneous Chores
+
+* Apply format to the XML source ([#316](https://github.com/appium/appium-mac2-driver/issues/316)) ([a7f973b](https://github.com/appium/appium-mac2-driver/commit/a7f973baa9a401e3fbe07d99b16b0d624fd42005))
+
+## [1.20.0](https://github.com/appium/appium-mac2-driver/compare/v1.19.1...v1.20.0) (2024-10-13)
+
+
+### Features
+
+* Switch the XML-related stuff to use NSXMLDocument ([#314](https://github.com/appium/appium-mac2-driver/issues/314)) ([5ef3581](https://github.com/appium/appium-mac2-driver/commit/5ef35813eb1c66b5e9231f70f1dfb8a2c89e0642))
+
+## [1.19.1](https://github.com/appium/appium-mac2-driver/compare/v1.19.0...v1.19.1) (2024-08-02)
+
+
+### Bug Fixes
+
+* Update script import ([22ee3f5](https://github.com/appium/appium-mac2-driver/commit/22ee3f5613022e8a0f4fac3b81510308cb275be0))
+
+## [1.19.0](https://github.com/appium/appium-mac2-driver/compare/v1.18.2...v1.19.0) (2024-08-01)
+
+
+### Features
+
+* Add open-wda script ([#312](https://github.com/appium/appium-mac2-driver/issues/312)) ([f5cfa81](https://github.com/appium/appium-mac2-driver/commit/f5cfa8104b11d569a19122482543e90dfa2e4735))
+
+## [1.18.2](https://github.com/appium/appium-mac2-driver/compare/v1.18.1...v1.18.2) (2024-07-21)
+
+
+### Bug Fixes
+
+* do nothing for an empty array in w3c actions ([#308](https://github.com/appium/appium-mac2-driver/issues/308)) ([a1aa636](https://github.com/appium/appium-mac2-driver/commit/a1aa636d8856c97b8edb1c091b3919a45a6d6716))
+
+## [1.18.1](https://github.com/appium/appium-mac2-driver/compare/v1.18.0...v1.18.1) (2024-07-20)
+
+
+### Bug Fixes
+
+* Add a test for the keyboard input and perform related fixes ([#311](https://github.com/appium/appium-mac2-driver/issues/311)) ([af826e8](https://github.com/appium/appium-mac2-driver/commit/af826e83f60dd278f44042e2ef36b81390f3ef19))
+
+## [1.18.0](https://github.com/appium/appium-mac2-driver/compare/v1.17.5...v1.18.0) (2024-07-18)
+
+
+### Features
+
+* Add support of W3C key actions ([#309](https://github.com/appium/appium-mac2-driver/issues/309)) ([f83ff9f](https://github.com/appium/appium-mac2-driver/commit/f83ff9f41c972b64b45c88bd5a66d441d307267d))
+
+## [1.17.5](https://github.com/appium/appium-mac2-driver/compare/v1.17.4...v1.17.5) (2024-07-09)
+
+
+### Miscellaneous Chores
+
+* Remove extra import ([62f887b](https://github.com/appium/appium-mac2-driver/commit/62f887b30f086f1a5df6bf1168ba223d72dd3287))
+
+## [1.17.4](https://github.com/appium/appium-mac2-driver/compare/v1.17.3...v1.17.4) (2024-06-23)
+
+
+### Miscellaneous Chores
+
+* Bump chai and chai-as-promised ([#303](https://github.com/appium/appium-mac2-driver/issues/303)) ([e4090eb](https://github.com/appium/appium-mac2-driver/commit/e4090eb01d8a93acfc557fcdd4a8862659a9bcf5))
+
+## [1.17.3](https://github.com/appium/appium-mac2-driver/compare/v1.17.2...v1.17.3) (2024-05-16)
+
+
+### Miscellaneous Chores
+
+* Update dev dependencies ([5fa1580](https://github.com/appium/appium-mac2-driver/commit/5fa1580d7218fdbd1a93b8050e9f282f160b6f0a))
+
+## [1.17.2](https://github.com/appium/appium-mac2-driver/compare/v1.17.1...v1.17.2) (2024-05-08)
+
+
+### Bug Fixes
+
+* Optional Automation Mode user authentication check ([339c5c9](https://github.com/appium/appium-mac2-driver/commit/339c5c9e55c47f671ddb34d0e351fb70e8801bbb))
+
+## [1.17.1](https://github.com/appium/appium-mac2-driver/compare/v1.17.0...v1.17.1) (2024-05-08)
+
+
+### Bug Fixes
+
+* Typing issue ([9a0804d](https://github.com/appium/appium-mac2-driver/commit/9a0804d2432262c2df0f4bf82cd9b60388c96825))
+
+## [1.17.0](https://github.com/appium/appium-mac2-driver/compare/v1.16.0...v1.17.0) (2024-04-21)
+
+
+### Features
+
+* Improve the typing system ([#298](https://github.com/appium/appium-mac2-driver/issues/298)) ([20bdd85](https://github.com/appium/appium-mac2-driver/commit/20bdd85de5b801098a23b1f95dd46f72d97a9506))
+
+## [1.16.0](https://github.com/appium/appium-mac2-driver/compare/v1.15.0...v1.16.0) (2024-04-20)
+
+
+### Features
+
+* Add initialDeeplinkUrl capability ([#297](https://github.com/appium/appium-mac2-driver/issues/297)) ([6dee2e8](https://github.com/appium/appium-mac2-driver/commit/6dee2e87c310d23b1a2819b6633d63ee249477d3))
+
+## [1.15.0](https://github.com/appium/appium-mac2-driver/compare/v1.14.0...v1.15.0) (2024-04-19)
+
+
+### Features
+
+* Add support of deep links ([#296](https://github.com/appium/appium-mac2-driver/issues/296)) ([4076190](https://github.com/appium/appium-mac2-driver/commit/40761902f78e57494d60be94d12736dc20b8b391))
+
+## [1.14.0](https://github.com/appium/appium-mac2-driver/compare/v1.13.0...v1.14.0) (2024-04-18)
+
+
+### Features
+
+* Add appTimeZone capability ([#295](https://github.com/appium/appium-mac2-driver/issues/295)) ([4e5c45c](https://github.com/appium/appium-mac2-driver/commit/4e5c45cf4e300cf086c67cd206a2993dd5cfc687))
+
+## [1.13.0](https://github.com/appium/appium-mac2-driver/compare/v1.12.0...v1.13.0) (2024-04-18)
+
+
+### Features
+
+* Use public API to run application using the path to it ([#294](https://github.com/appium/appium-mac2-driver/issues/294)) ([b8b0ce0](https://github.com/appium/appium-mac2-driver/commit/b8b0ce09ae899ad1a36651754560ec804befd7d8))
+
+## [1.12.0](https://github.com/appium/appium-mac2-driver/compare/v1.11.3...v1.12.0) (2024-03-19)
+
+
+### Features
+
+* Make native screen recording and screenshots configurable ([#291](https://github.com/appium/appium-mac2-driver/issues/291)) ([9f594c4](https://github.com/appium/appium-mac2-driver/commit/9f594c4ac494f9020e937d209eba0ea7c3f95c59))
+
+## [1.11.3](https://github.com/appium/appium-mac2-driver/compare/v1.11.2...v1.11.3) (2024-03-07)
+
+
+### Miscellaneous Chores
+
+* bump typescript ([4d9c4f1](https://github.com/appium/appium-mac2-driver/commit/4d9c4f1b0aac242a0b639bcaeca110b7adf2ee20))
+
+## [1.11.2](https://github.com/appium/appium-mac2-driver/compare/v1.11.1...v1.11.2) (2024-03-07)
+
+
+### Miscellaneous Chores
+
+* **deps-dev:** bump typescript from 5.2.2 to 5.4.2 ([#288](https://github.com/appium/appium-mac2-driver/issues/288)) ([a5534c0](https://github.com/appium/appium-mac2-driver/commit/a5534c0e43950f81c27c43badafb045e2400ce0a))
+
+## [1.11.1](https://github.com/appium/appium-mac2-driver/compare/v1.11.0...v1.11.1) (2024-03-06)
+
+
+### Miscellaneous Chores
+
+* Add an explicit getWindowRect for the images plugin ([#287](https://github.com/appium/appium-mac2-driver/issues/287)) ([7f9ea99](https://github.com/appium/appium-mac2-driver/commit/7f9ea990a3ab6999756b6430fb87a7d7e02abe07))
+
+## [1.11.0](https://github.com/appium/appium-mac2-driver/compare/v1.10.2...v1.11.0) (2024-02-19)
+
+
+### Features
+
+* Add appLocale capability ([#280](https://github.com/appium/appium-mac2-driver/issues/280)) ([3d65b66](https://github.com/appium/appium-mac2-driver/commit/3d65b66a3b11532043ffe407508edd21569f5817))
+
+## [1.10.2](https://github.com/appium/appium-mac2-driver/compare/v1.10.1...v1.10.2) (2024-01-16)
+
+
+### Miscellaneous Chores
+
+* **deps-dev:** bump semantic-release from 22.0.12 to 23.0.0 ([#271](https://github.com/appium/appium-mac2-driver/issues/271)) ([ef0d2dd](https://github.com/appium/appium-mac2-driver/commit/ef0d2ddcbd1f36b7dd98a7df95c2aadf2c5fd120))
+
+## [1.10.1](https://github.com/appium/appium-mac2-driver/compare/v1.10.0...v1.10.1) (2024-01-15)
+
+
+### Bug Fixes
+
+* Add 'path' argument to app management methods ([#272](https://github.com/appium/appium-mac2-driver/issues/272)) ([bece139](https://github.com/appium/appium-mac2-driver/commit/bece139378448d9a438b54e91f5a73045484625a))
+
+## [1.10.0](https://github.com/appium/appium-mac2-driver/compare/v1.9.0...v1.10.0) (2024-01-12)
+
+
+### Features
+
+* Add a possibility to work with absolute app paths ([#270](https://github.com/appium/appium-mac2-driver/issues/270)) ([696bbf8](https://github.com/appium/appium-mac2-driver/commit/696bbf830b1767d4e016f6ddbf8b0d9748df3d07))
+
+## [1.9.0](https://github.com/appium/appium-mac2-driver/compare/v1.8.9...v1.9.0) (2024-01-08)
+
+
+### Features
+
+* Add doctor checks ([#266](https://github.com/appium/appium-mac2-driver/issues/266)) ([001597a](https://github.com/appium/appium-mac2-driver/commit/001597a39ad5a1b9a51d7dec5f161d0c6f8b9460))
+
+## [1.8.9](https://github.com/appium/appium-mac2-driver/compare/v1.8.8...v1.8.9) (2023-12-02)
+
+
+### Miscellaneous Chores
+
+* update publish.js.yml ([#259](https://github.com/appium/appium-mac2-driver/issues/259)) ([c9d5daa](https://github.com/appium/appium-mac2-driver/commit/c9d5daab3579c1f61e3f63dccccfd484b8989bd8))
+
+## [1.8.8](https://github.com/appium/appium-mac2-driver/compare/v1.8.7...v1.8.8) (2023-11-08)
+
+
+### Miscellaneous Chores
+
+* use omit to prune dev and peer ([#254](https://github.com/appium/appium-mac2-driver/issues/254)) ([0dc2323](https://github.com/appium/appium-mac2-driver/commit/0dc23234ec2d158284152efc5ec85eb7e3ac0baa))
+
+## [1.8.7](https://github.com/appium/appium-mac2-driver/compare/v1.8.6...v1.8.7) (2023-11-06)
+
+
+### Miscellaneous Chores
+
+* **deps-dev:** bump @types/sinon from 10.0.20 to 17.0.0 ([#253](https://github.com/appium/appium-mac2-driver/issues/253)) ([79cf763](https://github.com/appium/appium-mac2-driver/commit/79cf7635681515b442b3fc4fc45cd3b7766ddd20))
+
+## [1.8.6](https://github.com/appium/appium-mac2-driver/compare/v1.8.5...v1.8.6) (2023-11-01)
+
+
+### Miscellaneous Chores
+
+* **deps:** bump asyncbox from 2.9.4 to 3.0.0 ([#252](https://github.com/appium/appium-mac2-driver/issues/252)) ([c411c6b](https://github.com/appium/appium-mac2-driver/commit/c411c6bec2842d9846bf93c712f1002e275ca2ac))
+
+## [1.8.5](https://github.com/appium/appium-mac2-driver/compare/v1.8.4...v1.8.5) (2023-10-25)
+
+
+### Miscellaneous Chores
+
+* **deps-dev:** bump @typescript-eslint/eslint-plugin from 5.62.0 to 6.9.0 ([#250](https://github.com/appium/appium-mac2-driver/issues/250)) ([9421419](https://github.com/appium/appium-mac2-driver/commit/9421419772bc3ebcb924735f05f158ca3b21ed9e))
+
+## [1.8.4](https://github.com/appium/appium-mac2-driver/compare/v1.8.3...v1.8.4) (2023-10-24)
+
+
+### Miscellaneous Chores
+
+* **deps-dev:** bump sinon from 16.1.3 to 17.0.0 ([#249](https://github.com/appium/appium-mac2-driver/issues/249)) ([a71ce62](https://github.com/appium/appium-mac2-driver/commit/a71ce6232d5ad51126aa64d11ca51e0616e6abf7))
+
+## [1.8.3](https://github.com/appium/appium-mac2-driver/compare/v1.8.2...v1.8.3) (2023-10-19)
+
+
+### Miscellaneous Chores
+
+* **deps-dev:** bump @types/teen_process from 2.0.1 to 2.0.2 ([#247](https://github.com/appium/appium-mac2-driver/issues/247)) ([2aaf7c7](https://github.com/appium/appium-mac2-driver/commit/2aaf7c744264ab1c8632eb1651452f35cf4d0c00))
+* **deps-dev:** bump eslint-config-prettier from 8.10.0 to 9.0.0 ([#246](https://github.com/appium/appium-mac2-driver/issues/246)) ([c41eb9d](https://github.com/appium/appium-mac2-driver/commit/c41eb9dd44cc95bbcee08995290da574808e76dd))
+* **deps-dev:** bump lint-staged from 14.0.1 to 15.0.2 ([#248](https://github.com/appium/appium-mac2-driver/issues/248)) ([1e0295d](https://github.com/appium/appium-mac2-driver/commit/1e0295da20b98f62c83f757d88d6f443cc91d0e3))
+* **deps-dev:** bump semantic-release from 21.1.2 to 22.0.5 ([#238](https://github.com/appium/appium-mac2-driver/issues/238)) ([28c8314](https://github.com/appium/appium-mac2-driver/commit/28c8314fe509d14a6b3fcbc3509d144f00204b8c))
+* Use latest teen_process types ([b52f482](https://github.com/appium/appium-mac2-driver/commit/b52f482a4b19cc0ea82487cb6fa6264bbec683a1))
+* Use latest types ([2236825](https://github.com/appium/appium-mac2-driver/commit/2236825b68d0973891739e121c0f40c0ec2ebc9a))
+
+## [1.8.2](https://github.com/appium/appium-mac2-driver/compare/v1.8.1...v1.8.2) (2023-09-24)
+
+
+### Bug Fixes
+
+* release package ([#237](https://github.com/appium/appium-mac2-driver/issues/237)) ([dac6dd7](https://github.com/appium/appium-mac2-driver/commit/dac6dd7b644e30455693d83a0f579d3b32723c9f))
+
+## [1.8.1](https://github.com/appium/appium-mac2-driver/compare/v1.8.0...v1.8.1) (2023-09-14)
+
+
+### Miscellaneous Chores
+
+* **deps-dev:** bump @types/teen_process from 2.0.0 to 2.0.1 ([#232](https://github.com/appium/appium-mac2-driver/issues/232)) ([206c07e](https://github.com/appium/appium-mac2-driver/commit/206c07e3401b64a47fa1228ff37b2216f4967f37))
+* **deps-dev:** bump sinon from 15.2.0 to 16.0.0 ([#233](https://github.com/appium/appium-mac2-driver/issues/233)) ([5d00d84](https://github.com/appium/appium-mac2-driver/commit/5d00d84bdcbcc3d5ad2404941b4dd3ab1cb8622e))
+
+## [1.8.0](https://github.com/appium/appium-mac2-driver/compare/v1.7.4...v1.8.0) (2023-09-08)
+
+
+### Features
+
+* add appPath to handleCreateSession ([#230](https://github.com/appium/appium-mac2-driver/issues/230)) ([7b7cc17](https://github.com/appium/appium-mac2-driver/commit/7b7cc17f267e909f38fd210dea6652281679d662))
+
+## [1.7.4](https://github.com/appium/appium-mac2-driver/compare/v1.7.3...v1.7.4) (2023-08-28)
+
+
+### Miscellaneous Chores
+
+* **deps-dev:** bump conventional-changelog-conventionalcommits ([#226](https://github.com/appium/appium-mac2-driver/issues/226)) ([6417dc6](https://github.com/appium/appium-mac2-driver/commit/6417dc6b24461a0f83e2e9ae156f323d999f767b))
+
+## [1.7.3](https://github.com/appium/appium-mac2-driver/compare/v1.7.2...v1.7.3) (2023-08-25)
+
+
+### Miscellaneous Chores
+
+* **deps-dev:** bump semantic-release from 20.1.3 to 21.1.0 ([#225](https://github.com/appium/appium-mac2-driver/issues/225)) ([e54345a](https://github.com/appium/appium-mac2-driver/commit/e54345ad2314981e72ed9387472b65a3b5f081a9))
+
+## [1.7.2](https://github.com/appium/appium-mac2-driver/compare/v1.7.1...v1.7.2) (2023-08-17)
+
+
+### Miscellaneous Chores
+
+* remove obsolete babel stuff ([5e6951a](https://github.com/appium/appium-mac2-driver/commit/5e6951a3fee694f59ab68de30a6d1ea076333f9e))
+
+## [1.7.1](https://github.com/appium/appium-mac2-driver/compare/v1.7.0...v1.7.1) (2023-08-14)
+
+
+### Miscellaneous Chores
+
+* **deps-dev:** bump lint-staged from 13.3.0 to 14.0.0 ([#217](https://github.com/appium/appium-mac2-driver/issues/217)) ([7c02fb6](https://github.com/appium/appium-mac2-driver/commit/7c02fb618471c221d98f77b4c187d6a98895428b))
+
+## [1.7.0](https://github.com/appium/appium-mac2-driver/compare/v1.6.3...v1.7.0) (2023-08-12)
+
+
+### Features
+
+* Switch babel to typescript ([#216](https://github.com/appium/appium-mac2-driver/issues/216)) ([c908503](https://github.com/appium/appium-mac2-driver/commit/c9085034ebe57ee743acb18da5236af4563873f7))
+
+## [1.6.3](https://github.com/appium/appium-mac2-driver/compare/v1.6.2...v1.6.3) (2023-06-16)
+
+
+### Bug Fixes
+
+* Update strongbox API name ([8da1c9f](https://github.com/appium/appium-mac2-driver/commit/8da1c9f2af852f927efdb80037cd2f399aaadbbb))
+
+## [1.6.2](https://github.com/appium/appium-mac2-driver/compare/v1.6.1...v1.6.2) (2023-06-07)
+
+
+### Miscellaneous Chores
+
+* **deps-dev:** bump conventional-changelog-conventionalcommits ([#210](https://github.com/appium/appium-mac2-driver/issues/210)) ([27f8735](https://github.com/appium/appium-mac2-driver/commit/27f8735b347e3703630062eb474272af87e5ab30))
+
+## [1.6.1](https://github.com/appium/appium-mac2-driver/compare/v1.6.0...v1.6.1) (2023-06-05)
+
+
+### Bug Fixes
+
+* Use module log instance ([8571666](https://github.com/appium/appium-mac2-driver/commit/8571666e217253209998dae7e552e63114769fd2))
+
+## [1.6.0](https://github.com/appium/appium-mac2-driver/compare/v1.5.3...v1.6.0) (2023-06-02)
+
+
+### Features
+
+* Use strongbox to persist last upgrade version ([#207](https://github.com/appium/appium-mac2-driver/issues/207)) ([11367c5](https://github.com/appium/appium-mac2-driver/commit/11367c59d7881b8775efaa12b05328887478ae93))
+
+## [1.5.3](https://github.com/appium/appium-mac2-driver/compare/v1.5.2...v1.5.3) (2023-02-21)
+
+
+### Miscellaneous Chores
+
+* Tune test interruption patching logic ([#194](https://github.com/appium/appium-mac2-driver/issues/194)) ([febe396](https://github.com/appium/appium-mac2-driver/commit/febe396a56389b7870f806b1c78516a393df6000))
+
+## [1.5.2](https://github.com/appium/appium-mac2-driver/compare/v1.5.1...v1.5.2) (2023-02-20)
+
+
+### Bug Fixes
+
+* Init mouse cursor at the proper starting position ([#192](https://github.com/appium/appium-mac2-driver/issues/192)) ([67d10e0](https://github.com/appium/appium-mac2-driver/commit/67d10e09a9bd4f88560bb05b953ff7988f005289))
+
+
+### Miscellaneous Chores
+
+* Add dummy implementation of releaseActions API ([#191](https://github.com/appium/appium-mac2-driver/issues/191)) ([45f7956](https://github.com/appium/appium-mac2-driver/commit/45f79565ee4afa1e0ac2faabe30454420800f7c9))
+
+## [1.5.1](https://github.com/appium/appium-mac2-driver/compare/v1.5.0...v1.5.1) (2023-01-17)
+
+
+### Miscellaneous Chores
+
+* **deps-dev:** bump semantic-release from 19.0.5 to 20.0.2 ([#181](https://github.com/appium/appium-mac2-driver/issues/181)) ([aef54be](https://github.com/appium/appium-mac2-driver/commit/aef54be413cc330ab1f0396ba29244d3aa250896))
+
+## [1.5.0](https://github.com/appium/appium-mac2-driver/compare/v1.4.9...v1.5.0) (2023-01-12)
+
+
+### Features
+
+* Add newMethodMap to the driver ([#183](https://github.com/appium/appium-mac2-driver/issues/183)) ([a432f7f](https://github.com/appium/appium-mac2-driver/commit/a432f7ffca18540ef24bf478b2a4b348a4d27a7a))
+
+## [1.4.9](https://github.com/appium/appium-mac2-driver/compare/v1.4.8...v1.4.9) (2023-01-12)
+
+
+### Bug Fixes
+
+* Proxy getStatus call to WDA ([#182](https://github.com/appium/appium-mac2-driver/issues/182)) ([43e310d](https://github.com/appium/appium-mac2-driver/commit/43e310da73a0940bec5bc2749a85e498e289031c))
+
+## [1.4.8](https://github.com/appium/appium-mac2-driver/compare/v1.4.7...v1.4.8) (2022-12-03)
+
+
+### Miscellaneous Chores
+
+* **deps-dev:** bump webdriverio from 7.27.0 to 8.0.2 ([#176](https://github.com/appium/appium-mac2-driver/issues/176)) ([f7565ca](https://github.com/appium/appium-mac2-driver/commit/f7565ca5e0d7aac8eddbbcf75ca86d90365aeaf2))
+
+## [1.4.7](https://github.com/appium/appium-mac2-driver/compare/v1.4.6...v1.4.7) (2022-12-01)
+
+
+### Miscellaneous Chores
+
+* update releaserc ([#175](https://github.com/appium/appium-mac2-driver/issues/175)) ([4ca7259](https://github.com/appium/appium-mac2-driver/commit/4ca72598913be1bb0c5852521530a99838d37f97))
+
+## [1.4.6](https://github.com/appium/appium-mac2-driver/compare/v1.4.5...v1.4.6) (2022-11-29)
+
+## [1.4.5](https://github.com/appium/appium-mac2-driver/compare/v1.4.4...v1.4.5) (2022-11-06)

@@ -49,3 +49,4 @@ CODE_REVIEW_FINDINGS_*.md
 
 # GPL 对应源码 tarball：打包时取回，不进仓库（见 Licenses/NOTICE 第 1 项）
 Licenses/source/
+.workbuddy/

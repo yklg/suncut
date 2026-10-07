@@ -66,7 +66,7 @@ if [ $? -ne 0 ] || [ -z "${expected_names//[[:space:]]/}" ]; then
     exit 1
 fi
 expected_count=$(echo "$expected_names" | wc -w | tr -d ' ')
-echo "目录真源读到 ${expected_count} 个工具（$CATALOG）"
+echo "目录真源读到 ${expected_count} 个工具（${CATALOG}）"
 
 echo "== initialize =="
 call '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"smoke","version":"0"}}}' | python3 -m json.tool
@@ -117,7 +117,7 @@ print(body.get("id") or body.get("project_id") or "")')
         echo "FAIL 建项目没拿到 id：${created:0:200}"
         fail=1
     else
-        echo "  已建 $pid，回查一次字段齐全性"
+        echo "  已建 ${pid}，回查一次字段齐全性"
         call "{\"jsonrpc\":\"2.0\",\"id\":5,\"method\":\"tools/call\",\"params\":{\"name\":\"get_project\",\"arguments\":{\"project_id\":\"$pid\"}}}" \
             | python3 -c '
 import json, sys

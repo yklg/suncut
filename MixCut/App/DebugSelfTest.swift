@@ -28,6 +28,7 @@ enum DebugSelfTest {
         if env["MIXCUT_SELFTEST_CLEAN"] == "1" { runCleanFanout(container: container); return }
         if env["MIXCUT_SELFTEST_READINESS"] == "1" { runReadiness(container: container); return }
         if let n = env["MIXCUT_SELFTEST_GEN_REAL"], let t = Int(n) { runGenReal(container: container, target: t); return }
+        if env["MIXCUT_SELFTEST_VOICEREADY"] == "1" { runVoiceReady(container: container); return }
         if env["MIXCUT_SELFTEST_REWRITE"] == "1" { runRewrite(container: container); return }
         if let n = env["MIXCUT_SELFTEST_GEN"], let target = Int(n) { runGenSchemes(container: container, target: target); return }
         guard env["MIXCUT_SELFTEST"] == "1" else { return }
@@ -155,10 +156,12 @@ enum DebugSelfTest {
             }
         }
         try? ctx.save()
-        // 删掉因此清空、且非自定义/非叙事的 AI 策略
+        // 删掉因此清空、且非自定义/非叙事/非脚本容器的 AI 策略
+        //（isScriptGroup 容器懒建、可能空但有效，G-S7 白名单钉住，勿误删）。
         var removedStrats = 0
         if let strats = try? ctx.fetch(FetchDescriptor<MixStrategy>()) {
-            for st in strats where st.schemes.isEmpty && !st.isCustomGroup && !st.isNarrativeTemplate {
+            for st in strats where st.schemes.isEmpty && !st.isCustomGroup
+                && !st.isNarrativeTemplate && !st.isScriptGroup {
                 ctx.delete(st); removedStrats += 1
             }
         }
@@ -687,6 +690,289 @@ enum DebugSelfTest {
         }
     }
 
+    // MARK: - G-V8 配音就绪腿（M1a/M1b 遗留项；零真实 API、零碰用户库）
+
+    /// 验证「配了全局预置音色 → 未克隆视频一键改写**零克隆直合成**」这条主链路真的通。
+    ///
+    /// 为什么需要这支腿（M1a 计划遗留，原以真机端到端替代）：
+    /// `rewrite()` 是 App 层唯一同时承载「音色解析 →克隆分支判定 → 改写 → 落库 → 批量合成」
+    /// 的方法，而它此前**只有真机点击一条入口**。真机验证有三个盲区：
+    /// ① 要点四层界面才能走到，回归成本高、失败时定位不到是哪一段；
+    /// ② 「零克隆」这个核心主张只能靠"没报错"间接推断，无法证伪；
+    /// ③ 每次验证都要真调AI + 真调 TTS = 真花钱。
+    /// 本腿把这三点变成可重复、零成本的机械判据：内存库 + 假 AI provider + 假 TTS 客户端。
+    ///
+    /// 六段判据（逐段独立报，任何一段红不影响其余段落继续跑完）：
+    ///   D1 未配置音色 → rewrite 阻断（不产 dub、不克隆）；
+    ///   D2 配全局预置 → resolveForLegacy 命中 `.preset`（不走克隆优先）；
+    ///   D3 **零克隆调用**（核心）—— fake vcClient 调用数必须为 0，且video.clonedVoiceId 仍为空；
+    ///   D4 空壳绑定：脚本槽位经 ScriptDubBinding 拿到载体并回写 selectedSegmentDubId；
+    ///   D5 generateAudio 成功（假 TTS 真跑finalize，产物落盘）；
+    ///   D6 audioFilePath 存在且文件真实在盘。
+    ///
+    /// 隔离纪律：自建**内存容器**（`isStoredInMemoryOnly`，绝不碰用户库），
+    /// 全局偏好串读写前存原值、跑完原样还原（不留污染）。
+    /// 唯一写到磁盘的是 finalize 的产物 m4a（走生产FileHelper 路径），结束即删。
+    @MainActor
+    static func runVoiceReady(container: ModelContainer) {
+        let outPath = ProcessInfo.processInfo.environment["MIXCUT_SELFTEST_OUT"]
+            ?? NSTemporaryDirectory() + "\(Brand.shortName)_voiceready.txt"
+        var r: [String] = ["# 配音就绪腿（M1a/M1b 遗留；假 provider + 假 TTS，零真实 API）"]
+        var pass = 0, fail = 0
+        func judge(_ ok: Bool, _ label: String, _ detail: String = "") {
+            if ok { pass += 1; r.append("✅ \(label)\(detail.isEmpty ? "" : "（\(detail)）")") }
+            else { fail += 1; r.append("❌ FAIL \(label)\(detail.isEmpty ? "" : "（\(detail)）")") }
+        }
+
+        // —— 现场：内存库 + 一个未克隆的分镜 ——
+        let schema = Schema(versionedSchema: AppSchemaV1.self)
+        let memContainer: ModelContainer
+        do {
+            memContainer = try ModelContainer(
+                for: schema,
+                configurations: [ModelConfiguration(schema: schema, isStoredInMemoryOnly: true)])
+        } catch {
+            write(outPath, r + ["❌ 内存容器创建失败: \(error.localizedDescription)"]); return
+        }
+        let ctx = memContainer.mainContext
+        let project = Project(name: "VOICE-READY-临时项目")
+        let video = Video(name: "VOICE-READY-临时视频", localPath: "/tmp/voice-ready.mov")
+        ctx.insert(project); ctx.insert(video)
+        ProjectVideo.associate(project: project, video: video, in: ctx)
+        let segment = Segment(segmentIndex: "seg_001", startTime: 0, endTime: 3,
+                              text: "这个厨房油污太难搞了", semanticTypes: [.painPoint],
+                              positionType: .middle)
+        segment.video = video
+        ctx.insert(segment)
+        do { try ctx.save() } catch {
+            write(outPath, r + ["❌ 内存库初始save 失败: \(error.localizedDescription)"]); return
+        }
+
+        // —— 全局偏好：跑完必须原样还原（这条腿不许给用户留下任何配置变化）——
+        let savedGlobalRaw = VoicePreferences.globalDefaultRaw
+        defer {
+            VoicePreferences.globalDefaultRaw = savedGlobalRaw
+            r.append("全局偏好已还原为 \(VoicePreferences.globalDefaultRaw ?? "nil")")
+        }
+        VoicePreferences.globalDefaultRaw = nil
+
+        // —— 假 AI provider：只按 prompt 回一句可解析的改写结果，绝不联网——
+        let fakeProvider = SelfRewriteProvider()
+        // —— 假 TTS：真写一个可解码的 wav（finalize 要用），rawDuration 按台词字数估——
+        let fakeCosy = SelfFakeTTS()
+        let fakeVC = SelfFakeTTS()
+        let vm = DubbingViewModel(tts: fakeCosy, vcClient: fakeVC,
+                                  rewriteService: ScriptRewriteService(provider: fakeProvider))
+        let presentation = DubScopePresentationMapper.presentation(for: .all)
+
+        Task { @MainActor in
+            // —— D1：未配置音色 → 阻断 ——
+            let d1DubsBefore = segment.segmentDubs.count
+            await vm.rewrite(video: video, targets: [segment],
+                             presentation: presentation, context: ctx)
+            let d1Blocked = vm.errorState != nil
+                && segment.segmentDubs.count == d1DubsBefore
+                && fakeVC.callCount == 0 && fakeCosy.callCount == 0
+            judge(d1Blocked, "D1 未配置音色时阻断",
+                  d1Blocked ? "已引导去设置，未产 dub、未调TTS" : "error=\(vm.errorState?.message ?? "nil") dub=\(segment.segmentDubs.count - d1DubsBefore) tts=\(fakeCosy.callCount + fakeVC.callCount)")
+            if let e = vm.errorState { vm.errorState = nil }
+
+            // —— D2：配全局预置 → 解析命中 preset（非克隆优先）——
+            let presetID = CosyVoiceCatalog.all.first?.id ?? ""
+            guard !presetID.isEmpty else {
+                write(outPath, r + ["❌ CosyVoice 目录为空，无法继续"]); return
+            }
+            VoicePreferences.globalDefaultRaw = VoiceChoiceCoder.encode(.preset(voiceID: presetID))
+            guard case .resolved(let resolvedChoice) =
+                    VoicePreferences.resolveForLegacy(video: video, projectOverrideRaw: nil) else {
+                write(outPath, r + ["❌ D2 配了全局预置仍解析为 unconfigured"]); return
+            }
+            let d2Hit = resolvedChoice.engine == .cosyVoice && resolvedChoice.voiceID == presetID
+            judge(d2Hit, "D2 全局预置音色解析为 preset",
+                  "voiceID=\(resolvedChoice.voiceID) engine=\(resolvedChoice.engine == .cosyVoice ? "cosyVoice" : "qwenVC")")
+            r.append("   （该视频未克隆，按设计本就应回落全局；下面 D3 用「强制克隆在先」再验一次压制）")
+
+            // —— D2b：克隆声在先 + 手动跟随全局 → 克隆被压制（回落预置，非克隆优先）——
+            video.clonedVoiceId = "cosyvoice-vc-fake-clone"
+            let beforeFollowRaw = VoicePreferences.globalDefaultRaw
+            _ = beforeFollowRaw
+            vm.setVideoFollowsGlobal(true, video: video, context: ctx)
+            var d2bHit = false
+            if case .resolved(let c) = VoicePreferences.resolveForLegacy(video: video, projectOverrideRaw: nil) {
+                d2bHit = c.voiceID == presetID && c.engine == .cosyVoice
+            }
+            judge(d2bHit, "D2b 克隆声在先但已跟随全局 → 克隆被压制",
+                  "voiceFollowsGlobal=\(video.voiceFollowsGlobal)")
+
+            // —— D3（核心）：一键改写走 preset 分支 → **零克隆调用**——
+            let vcBefore = fakeVC.callCount
+            let cosyBefore = fakeCosy.callCount
+            await vm.rewrite(video: video, targets: [segment],
+                             presentation: presentation, context: ctx)
+            let vcCalls = fakeVC.callCount - vcBefore
+            let cosyCalls = fakeCosy.callCount - cosyBefore
+            judge(vcCalls == 0, "D3 改写全程零 qwen-vc（克隆）合成调用",
+                  "vcClient 调用 \(vcCalls) 次")
+            judge(cosyCalls > 0, "D3b CosyVoice（预置）合成确有调用", "cosyClient 调用 \(cosyCalls) 次")
+            judge(vm.errorState == nil, "D3c 改写未报错", vm.errorState?.message ?? "")
+
+            let produced = segment.segmentDubs
+            let voiced = produced.filter { $0.voiceId == presetID }
+            let voicedWithAudio = voiced.filter { $0.audioFilePath != nil }
+            r.append("   分镜产出变体 \(produced.count) 条，其中预置音色 \(voiced.count) 条、有音频 \(voicedWithAudio.count) 条")
+
+            // —— D4：脚本槽位空壳绑定（ScriptDubBinding 四分支的 createNew/绑壳路径）——
+            //现场：给同分镜建一个脚本族空壳（voiceId 空、无音频），走 generateScriptDub。
+            let scheme = MixScheme(name: "VOICE-READY-临时方案")
+            let slot = SchemeSegment(position: 1)
+            ctx.insert(scheme); ctx.insert(slot)
+            scheme.project = project
+            slot.scheme = scheme
+            slot.segment = segment
+            let shell = SegmentDub(segment: segment, voiceId: "", voiceProvider: "cosyvoice",
+                                   textVariantIndex: 99, rewrittenText: "这段是脚本成片的台词")
+            ctx.insert(shell)
+            segment.segmentDubs.append(shell)
+            slot.selectedSegmentDubId = shell.id
+            try? ctx.save()
+            let okSlot = await vm.generateScriptDub(for: slot, scheme: scheme,
+                                                    project: project, context: ctx)
+            judge(okSlot, "D4 脚本空壳槽位生成成功",
+                  "shell voiceId 空 → 绑定后=\(shell.voiceId) selectedDubId一致=\(slot.selectedSegmentDubId != nil)")
+            let boundCorrectly = slot.selectedSegmentDubId != nil
+            if let bound = try? ctx.fetch(FetchDescriptor<SegmentDub>()).first(where: { $0.id == slot.selectedSegmentDubId }) {
+                judge(bound.voiceId == presetID, "D4b 槽位绑定到解析音色（预置）",
+                      "bound voiceId=\(bound.voiceId)")
+            } else {
+                judge(false, "D4b 槽位绑定到解析音色（预置）", "绑定后取不到 dub")
+            }
+            _ = boundCorrectly
+
+            // —— D5/D6：产物落盘判据 ——
+            let allDubs = segment.segmentDubs
+            let withPath = allDubs.filter { $0.audioFilePath != nil }
+            var realFiles = 0
+            var writtenPaths: [String] = []
+            for d in withPath {
+                if let p = d.audioFilePath, FileManager.default.fileExists(atPath: p) {
+                    realFiles += 1
+                    writtenPaths.append(p)
+                }
+            }
+            judge(!withPath.isEmpty, "D5 至少一条变体带 audioFilePath",
+                  "带路径 \(withPath.count)/\(allDubs.count)")
+            judge(!withPath.isEmpty && realFiles == withPath.count, "D6 audioFilePath 指向的文件真实存在",
+                  "在盘 \(realFiles)/\(withPath.count)")
+
+            // 逐条明细，便于真机对照
+            for d in allDubs.sorted(by: { $0.textVariantIndex < $1.textVariantIndex }) {
+                let exists = d.audioFilePath.map { FileManager.default.fileExists(atPath: $0) } ?? false
+                r.append("   变体 v\(d.textVariantIndex) voiceId=\(d.voiceId.isEmpty ? "(空壳)" : d.audioFilePath == nil ? d.voiceId : d.voiceId))"
+                         + " 台词=\(d.rewrittenText.count)字 status=\(d.status.rawValue)"
+                         + " 音频=\(d.audioFilePath == nil ? "无" : (exists ? "在盘" : "❌路径失效"))"
+                         + " atempo=\(String(format: "%.2f", d.atempoFactor))")
+            }
+
+            // —— 清理：finalize 产物（唯一写盘的东西）———
+            var cleaned = 0
+            for p in writtenPaths { if (try? FileManager.default.removeItem(atPath: p)) != nil { cleaned += 1 } }
+            // Dubs/{videoHash}/{segmentId}/ 整目录带走（同一segment 下的空目录不留）
+            let hashDir = FileHelper.appSupportDirectory
+                .appendingPathComponent("Dubs", isDirectory: true)
+                .appendingPathComponent(video.contentHash ?? video.id.uuidString, isDirectory: true)
+            try? FileManager.default.removeItem(at: hashDir)
+            r.append("已清理产物 \(cleaned) 个文件 + 哈希目录")
+
+            r.append("")
+            r.append(fail == 0 ? "结论：\(pass)/\(pass + fail) 段全绿 ✅" : "结论：\(pass) 绿 / \(fail) 红 ❌")
+            r.append("[done]")
+            write(outPath, r)
+        }
+    }
+
+    /// 自检腿专用假 AI provider：按 prompt 里出现的分镜 id 回一条可解析结果，**绝不联网**。
+    private actor SelfRewriteProvider: AIProvider {
+        private(set) var callCount = 0
+        func generateJSON<T: Decodable>(prompt: String, responseType: T.Type) async throws -> T {
+            callCount += 1
+            // RewriteResultDTO 是本腿唯一关心的 responseType；其余类型本腿不会请求。
+            guard let dto = Self.makeRewriteDTO(from: prompt) as? T else {
+                throw AIProviderError.invalidResponse("自检假 provider 只支持 RewriteResultDTO")
+            }
+            return dto
+        }
+        func generateText(prompt: String) async throws -> String { callCount += 1; return "" }
+
+        /// 从 prompt 里捞出全部 `"seg_xxx"` 形式的分镜 id（RewritePromptBuilder 以 id 建行）。
+        /// 返回与原句等长但措辞不同的改写句，落在字数预算内，避免触发 fallback。
+        static func makeRewriteDTO(from prompt: String) -> RewriteResultDTO {
+            let ids = Self.segmentIDs(in: prompt)
+            let items = ids.map { id in
+                RewriteResultDTO.Item(segmentId: id, rewrittenText: "自检假改写文案\(id.count)字用于对齐验证")
+            }
+            return RewriteResultDTO(segments: items)
+        }
+        static func segmentIDs(in prompt: String) -> [String] {
+            var seen = Set<String>(), out: [String] = []
+            for token in prompt.split(whereSeparator: { $0 == " " || $0 == "\n" || $0 == "\"" || $0 == "," || $0 == "：" || $0 == ":" }) {
+                let t = String(token)
+                if t.hasPrefix("seg_") && !t.contains("，") && t.count <= 24 && seen.insert(t).inserted {
+                    out.append(t)
+                }
+            }
+            return out
+        }
+    }
+
+    /// 自检腿专用假 TTS 客户端：真写一个可解码的 wav（finalize 要用），但**不打任何网络**。
+    /// 记录调用次数用于「零克隆调用」判据；rawDuration 按字数估算（让 finalize 的 atempo 链有东西可算）。
+    private final class SelfFakeTTS: TTSClient, @unchecked Sendable {
+        private(set) var callCount = 0
+        /// 每秒字数（中文口播约 5 字/秒，取偏慢值让 atempo 落在合理区间）。
+        private let charsPerSecond = 4.0
+        /// 采样率与位深：44.1kHz / 16bit 单声道 PCM WAV（finalize 的 ffmpeg 认得）。
+        private let sampleRate = 44100.0
+        private let bytesPerSample: Int = 2
+
+        func synthesize(text: String, voiceId: String,
+                        languageType: String, rate: Double) async throws -> TTSResult {
+            callCount += 1
+            let chars = max(1.0, Double(text.count))
+            let seconds = max(0.5, chars / charsPerSecond)
+            let url = FileHelper.tempDirectory
+                .appendingPathComponent("voiceready-fake-\(UUID().uuidString).wav")
+            try Self.writeSilentWav(to: url, seconds: seconds, sampleRate: sampleRate,
+                                    bytesPerSample: bytesPerSample)
+            return TTSResult(wavPath: url.path, rawDuration: seconds)
+        }
+
+        /// 写一个头信息规范、数据为静音的 WAV。静音是刻意的：本腿要验的是
+        /// 「管线能不能跑通并在盘落产物」，不是音质；静音同样能被 ffmpeg 正常转码。
+        private static func writeSilentWav(to url: URL, seconds: Double,
+                                           sampleRate: Double, bytesPerSample: Int) throws {
+            let totalFrames = Int(seconds * sampleRate)
+            let dataBytes = totalFrames * bytesPerSample
+            var pcm = Data(count: dataBytes)   // 全零 = 静音
+            let byteRate = Int(sampleRate) * bytesPerSample
+            var data = Data()
+            func append<T: FixedWidthInteger>(_ v: T) { withUnsafeBytes(of: v.littleEndian) { data.append(contentsOf: $0) } }
+            data.append(contentsOf: Array("RIFF".utf8))
+            append(UInt32(36 + dataBytes))
+            data.append(contentsOf: Array("WAVEfmt ".utf8))
+            append(UInt32(16))                 // fmt chunk size
+            append(UInt16(1))                  // PCM
+            append(UInt16(1))                  // 单声道
+            append(UInt32(sampleRate))
+            append(UInt32(byteRate))
+            append(UInt16(bytesPerSample))
+            append(UInt16(16))                 // bits per sample
+            data.append(contentsOf: Array("data".utf8))
+            append(UInt32(dataBytes))
+            data.append(pcm)
+            try data.write(to: url, options: .atomic)
+        }
+    }
+
     // MARK: - G3 方案生成实跑（临时项目，跑完即删，不污染真实数据）
 
     @MainActor
@@ -838,7 +1124,7 @@ enum DebugSelfTest {
                       "⑯b 悬空 ⇒ 索引 nil（.grid16b.txt）",
                       "⑯c 活边正向 UUID（.grid16c.txt）",
                       "⑯d 修复→重开端到端 + 幂等（.grid16d.txt）",
-                      "⑯e 13 边参数化（.grid16e.txt）",
+                      "⑯e 悬空边参数化·注册表全边（.grid16e.txt）",
                       "⑯f 修复失败隔离（.grid16f.txt）"]
         var lines: [String] = ["# 判据矩阵（内存容器，不碰用户库）"]
         func commit() { write(outPath, lines) }
@@ -1160,11 +1446,11 @@ enum DebugSelfTest {
         probe.emit(pass ? "PASS" : "FAIL")
     }
 
-    /// ⑯e 13 边参数化：SQL 造悬空 ⇒ count=1 ⇒ 修复 changes≥1 ⇒ count=0。
+    /// ⑯e 悬空边参数化（注册表全边）：SQL 造悬空 ⇒ count=1 ⇒ 修复 changes≥1 ⇒ count=0。
     @MainActor
     private static func grid16e(dir: URL, out: String) {
         let probe = MatrixProbe(path: out)
-        probe.emit("# ⑯e 13 边参数化")
+        probe.emit("# ⑯e 悬空边参数化（注册表 \(DanglingToOneEdge.registry.count) 边）")
         var allPass = true
         for (i, edge) in DanglingToOneEdge.registry.enumerated() {
             let edgeDir = dir.appendingPathComponent("e\(i)", isDirectory: true)
@@ -1207,7 +1493,8 @@ enum DebugSelfTest {
                        + "after=\(after ?? -1) \(ok ? "PASS" : "FAIL")")
             if !ok { allPass = false }
         }
-        probe.emit(allPass ? "PASS 13/13" : "FAIL（见上；失败边不伪装通过）")
+        probe.emit(allPass ? "PASS \(DanglingToOneEdge.registry.count)/\(DanglingToOneEdge.registry.count)"
+                          : "FAIL（见上；失败边不伪装通过）")
     }
 
     /// ⑯f 修复失败隔离：不可打开路径不阻断，后续正常开库流程继续。

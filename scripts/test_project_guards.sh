@@ -41,7 +41,9 @@ expect_absent "TC-05 日志目录真源引用处数" 'Brand\.logDirectoryCompone
 # 基线 3 → 4：2026-09-28 第 2 期给 AIProviderError 的三条完整性文案共用了一处 evidenceHint
 # （见 AIProvider.swift 的 evidenceHint，故意合并成 1 处而不是各写一遍）。新增的是 1 处真源引用，
 # 不是放宽 —— 若将来有人再散着写路径，这里会变红。
-expect_absent "TC-05b 文案引用 MixLog.logFileURL 处数" 'MixLog\.logFileURL' "$ROOT/MixCut" 4
+# 基线 4 → 5：2026-10-04 第三起 SIGTRAP 修复给 ProjectViewModel 删除项目保存失败 toast
+# 补了与 ModelContextExtension.saveFailure 同型的真源引用（用户可定位日志，不写死路径）。
+expect_absent "TC-05b 文案引用 MixLog.logFileURL 处数" 'MixLog\.logFileURL' "$ROOT/MixCut" 5
 
 # TC-03/07：生成器守卫探测
 rm -rf "$PROBE"; mkdir -p "$PROBE/Sources/MixCutCore"
