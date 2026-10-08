@@ -99,25 +99,67 @@ public enum VoiceResolver {
         /// M1b：用户已在视频上显式选择「跟随全局/项目」，此时即使有历史克隆也压制克隆。
         public var suppressVideoClone: Bool
 
+        // MARK: - M2 段级克隆（克隆音色从视频级搬到分镜级）
+
+        /// **段级克隆音色 id（M2）**：该**分镜**自己的克隆音色。nil/空=该分镜未克隆。
+        ///
+        /// ## 为什么必须有这个字段（2026-10-08 根因）
+        ///
+        /// M2 把克隆从「按视频」改成「按分镜时间范围」（`Segment.clonedVoiceId` +
+        /// `cloneWindowStartFrame/EndFrame`）。但本结构**只有视频级字段**，
+        /// ⇒ 整条解析链**在契约层就无法表达「这个分镜有自己的克隆声」**
+        /// ⇒ 每个读侧只能自己想办法（多数没想）⇒ 一次改造产生 6 处读侧回归
+        /// （音色菜单消失 / 一键改写跳过已有克隆合成错音色 / 点「生成」报音色失效…）。
+        ///
+        /// **优先级：段级 > 视频级**（视频级是存量兼容层，见 `resolveForLegacyDub`）。
+        public var segmentCloneVoiceID: String?
+
+        /// 本作用域内**是否有任一分镜**已克隆（M2）。
+        ///
+        /// ## 为什么它与 `segmentCloneVoiceID` 是两件事
+        ///
+        /// 前者回答「**这个**分镜用哪个克隆声」；本字段回答「本次操作**是不是**克隆链路」。
+        /// 后者决定 `rewrite()` 走克隆分支还是预置分支，而**分支不能只看 voiceID**：
+        /// 视频未按视频克隆过（`videoCloneVoiceID == nil`）但分镜已按分镜克隆过时，
+        /// 只看 voiceId 会退回预置分支 ⇒ 已付费注册的音色被跳过 ⇒ 合成出错误音色。
+        ///
+        /// ⚠️ 段级化必然产生**混合状态**（部分分镜已克隆、部分没有），
+        /// 所以它不是「本视频是否克隆过」而是「**本作用域**是否有克隆」。
+        public var hasAnySegmentClone: Bool
+
         public init(projectOverrideRaw: String? = nil,
                     globalDefaultRaw: String? = nil,
                     videoCloneVoiceID: String? = nil,
-                    suppressVideoClone: Bool = false) {
+                    suppressVideoClone: Bool = false,
+                    segmentCloneVoiceID: String? = nil,
+                    hasAnySegmentClone: Bool = false) {
             self.projectOverrideRaw = projectOverrideRaw
             self.globalDefaultRaw = globalDefaultRaw
             self.videoCloneVoiceID = videoCloneVoiceID
             self.suppressVideoClone = suppressVideoClone
+            self.segmentCloneVoiceID = segmentCloneVoiceID
+            self.hasAnySegmentClone = hasAnySegmentClone
         }
     }
 
-    /// 素材库改写链路：
-    /// 1) 未显式跟随全局、且视频已有克隆声 → 视频克隆优先（存量行为零变化）；
-    /// 2) 否则 项目覆盖 → 全局默认；
-    /// 3) 皆无 → unconfigured。
+    /// 素材库改写链路（M2 段级优先）：
+    /// 1) 未显式跟随全局、且**该分镜**已有克隆声 → 分镜克隆优先（`segmentCloneVoiceID`）；
+    /// 2) 存量回落到视频级克隆声（`videoCloneVoiceID`，仅段级为空时）；
+    /// 3) 否则 项目覆盖 → 全局默认；
+    /// 4) 皆无 → unconfigured。
+    ///
+    /// ⚠️ **本函数只回答「用哪个音色」**；「是否走克隆分支」由
+    /// `CloneBranchDecider.shouldClone` 回答 ——两者必须用同一套判据，
+    /// 否则会出现「解析说克隆、分支说预置」的错配（这正是 M2 的 R3 回归）。
     public static func resolveForLegacyDub(_ input: LegacyInput) -> VoiceResolution {
-        if !input.suppressVideoClone,
-           let cloneID = nonEmpty(input.videoCloneVoiceID) {
-            return .resolved(.videoClone(voiceID: cloneID))
+        if !input.suppressVideoClone {
+            // 段级优先（默认 nil 时行为与 M2 前完全一致 ⇒ 存量零变化）
+            if let segID = nonEmpty(input.segmentCloneVoiceID) {
+                return .resolved(.videoClone(voiceID: segID))
+            }
+            if let cloneID = nonEmpty(input.videoCloneVoiceID) {
+                return .resolved(.videoClone(voiceID: cloneID))
+            }
         }
         return resolveChain(projectRaw: input.projectOverrideRaw, globalRaw: input.globalDefaultRaw)
     }
