@@ -93,7 +93,12 @@ extension Segment {
     /// （同一改写版若有多个音色，优先保留本视频「克隆原声」那条）。clone-only 下每版唯一。
     /// 升序返回，供 _A/_B… 命名与笛卡尔积组合使用。
     var effectiveDubVariants: [SegmentDub] {
-        effectiveDubVariants(preferredVoiceID: nil, videoCloneVoiceID: video?.clonedVoiceId)
+        // ⚠️ M2：**段级克隆音色优先**，回落到视频级（存量库兼容）。
+        // 旧实现只读 `video?.clonedVoiceId` ⇒ 同一视频里跨说话人的分镜会把
+        // A 段的音色当成"本视频克隆声"参与去重，把 B 段的变体误判成重复。
+        // 回落链：segment.clonedVoiceId → video.clonedVoiceId（存量） → nil
+        effectiveDubVariants(preferredVoiceID: nil,
+                             videoCloneVoiceID: clonedVoiceId ?? video?.clonedVoiceId)
     }
 
     /// M1b R3 口径：同改写版多音色并存时，按「当前解析音色 ＞ 本视频克隆 ＞ 先到先得」去重。

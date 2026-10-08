@@ -369,34 +369,92 @@ final class DubbingViewModel {
 
     // MARK: - 原声克隆（一键改写时自动确保已克隆）
 
-    /// 确保该视频已克隆出原声音色（无则分离人声并注册）。返回是否就绪。
-    /// 已去掉手动选音色：克隆原声就是唯一音色，落在 selectedVoiceIds=[clonedVoiceId]。
+    /// 确保**该分镜**已克隆出原声音色。返回该分镜的 voiceId（nil = 不可克隆）。
+    ///
+    /// ## M2：从「按视频」改为「按分镜」（本函数是本次缺陷的修复点）
+    ///
+    /// 旧实现签名收 `Video` 且参考音恒取人声轨 `0~6s`
+    /// ⇒ 同一视频里**跨说话人**的分镜拿到同一个音色。实测某 58.8 秒视频
+    /// `0~18s` 男声（125~156 Hz）、`21s+` 女声（200~256 Hz），选女声段却克隆出男声。
+    ///
+    /// 现在：
+    /// - 收 `Segment`，用**它自己的时间范围**规划参考窗口（`WindowPlanner`，只向后取）；
+    /// - 同视频内窗口重叠的其它分镜**复用**已注册音色（省计费）；
+    /// - Key 指纹落**段级字段**（旧实现是 `UserDefaults` 键 `clonedVoiceKeyFP_{videoHash}`，
+    ///   按分镜后键数会 ×分镜数）；
+    /// - 仍写 `video.clonedVoiceIds` 兼容链上的 `selectedVoiceIds`（读侧回落用，见 `SegmentDub`）。
+    ///
+    /// - Returns: 该分镜的 voiceId；`nil` 表示不可克隆（分镜已删除 / 无语音 / 找不到视频）。
     @discardableResult
-    func ensureClonedVoice(for video: Video, context: ModelContext, forceReclone: Bool = false) async -> Bool {
+    func ensureClonedVoice(for segment: Segment, context: ModelContext, forceReclone: Bool = false) async -> String? {
+        guard let video = segment.video else { return nil }
         let hash = video.contentHash ?? video.id.uuidString
-        let fpKey = "clonedVoiceKeyFP_\(hash)"
         let currentFP = Self.currentKeyFingerprint()
-        if !forceReclone, let cv = video.clonedVoiceId, !cv.isEmpty {
-            // DashScope 克隆音色绑定注册它的账户(API Key)。换 Key 后旧 voiceId 在新账户不存在，
-            // 合成会报 InvalidParameter。指纹能识别「装新版后克隆」的音色；存量旧音色无指纹，
-            // 这里乐观复用，真失败时由 generateAllAudioWithRecloneFallback 兜底强制重克隆。
-            let savedFP = UserDefaults.standard.string(forKey: fpKey)
-            if currentFP == nil || savedFP == nil || savedFP == currentFP {
-                if video.selectedVoiceIds != [cv] { video.selectedVoiceIds = [cv]; try? context.save() }
-                return true
-            }
-            MixLog.info("[Clone] 检测到千问 API Key 变更，旧克隆音色(\(cv))在新账户不可用，自动重新克隆")
-        } else if forceReclone {
-            MixLog.info("[Clone] 强制重新克隆（合成失败自愈）")
+        let vid = video.id   // 进度按视频独立跟踪（分离是视频级的）
+        let fps = video.fps > 0 ? video.fps : 30
+        // 视频总帧数：取「最后一个分镜的 endFrame」与「duration × fps」的较大者。
+        // ⚠️ Video 上没有 totalFrameCount 字段（只有 fps/segments/duration），
+        // 而窗口末端只需不越界 ⇒ 宁可放宽（放宽只是让末尾窗口多几秒，不影响正确性）。
+        let derivedTotal = Int((video.duration * fps).rounded())
+        let segmentsEnd = video.segments.map(\.endFrame).max() ?? 0
+        let totalFrames = max(segment.endFrame, segmentsEnd, derivedTotal, segment.startFrame + 1)
+
+        // 段级窗口（nil = 零长/越界 ⇒ 不克隆）
+        guard let window = WindowPlanner.planWindow(startFrame: segment.startFrame,
+                                                    fps: fps,
+                                                    videoFrameCount: totalFrames) else {
+            MixLog.info("[Clone] 分镜 \(segment.id) 窗口不可用，跳过克隆")
+            return nil
         }
-        video.clonedVoiceId = nil   // 走下方重克隆流程（能复用的已在上面 return）
+
+        // ---- 复用：段级已克隆且窗口一致 → 直接返回 ----
+        if !forceReclone,
+           let sv = segment.clonedVoiceId, !sv.isEmpty,
+           segment.cloneWindowStartFrame == window.startFrame,
+           segment.cloneWindowEndFrame == window.endFrame {
+            // DashScope 克隆音色绑定注册它的账户(API Key)。换 Key 后旧 voiceId 在新账户不存在。
+            if currentFP == nil || segment.cloneKeyFingerprint.isEmpty
+                || segment.cloneKeyFingerprint == currentFP {
+                if video.selectedVoiceIds != [sv] { video.selectedVoiceIds = [sv]; try? context.save() }
+                return sv
+            }
+            MixLog.info("[Clone] 检测到 API Key 变更，段级旧克隆音色(\(sv))在新账户不可用，重新克隆")
+        }
+
+        // ---- 复用：同视频内窗口重叠的**其它分镜**已注册过 → 共享它的音色 ----
+        // ⚠️ 只认**段级** `clonedVoiceId`（窗口信息也只有段级有）；
+        // 存量视频级 `video.clonedVoiceId` 不参与复用判定——它没有窗口信息，
+        // 猜窗口会把它误配到别的说话人上（那正是本缺陷）。
+        let siblings: [(window: CloneReferenceWindow, voiceId: String)] = video.segments.compactMap { sib in
+            guard sib.id != segment.id,
+                  let sid = sib.clonedVoiceId, !sid.isEmpty,
+                  sib.cloneWindowStartFrame >= 0, sib.cloneWindowEndFrame > sib.cloneWindowStartFrame
+            else { return nil }
+            return (CloneReferenceWindow(startFrame: sib.cloneWindowStartFrame,
+                                         endFrame: sib.cloneWindowEndFrame), sid)
+        }
+        if !forceReclone, !siblings.isEmpty {
+            let hit = WindowPlanner.reusableWindow(
+                candidate: window,
+                among: siblings.map(\.window))
+            if let hw = hit, let vid2 = siblings.first(where: { $0.window == hw })?.voiceId {
+                MixLog.info("[Clone] 分镜 \(segment.id) 复用兄弟分镜音色（窗口 \(hw.startFrame)-\(hw.endFrame)）")
+                segment.clonedVoiceId = vid2
+                segment.cloneWindowStartFrame = hw.startFrame
+                segment.cloneWindowEndFrame = hw.endFrame
+                if let fp = currentFP { segment.cloneKeyFingerprint = fp }
+                try? context.save()
+                return vid2
+            }
+        }
+
+        segment.clonedVoiceId = nil      // 走下方重克隆流程（能复用的已在上面 return）
         let path = video.localPath
         guard !path.isEmpty, FileManager.default.fileExists(atPath: path) else {
             errorState = .init(message: "找不到原视频文件，无法克隆原声", kind: .generic)
-            return false
+            return nil
         }
-        let vid = video.id   // 进度按此视频独立跟踪；忙碌状态由调用方管理
-        MixLog.info("[Clone] 开始克隆原声: video=\(path)")
+        MixLog.info("[Clone] 开始克隆原声: video=\(path) 窗口=\(window.startFrame)-\(window.endFrame)")
         do {
             setStage(vid, .prepareClone, "分离人声…")
             let stems = try await vocalSep.separate(videoPath: path, videoHash: hash) { [weak self] p in
@@ -405,36 +463,43 @@ final class DubbingViewModel {
             // 等待分离期间视频可能已被删除（句柄已脱离视图生命周期）：写回前必须过门。
             guard !video.isDroppedFromContext else {
                 MixLog.info("[Clone] 视频已删除，中止克隆写回: \(vid)")
-                return false
+                return nil
             }
-            if Task.isCancelled { return false }
+            if Task.isCancelled { return nil }
             MixLog.info("[Clone] 分离完成: vocals=\(stems.vocalsPath)")
             setStage(vid, .prepareClone, "提取克隆参考…")
-            // 参考音必须【短而干净】(≈6s)：18s 长参考含多句原话，qwen 克隆 TTS 会间歇性
+            // 参考音取**该分镜的时间范围**（不再恒取视频开头 6s）：
+            // 参考音必须【短而干净】(≈6s)—— 18s 长参考含多句原话，qwen 克隆 TTS 会间歇性
             // "续读参考里的内容"导致配音混进下一段(实测 18s→clean 1/3，6s→clean 5/5)。
-            let ref = try await vocalSep.referenceClip(fromVocals: stems.vocalsPath, maxSeconds: 6)
-            guard !video.isDroppedFromContext else { return false }
+            let startSeconds = WindowPlanner.seconds(frame: window.startFrame, fps: fps)
+            let ref = try await vocalSep.referenceClip(fromVocals: stems.vocalsPath,
+                                                         startSeconds: startSeconds)
+            guard !video.isDroppedFromContext else { return nil }
             setStage(vid, .prepareClone, "注册克隆音色…")
-            // 返回值改为 EnrollResult（M2）：逐视频克隆只关心 voiceId。
             // ⚠️ 传入的是纯 ASCII（品牌短名 + hash 前8 位）⇒ 清洗后不变 ⇒ 行为零变化。
+            // 名字带上分镜序号，便于在阿里云控制台区分「这是哪个分镜的声音」。
             let enrolled = try await cloneService.enroll(
                 referenceAudioPath: ref,
-                preferredName: "\(Brand.shortName)\(hash.prefix(8))")
+                preferredName: "\(Brand.shortName)\(hash.prefix(6))s\(segment.startFrame)")
             let voiceId = enrolled.voiceId
-            guard !video.isDroppedFromContext else { return false }
-            MixLog.info("[Clone] 克隆成功: voiceId=\(voiceId) providerName=\(enrolled.providerName)")
-            video.clonedVoiceId = voiceId
+            guard !video.isDroppedFromContext else { return nil }
+            MixLog.info("[Clone] 克隆成功: voiceId=\(voiceId) providerName=\(enrolled.providerName) 窗口=\(window.startFrame)-\(window.endFrame)")
+            segment.clonedVoiceId = voiceId
+            segment.cloneWindowStartFrame = window.startFrame
+            segment.cloneWindowEndFrame = window.endFrame
+            if let fp = currentFP { segment.cloneKeyFingerprint = fp }
+            // 兼容链：老读侧（SegmentVariantInspector 等）仍看 video.selectedVoiceIds。
+            // ⚠️ 新读侧应优先读segment.clonedVoiceId（见 SegmentDub.effectiveDubVariants）。
             video.selectedVoiceIds = [voiceId]
-            if let fp = currentFP { UserDefaults.standard.set(fp, forKey: fpKey) }   // 记录注册时的 Key 指纹
             try? context.save()
             setProgress(vid, "")
-            return true
+            return voiceId
         } catch {
             setProgress(vid, "")
             // 用户停止 / 数据删除导致的取消不是失败：不弹失败 alert（toast 策略由管线检查点统一处理）。
             if Task.isCancelled || error is CancellationError {
                 MixLog.info("[Clone] 克隆因取消中断: \(error.localizedDescription)")
-                return false
+                return nil
             }
             MixLog.error("[Clone] 克隆失败: \(error.localizedDescription)")
             // 缺凭证性质在错误产生点定型：未配置千问 Key → 可跳设置；其余按通用错误。
@@ -445,7 +510,7 @@ final class DubbingViewModel {
                 kind = .generic
             }
             errorState = .init(message: "原声克隆失败：\(Self.friendlyError(error))", kind: kind)
-            return false
+            return nil
         }
     }
 
@@ -483,28 +548,41 @@ final class DubbingViewModel {
             initialChoice = resolved
         }
 
-        // 本次改写统一使用的音色（克隆分支可能因重克隆换 id，在 ensure 之后取最终值）。
-        let choice: VoiceChoice
+        // 本次改写每个分镜各自使用的音色。
+        // ⚠️ M2：从 `[String]`（全视频共用一个）改为 `[UUID: String]`（**按分镜**）。
+        // 旧实现按视频克隆一次、参考音恒取人声轨开头 6 秒 ⇒ 同一视频里跨说话人的分镜
+        // 拿到同一个音色（实测某 58.8s 视频 0~18s 男声、21s+ 女声 ⇒ 选女声段却克隆出男声）。
+        var voicesBySegment: [UUID: String]
         if initialChoice.engine == .qwenVC {
-            // 逐视频克隆分支：维持原链路（demucs 分离 → 注册 → 合成），含 Key 变更重克隆兜底。
-            guard await ensureClonedVoice(for: video, context: context) else {
-                if Task.isCancelled { announceCancellation(videoID: vid) }
-                return
+            // 逐分镜克隆分支：每个分镜用自己的时间范围取参考音；
+            // 窗口重叠的相邻分镜会复用（省一次注册计费），见 ensureClonedVoice。
+            guard !targets.isEmpty else { return }
+            var map: [UUID: String] = [:]
+            for (i, seg) in targets.enumerated() {
+                if Task.isCancelled { announceCancellation(videoID: vid); return }
+                if seg.isDroppedFromContext { continue }
+                // 进度按「第 i/N 个音色」播报：注册要花钱，N 次等待需要可见进度。
+                setStage(vid, .prepareClone, "准备音色 \(i + 1)/\(targets.count)…", fraction: nil)
+                guard let sv = await ensureClonedVoice(for: seg, context: context) else {
+                    if Task.isCancelled { announceCancellation(videoID: vid); return }
+                    // 该分镜不可克隆（零长/越界）：跳过它，不阻断其余分镜。
+                    MixLog.info("[Rewrite] 分镜 \(seg.id) 克隆不可用，跳过")
+                    continue
+                }
+                map[seg.id] = sv
             }
             if Task.isCancelled { announceCancellation(videoID: vid); return }
             guard !video.isDroppedFromContext else { return }
-            guard let currentClone = video.clonedVoiceId, !currentClone.isEmpty else {
+            if map.isEmpty {
                 errorState = .init(message: "克隆原声未就绪", kind: .generic); return
             }
-            // 以 ensure 之后的克隆 id 为准（重克隆兜底可能已换 voice）。
-            choice = .videoClone(voiceID: currentClone)
+            voicesBySegment = map
         } else {
-            // 预置/全局复刻分支：零克隆。检查取消与死实体后直接用解析音色。
+            // 预置/全局复刻分支：零克隆，全部分镜共用解析出的音色。
             if Task.isCancelled { announceCancellation(videoID: vid); return }
             guard !video.isDroppedFromContext else { return }
-            choice = initialChoice
+            voicesBySegment = Dictionary(uniqueKeysWithValues: targets.map { ($0.id, initialChoice.voiceID) })
         }
-        let voices = [choice.voiceID]
         // 死实体过门：等待克隆期间分镜可能已被删除。
         let reconfigurable = targets.filter {
             !$0.isDroppedFromContext && !$0.isVoiceLocked && !$0.text.isEmpty
@@ -562,7 +640,8 @@ final class DubbingViewModel {
                 for r in results {
                     // 死实体过门：分镜在等 AI 响应期间被删则跳过回写。
                     guard let seg = segById[r.segmentId], !seg.isDroppedFromContext else { continue }
-                    for voiceId in voices {
+                    // ⚠️ 该分镜若在克隆阶段不可用（无语音/窗口越界）则没有音色，跳过它。
+                    if let voiceId = voicesBySegment[seg.id] {
                         upsertDub(segment: seg, voiceId: voiceId, textVariantIndex: k,
                                   text: r.rewrittenText, context: context)
                     }
@@ -614,7 +693,9 @@ final class DubbingViewModel {
         }
         guard !video.isDroppedFromContext else { return }
 
-        let producedCount = reconfigurable.count * voices.count * n
+        // ⚠️ M2：`voices` 已改为 `voicesBySegment`（逐分镜）。产出数按**有音色的分镜**算，
+        // 否则不可克隆的分镜（无语音/窗口越界）会被算进分母，Toast 报的数字虚高。
+        let producedCount = reconfigurable.filter { voicesBySegment[$0.id] != nil }.count * n
         if result.fail > 0 {
             // 弹 alert 给出真实失败原因（可截图/复制），不再只显示笼统计数
             errorState = .init(
@@ -679,17 +760,15 @@ final class DubbingViewModel {
         beginBusy(vid)
         defer { endBusy(vid) }
 
-        guard await ensureClonedVoice(for: video, context: context) else { return nil }
-        let voices = video.selectedVoiceIds   // = [clonedVoiceId]
-        guard !voices.isEmpty else {
-            errorState = .init(message: "克隆原声未就绪", kind: .generic); return nil
+        // M2：收segment（该分镜自己的时间范围）⇒ 手动新增的变体与自动改写用**同一个**音色。
+        guard let voiceId = await ensureClonedVoice(for: segment, context: context) else {
+            return nil
         }
 
         let nextIndex = (segment.segmentDubs.map { $0.textVariantIndex }.max() ?? -1) + 1
-        for voiceId in voices {
-            upsertDub(segment: segment, voiceId: voiceId, textVariantIndex: nextIndex,
-                      text: "", context: context)
-        }
+        // M2：音色来自 ensure 的返回值（该分镜自己的窗口），不再读 video.selectedVoiceIds。
+        upsertDub(segment: segment, voiceId: voiceId, textVariantIndex: nextIndex,
+                  text: "", context: context)
         try? context.save()
         return nextIndex
     }
@@ -1235,16 +1314,31 @@ final class DubbingViewModel {
     ) async -> (ok: Int, fail: Int, errors: [String]) {
         let first = await generateAllAudio(for: segments, videoID: vid, context: context)
         guard first.fail > 0, Self.isStaleCloneError(first.errors) else { return first }
-        guard let oldVoice = video.clonedVoiceId else { return first }
-
         setStage(vid, .prepareClone, "检测到克隆音色失效，正在用当前 Key 重新克隆…")
-        guard await ensureClonedVoice(for: video, context: context, forceReclone: true),
-              let newVoice = video.clonedVoiceId, newVoice != oldVoice else {
-            return first   // 重克隆失败 → 保留原始错误供展示
-        }
-        // 把这些分镜下「待生成且仍指向旧克隆音色」的变体迁到新音色（已生成的本地文件不动）
+        // ⚠️ M2 逐段重克隆：段级音色各自绑定自己的注册窗口，重克隆也要按段走，
+        // 否则「拿A 段的窗口重新注册」会把 B 段的声音也换掉。
+        var remapped: [UUID: String] = [:]      // segmentID → newVoiceId
         for seg in segments where !seg.isDroppedFromContext {
-            for dub in seg.segmentDubs where !dub.isDroppedFromContext && dub.audioFilePath == nil && dub.voiceId == oldVoice {
+            let oldVoice = seg.clonedVoiceId ?? video.clonedVoiceId
+            guard let oldVoice, !oldVoice.isEmpty else { continue }
+            guard let newVoice = await ensureClonedVoice(for: seg, context: context,
+                                                         forceReclone: true),
+                  newVoice != oldVoice else { continue }
+            remapped[seg.id] = newVoice
+        }
+        guard let anyNew = remapped.values.first else {
+            return first   // 重克隆全部失败 → 保留原始错误供展示
+        }
+        // 把这些分镜下「待生成且仍指向旧克隆音色」的变体迁到**各自的新音色**
+        // （已生成的本地文件不动）。
+        // ⚠️ M2 逐段迁移：每段的新音色可能不同（窗口不同 ⇒ 可能注册出不同 voiceId），
+        // 一律写同一个 newVoice 会把 A 段的声音套到 B 段上（= 跨说话人错配）。
+        for (segID, newVoice) in remapped {
+            guard let seg = segments.first(where: { $0.id == segID }), !seg.isDroppedFromContext
+            else { continue }
+            let oldVoice = seg.clonedVoiceId
+            for dub in seg.segmentDubs where !dub.isDroppedFromContext && dub.audioFilePath == nil {
+                if let oldVoice, dub.voiceId != oldVoice && dub.voiceId != newVoice { continue }
                 dub.voiceId = newVoice
                 dub.status = .pending
             }
@@ -1363,6 +1457,9 @@ final class DubbingViewModel {
         } else if case .resolved(let choice) = VoicePreferences.resolveForLegacy(
             video: video,
             projectOverrideRaw: project?.preferredVoiceChoiceRaw,
+            // ⚠️ 这里是 **SchemeSegment（方案段）**，不是 Segment（分镜）：
+            // SchemeSegment 没有段级克隆字段 ⇒ M2 的按分镜克隆只作用于**素材库链路**。
+            // ⇒ 此处仍读视频级（方案链路的段级化属另一批，见计划「未闭合项」）。
             suppressVideoClone: video.voiceFollowsGlobal) {
             preferredVoiceID = choice.voiceID
             cloneVoiceID = video.clonedVoiceId
@@ -1386,12 +1483,13 @@ final class DubbingViewModel {
         if case .resolved(let choice) = VoicePreferences.resolveForLegacy(
             video: video,
             projectOverrideRaw: project?.preferredVoiceChoiceRaw,
-            suppressVideoClone: video.voiceFollowsGlobal) {
+            suppressVideoClone: video.voiceFollowsGlobal,
+            segment: segment) {
             preferredVoiceID = choice.voiceID
         }
         return segment.effectiveDubVariants(
             preferredVoiceID: preferredVoiceID,
-            videoCloneVoiceID: video.clonedVoiceId)
+            videoCloneVoiceID: segment.clonedVoiceId ?? video.clonedVoiceId)
     }
 
     /// 方案涉及的视频 id 集合（VM 内读关系；供忙碌/取消，视图不直接碰关系链）。

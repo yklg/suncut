@@ -132,10 +132,44 @@ final class Segment: Identifiable {
 
     var createdAt: Date
 
-    // MARK: - 配音改写相关（P1）
+// MARK: - 配音改写相关（P1）
 
-    /// 是否"保留原声"（明星出镜镜头 = true，不可重配）
+/// 是否"保留原声"（明星出镜镜头 = true，不可重配）
     var isVoiceLocked: Bool = false
+
+    // MARK: - 段级克隆音色（M2：按分镜时间范围克隆，而非按整段视频）
+
+    /// 本分镜的克隆音色 id（qwen-vc）。nil = 未克隆。
+    ///
+    /// ## 为什么不复用 `Video.clonedVoiceId`（M2 变更）
+    ///
+    /// 旧实现按**视频**克隆一次，参考音恒取人声轨开头 6 秒
+    /// （`VocalSeparationService.referenceClip` 参数无 `-ss`）⇒
+    /// 同一视频里**跨说话人**的分镜会拿到同一个音色。
+    /// 实测某个 58.8 秒视频：0~18 秒是男声（125~156 Hz）、21 秒后是女声（200~256 Hz），
+    /// 而旧实现恒取前 6 秒 ⇒ 选女声段却克隆出男声。
+    ///
+    /// ⚠️ **存量兼容**：旧库的分镜这里为 nil，读侧须回落到 `video.clonedVoiceId`
+    /// （见 `SegmentDub.effectiveDubVariants` 的段级优先/ 视频级回落）。
+    var clonedVoiceId: String?
+
+    /// 注册时**实际送出**的参考音窗口起始帧（-1 = 无记录）。
+    ///
+    /// 必须存窗口而不只是 voiceId：这是「这个分镜能否复用已注册音色」的**唯一依据**
+    /// ——缺了它，复用判据会退化成「全视频共用一个」（= 旧 bug）或「每分镜都注册一次」（= 计费 ×N）。
+    var cloneWindowStartFrame: Int = -1
+
+    /// 窗口终点帧（同上，-1 = 无记录）。
+    var cloneWindowEndFrame: Int = -1
+
+    /// 注册该音色时的千问 API Key 指纹。
+    ///
+    /// ## 为什么从 UserDefaults 挪进模型字段
+    ///
+    /// 旧实现是 `UserDefaults` 键 `clonedVoiceKeyFP_{videoHash}`
+    /// （`DubbingViewModel.ensureClonedVoice`）⇒ 按分镜后键数量会 × 分镜数。
+    /// 挪进字段后由SwiftData 承载，随分镜生命周期一起清理。
+    var cloneKeyFingerprint: String = ""
 
     /// 原版是否参与导出组合（默认参与）；配合 SegmentDub.participatesInCombination 收敛组合数
     var originalParticipatesInCombination: Bool = true

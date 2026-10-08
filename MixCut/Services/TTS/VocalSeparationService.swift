@@ -101,14 +101,39 @@ actor VocalSeparationService {
         return SeparatedStems(vocalsPath: vocals.path, bgmPath: bgm.path)
     }
 
-    /// 从分离出的人声里取一段做克隆参考（默认 ≤6s，转 mp3 便于 base64）。
+    /// 从分离出的人声里取一段做克隆参考（转mp3 便于 base64）。
     /// 必须短而干净：参考太长(含多句原话)会让 qwen 克隆 TTS 间歇性"续读参考内容"，配音混进别段。
-    func referenceClip(fromVocals vocalsPath: String, maxSeconds: Double = 6) async throws -> String {
+    ///
+    /// ## `startSeconds`（M2：段级克隆）
+    ///
+    /// 旧实现**没有 `-ss`** ⇒恒取人声轨 `0~6s`（整个视频开头），
+    /// 而克隆是按视频做的 ⇒ 同一视频里跨说话人的分镜拿到同一个音色。
+    /// 实测某 58.8 秒视频：`0~18s` 男声（125~156 Hz）、`21s+` 女声（200~256 Hz），
+    /// 选女声段却克隆出男声。
+    ///
+    /// ⚠️ `-ss` 必须放在 `-i` **之前**（input seeking）：快，且对 WAV 无关键帧概念时依然精确。
+    /// 仓库内同款顺序见 `FFmpegRunner.extractSegmentPCM`。
+    ///
+    /// - Parameters:
+    ///   - vocalsPath: demucs 产出的人声轨。
+    ///   - startSeconds: 起点（秒）。`0` 保持旧行为（存量视频克隆不变）。
+    ///   - maxSeconds: 最长秒数，默认 `WindowPlanner.maxReferenceSeconds`（6）。
+    func referenceClip(fromVocals vocalsPath: String,
+                       startSeconds: Double = 0,
+                       maxSeconds: Double = WindowPlanner.maxReferenceSeconds) async throws -> String {
         let ff = FFmpegRunner()
         let out = FileHelper.tempDirectory.appendingPathComponent("clone-ref-\(UUID().uuidString).mp3")
-        _ = try await ff.run(arguments: ["-y", "-i", vocalsPath, "-t", String(maxSeconds),
-                                         "-c:a", "libmp3lame", "-b:a", "128k", out.path],
-                            timeoutSeconds: 30)
+        var args: [String] = ["-y"]
+        if startSeconds > 0 {
+            args += ["-ss", String(format: "%.3f", startSeconds)]
+        }
+        args += ["-i", vocalsPath, "-t", String(maxSeconds),
+                 "-c:a", "libmp3lame", "-b:a", "128k", out.path]
+        _ = try await ff.run(arguments: args, timeoutSeconds: 30)
+        // ⚠️ 产出校验（缺失校验会让「无语音样本」被静默送去注册 ⇒ 静默生成错音色）。
+        guard FileManager.default.fileExists(atPath: out.path) else {
+            throw SepError.separateFailed
+        }
         return out.path
     }
 

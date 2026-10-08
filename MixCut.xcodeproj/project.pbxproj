@@ -151,6 +151,7 @@
 		AC0000000000000000000016 /* SlotRetrievalIntent.swift in Sources */ = {isa = PBXBuildFile; fileRef = AD0000000000000000000016 /* SlotRetrievalIntent.swift */; };
 		AC0000000000000000000017 /* BochaResponse.swift in Sources */ = {isa = PBXBuildFile; fileRef = AD0000000000000000000017 /* BochaResponse.swift */; };
 		AC0000000000000000000020 /* RawAudioCache.swift in Sources */ = {isa = PBXBuildFile; fileRef = AD0000000000000000000020 /* RawAudioCache.swift */; };
+		AC0000000000000000000023 /* SegmentCloneWindow.swift in Sources */ = {isa = PBXBuildFile; fileRef = AD0000000000000000000023 /* SegmentCloneWindow.swift */; };
 		AC0000000000000000000021 /* CloneVoicePolicy.swift in Sources */ = {isa = PBXBuildFile; fileRef = AD0000000000000000000021 /* CloneVoicePolicy.swift */; };
 		AC0000000000000000000022 /* CloneSampleReaper.swift in Sources */ = {isa = PBXBuildFile; fileRef = AD0000000000000000000022 /* CloneSampleReaper.swift */; };
 		AC0000000000000000000030 /* ScriptMatcher.swift in Sources */ = {isa = PBXBuildFile; fileRef = AD0000000000000000000030 /* ScriptMatcher.swift */; };
@@ -430,6 +431,7 @@
 		AD0000000000000000000016 /* SlotRetrievalIntent.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = SlotRetrievalIntent.swift; path = Sources/MixCutCore/SlotRetrievalIntent.swift; sourceTree = "<group>"; };
 		AD0000000000000000000017 /* BochaResponse.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = BochaResponse.swift; path = Sources/MixCutCore/BochaResponse.swift; sourceTree = "<group>"; };
 		AD0000000000000000000020 /* RawAudioCache.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = RawAudioCache.swift; path = Sources/MixCutCore/RawAudioCache.swift; sourceTree = "<group>"; };
+		AD0000000000000000000023 /* SegmentCloneWindow.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = SegmentCloneWindow.swift; path = Sources/MixCutCore/SegmentCloneWindow.swift; sourceTree = "<group>"; };
 		AD0000000000000000000021 /* CloneVoicePolicy.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = CloneVoicePolicy.swift; path = Sources/MixCutCore/CloneVoicePolicy.swift; sourceTree = "<group>"; };
 		AD0000000000000000000022 /* CloneSampleReaper.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = CloneSampleReaper.swift; path = Sources/MixCutCore/CloneSampleReaper.swift; sourceTree = "<group>"; };
 		AD0000000000000000000030 /* ScriptMatcher.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = ScriptMatcher.swift; path = Sources/MixCutCore/ScriptMatcher.swift; sourceTree = "<group>"; };
@@ -819,6 +821,7 @@
 				AD0000000000000000000065 /* DubVariantSelector.swift */,
 				AD0000000000000000000060 /* VoiceChoice.swift */,
 				AD0000000000000000000020 /* RawAudioCache.swift */,
+				AD0000000000000000000023 /* SegmentCloneWindow.swift */,
 				AD0000000000000000000022 /* CloneSampleReaper.swift */,
 				AD0000000000000000000021 /* CloneVoicePolicy.swift */,
 				AD0000000000000000000061 /* ScriptDubBinding.swift */,
@@ -1451,6 +1454,7 @@
 				AC0000000000000000000065 /* DubVariantSelector.swift in Sources */,
 				AC0000000000000000000060 /* VoiceChoice.swift in Sources */,
 				AC0000000000000000000020 /* RawAudioCache.swift in Sources */,
+				AC0000000000000000000023 /* SegmentCloneWindow.swift in Sources */,
 				AC0000000000000000000022 /* CloneSampleReaper.swift in Sources */,
 				AC0000000000000000000021 /* CloneVoicePolicy.swift in Sources */,
 				AC0000000000000000000061 /* ScriptDubBinding.swift in Sources */,

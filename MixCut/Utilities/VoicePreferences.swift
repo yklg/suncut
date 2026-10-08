@@ -32,14 +32,29 @@ enum VoicePreferences {
     // MARK: - 素材库链路解析（模型 → 纯值 → Core）
 
     /// 素材库改写/单段配音的音色解析。
-    /// - Parameter suppressVideoClone: M1b 视频级「跟随全局」开关；M1 恒 false。
+    ///
+    /// - Parameters:
+    ///   - suppressVideoClone: M1b 视频级「跟随全局」开关；M1 恒 false。
+    ///   - segment: M2 段级克隆音色。**带默认值 nil ⇒ 行为与M2 前完全一致**
+    ///     （存量7 个调用点无需改动）。
+    ///
+    /// ⚠️ **M2：段级优先 + 视频级回落**
+    /// 克隆改为按分镜时间范围后，同一视频里不同分镜可能持有**不同**的克隆音色
+    /// （实测某 58.8s 视频 0~18s 男声、21s+ 女声）。若仍只读 `video.clonedVoiceId`，
+    /// 解析出的音色会与该分镜实际注册的不一致 ⇒ 合成时用错voiceId。
+    ///
+    /// ⚠️ **漏改的调用点会静默退回视频级**：默认 nil 时行为与旧版一致，
+    /// 所以新增段级语义时**必须**显式传 segment（见 DubbingViewModel 的调用点）。
     static func resolveForLegacy(video: Video,
                                  projectOverrideRaw: String?,
-                                 suppressVideoClone: Bool = false) -> VoiceResolution {
-        VoiceResolver.resolveForLegacyDub(.init(
+                                 suppressVideoClone: Bool = false,
+                                 segment: Segment? = nil) -> VoiceResolution {
+        // 段级优先；段级为nil（存量库/未克隆）时回落视频级。
+        let cloneVoiceID = segment?.clonedVoiceId ?? video.clonedVoiceId
+        return VoiceResolver.resolveForLegacyDub(.init(
             projectOverrideRaw: projectOverrideRaw,
             globalDefaultRaw: globalDefaultRaw,
-            videoCloneVoiceID: video.clonedVoiceId,
+            videoCloneVoiceID: cloneVoiceID,
             suppressVideoClone: suppressVideoClone))
     }
 
