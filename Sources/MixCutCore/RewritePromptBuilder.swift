@@ -30,10 +30,19 @@ public enum RewritePromptBuilder {
                              priorVersions: [[RewritePriorVersion]] = []) -> String {
         let segmentLines = inputs.map { input -> String in
             let origCount = input.originalText.count
-            let budget = CharBudget.forOriginalLength(origCount)
             let kw = input.keywords.isEmpty ? "无" : input.keywords.joined(separator: "、")
             let dur = String(format: "%.2f", input.durationSeconds)
-            return "- segmentId=\(input.segmentId) | 原字数=\(origCount)字（目标≈\(origCount)字，允许 \(budget.minChars)~\(budget.maxChars)字，与原台词字数相当即可，配音会自动加速对齐到画面）| 时长=\(dur)s | 必须保留关键事实=\(kw) | 原台词：\(input.originalText)"
+            // ⚠️ 这里**刻意不写「允许 min~max 字」**（2026-10-08 实测教训）。
+            //
+            // 原文形如「原字数=23字（目标≈23字，允许 23~26字）」—— 四个数字摆在一起，
+            // 推理模型会去**逐条核对**：先把原文数字一遍、算区间、再数新稿字数，
+            // 甚至反复重算「前 4 个字到底是不是『金黄色的』」。
+            // 实测 deepseek-v4-flash 因此把 8192 token 全烧在 reasoning_content 上，
+            // `content` 为空、finish_reason=length ⇒ 用户侧表现为「模型这次没有输出正文」。
+            //
+            // 精确字数已由**代码**校验（`RewriteResultMapper` 按 `CharBudget` 判定并在
+            // 越界时重试），无需模型自己数字数。改成定性表述后模型直接写正文。
+            return "- segmentId=\(input.segmentId) | 长度与原台词相当（略长不略短，配音会自动加速对齐画面）| 时长=\(dur)s | 必须保留关键事实=\(kw) | 原台词：\(input.originalText)"
         }.joined(separator: "\n")
 
         let priorBlock = renderPriorBlock(rounds: cappedPriors(priorVersions), inputs: inputs)

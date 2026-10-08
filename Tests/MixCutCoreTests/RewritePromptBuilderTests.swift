@@ -21,20 +21,35 @@ struct RewritePromptBuilderTests {
         #expect(out.contains("快闪风格"))
     }
 
-    @Test("每个分镜的 id / 原字数 / 允许区间 / 关键词 / 原台词都进入 prompt")
+    /// 契约：每个分镜的 **id / 长度要求 / 关键词 / 原台词** 都必须进 prompt。
+    ///
+    /// ⚠️ 2026-10-08：原先这里还断言了「原字数=N字」「N~M字」两个数字。
+    /// 那两个数字是**被有意删掉的**——见 `RewritePromptBuilder.build` 的注释：
+    /// 把字数区间摆给推理模型，它会去逐条核对（数原文、重算区间、反复确认开头几字），
+    /// 实测 `deepseek-v4-flash` 因此烧光 8192 token 在 `reasoning_content` 上、
+    /// `content` 为空 ⇒ 用户侧表现为「模型这次没有输出正文」。
+    /// 字数改由 `RewriteResultMapper` 按 `CharBudget` **在代码侧**校验（越界重试），
+    /// 不再让模型自己数。
+    ///
+    /// 本用例断言的语义（关键事实不丢）**未变**，只是不再钉「必须出现数字区间」，
+    /// 并补一条反向断言：数字区间**不该**回到 prompt 里。
+    @Test("每个分镜的 id / 长度要求 / 关键词 / 原台词都进入 prompt（且不再回退到数字区间）")
     func includesPerSegmentFacts() {
         let tpl = "{{SEGMENTS}}"
         let out = RewritePromptBuilder.build(template: tpl, inputs: sampleInputs, style: "x")
+        // 核心契约：逐分镜的关键事实一个都不能丢
         #expect(out.contains("s1"))
         #expect(out.contains("s2"))
-        #expect(out.contains("原字数=10字")) // s1 原文 10 字
-        #expect(out.contains("10~12字"))     // s1 区间（forOriginalLength）
-        #expect(out.contains("原字数=5字"))  // s2 原文 5 字
-        #expect(out.contains("5~6字"))       // s2 区间
         #expect(out.contains("补水"))
         #expect(out.contains("9.9元"))
         #expect(out.contains("补水保湿一整天超划算"))
         #expect(out.contains("无")) // s2 无关键词
+        #expect(out.contains("长度与原台词相当"))
+
+        // 反向断言（防回归）：数字字数区间**不允许**回到 prompt。
+        // 一旦回退，推理模型就会重新开始逐字数字数 ⇒ 正文被思考挤空。
+        #expect(!out.contains("原字数="), "prompt 不得再出现「原字数=N字」这类精确数字")
+        #expect(!out.contains("允许 "), "prompt 不得再出现「允许区间」表述")
     }
 
     // MARK: - RewriteStylePlan 风格轮次编排
