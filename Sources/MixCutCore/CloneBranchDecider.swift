@@ -18,29 +18,46 @@ import Foundation
 //
 // 反过来只判 `suppressVideoClone` 也不行：那会退回 M2 前的行为（段级克隆被忽略）。
 //
-// ⇒ 正确形态是**两个条件缺一不可**，且必须抽成可单测的纯函数，
-// 否则它会散落在多个调用点、各自漂移（这正是本缺陷的成因）。
+// ⇒ 正确形态：判据抽成可单测的纯函数，否则它会散落在多个调用点、各自漂移（本缺陷的成因）。
+//
+// ## ⭐ 判据只有一条：`!suppressVideoClone`（不要加第二个条件）
+//
+// 我（2026-10-08）第一版把判据写成两个条件「缺一不可」：
+//
+// ```
+// !suppressVideoClone && (hasAnySegmentClone || hasLegacyVideoClone)   // ❌ 错
+// ```
+//
+// 第二个条件造成了**首次克隆的死锁**（用户实测报告「还是选不了原声克隆」）：
+//
+// ```
+// 想用原声克隆 → 需要 Menu 显示该选项 → 需要 hasAnyClone == true
+//             → 需要先有 segment.clonedVoiceId
+//             → 而克隆只在克隆分支里发生
+//             → 克隆分支要求「已有克隆」⇒ false ⇒ 永不克隆 ⇒ 死锁
+// ```
+//
+// ⚠️ **「有没有已存在的克隆」不参与判据**：
+//   - 没有克隆时**正需要首次克隆** —— 克隆分支内 `ensureClonedVoice` 会自己裁决
+//     （窗口可复用则复用，否则新注册）；它不存在"白跑"的问题
+//   - `voiceFollowsGlobal` 默认 `false`（`Video.swift:91`）⇒ **默认行为就是用原声克隆**，
+//     首次改写会克隆并计费（这与计费确认文案一致：「首次克隆含人声分离与声音注册费用」）
+//
+// ⇒ **若有人把第二个条件加回来，首次克隆会再次死锁。** 这条注释就是防线。
 // ============================================================================
 
 public enum CloneBranchDecider {
 
     /// 本次改写是否走「逐分镜克隆 → 合成」链路。
     ///
-    /// - Parameters:
-    ///   - suppressVideoClone: 用户是否显式选择「跟随全局/项目音色」。
-    ///     **true 时一律不克隆**——即使有克隆字段（尊重用户选择 = 不花钱）。
-    ///   - hasAnySegmentClone: 本作用域内**是否有任一分镜**已按段级克隆。
-    ///     注意是「本作用域」而非「本视频」：段级化必然产生混合状态。
-    ///   - hasLegacyVideoClone: 存量视频级克隆声是否存在（M2 前的库兼容）。
-    ///     新库恒为 false；但存量库必须仍能走克隆，否则用户要重新付费克隆。
-    /// - Returns: true = 走克隆分支。
-    public static func shouldClone(suppressVideoClone: Bool,
-                                   hasAnySegmentClone: Bool,
-                                   hasLegacyVideoClone: Bool = false) -> Bool {
-        // 条件一：用户没显式压制（尊重显式选择——它优先于任何"已有克隆"的事实）
-        guard !suppressVideoClone else { return false }
-        // 条件二：确实有可用的克隆声（段级或存量视频级）
-        return hasAnySegmentClone || hasLegacyVideoClone
+    /// - Parameter suppressVideoClone: 用户是否显式选择「跟随全局/项目音色」。
+    ///   **true 时一律不克隆**——即使有克隆字段（尊重用户选择 = 不花钱）。
+    /// - Returns: true = 走克隆分支（有克隆则复用，无克隆则**首次注册**）。
+    ///
+    /// ⚠️ **判据只有这一条**。「是否已存在克隆」**绝不参与判据**，理由见文件头
+    /// 「判据只有一条」一节：把它写进来会造成首次克隆的死锁。
+    public static func shouldClone(suppressVideoClone: Bool) -> Bool {
+        !suppressVideoClone
     }
 
     /// 该分镜解析出的音色是否属于「克隆链路」（用于 `DubbingViewModel.isCloned` 的段级化）。

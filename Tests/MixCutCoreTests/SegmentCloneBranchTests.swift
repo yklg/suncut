@@ -18,60 +18,59 @@ import Testing
 
 // MARK: - SRV-B5 四组合真值表（判据本身）
 
-@Test("SRV-B5 克隆分支判据真值表：用户显式压制时一律不克隆")
+@Test("SRV-B5 克隆分支判据：只取决于用户是否显式压制")
 func srvB5_truthTable() {
-    // 四种组合全列出，避免只测一半。
-    #expect(CloneBranchDecider.shouldClone(suppressVideoClone: false, hasAnySegmentClone: true) == true,
-            "未压制 + 有段级克隆 ⇒ 应走克隆")
-    #expect(CloneBranchDecider.shouldClone(suppressVideoClone: false, hasAnySegmentClone: false) == false,
-            "未压制 + 无克隆 ⇒ 不应走克隆")
-    #expect(CloneBranchDecider.shouldClone(suppressVideoClone: true, hasAnySegmentClone: true) == false,
-            "⚠️ 已压制 + 有段级克隆 ⇒ **必须不克隆**（否则无视用户选择 ⇒ 花钱）")
-    #expect(CloneBranchDecider.shouldClone(suppressVideoClone: true, hasAnySegmentClone: false) == false,
-            "已压制 + 无克隆 ⇒ 不走克隆")
+    #expect(CloneBranchDecider.shouldClone(suppressVideoClone: false) == true,
+            "未压制 ⇒ 走克隆（**无克隆时正是首次注册的场景**）")
+    #expect(CloneBranchDecider.shouldClone(suppressVideoClone: true) == false,
+            "⚠️ 已压制 ⇒ **必须不克隆**（否则无视用户选择 ⇒ 花钱）")
 }
 
-@Test("SRV-B5b 存量视频级克隆声仍能走克隆（M2 前的库不能要求用户重新付费）")
+@Test("SRV-B5x 死锁守卫：未压制且**没有任何克隆**时必须仍走克隆（防首次死锁）")
+func srvB5x_firstCloneDeadlockGuard() {
+    // ⚠️ 这条是本组**最关键**的回归：我第一版把判据写成
+    //   !suppress && (hasAnySegmentClone || hasLegacyVideoClone)
+    // ⇒ 首次使用时两者皆 false ⇒ 永不克隆 ⇒ segment.clonedVoiceId 永远空
+    // ⇒ 音色菜单永远不显示「原声克隆」⇒ 死锁（用户实测报告）。
+    // 判据**只**取决于是否压制，「是否已存在克隆」不参与。
+    #expect(CloneBranchDecider.shouldClone(suppressVideoClone: false) == true,
+            "首次（无段级克隆、无存量视频级克隆）仍须走克隆分支，否则永远无法克隆")
+}
+
+@Test("SRV-B5b 存量视频级克隆声不参与判据，但压制仍然生效")
 func srvB5b_legacyVideoCloneStillClones() {
-    #expect(CloneBranchDecider.shouldClone(suppressVideoClone: false,
-                                           hasAnySegmentClone: false,
-                                           hasLegacyVideoClone: true),
-            "存量库：视频级有克隆、无段级克隆 ⇒ 仍须走克隆（否则用户要重新注册付费）")
-    #expect(CloneBranchDecider.shouldClone(suppressVideoClone: true,
-                                           hasAnySegmentClone: false,
-                                           hasLegacyVideoClone: true) == false,
+    #expect(CloneBranchDecider.shouldClone(suppressVideoClone: false),
+            "未压制即走克隆（存量是否已有克隆由 ensureClonedVoice 内部裁决复用/新注册）")
+    #expect(CloneBranchDecider.shouldClone(suppressVideoClone: true) == false,
             "即便存量视频级有克隆，用户压制时也不克隆")
 }
 
-@Test("SRV-B5c 反向对照：只判「有克隆」的错误实现必须被 SRV-B4 语义挡住")
+@Test("SRV-B5c 变异哨兵：把「必须有克隆」加回判据 ⇒ 首次死锁，必须被本组挡住")
 func srvB5c_mutationSentinel() {
-    // 变异：把「用户压制」这一条删掉（写成只看 hasAnySegmentClone）。
-    // 这正是我自己上一轮写错的形态 —— 它会让 SRV-B4 场景开始克隆。
-    func mutated(suppress: Bool, hasClone: Bool) -> Bool { hasClone }
-
-    let suppressedWithClone = (suppress: true, hasClone: true)
-    #expect(mutated(suppress: suppressedWithClone.suppress,
-                    hasClone: suppressedWithClone.hasClone) == true,
-            "变异实现会无视用户压制而克隆 —— 这正是 SRV-B4 存在的理由")
-    #expect(CloneBranchDecider.shouldClone(suppressVideoClone: suppressedWithClone.suppress,
-                                          hasAnySegmentClone: suppressedWithClone.hasClone) == false,
-            "真实实现必须与变异实现相反（否则 SRV-B4 是假绿）")
+    // 变异：还原我第一版的错误判据（多一个「必须有克隆」条件）。
+    func mutated(suppress: Bool, hasClone: Bool) -> Bool {
+        !suppress && hasClone          // ← 死锁形态
+    }
+    // 首次场景：未压制 + 没有任何克隆
+    #expect(mutated(suppress: false, hasClone: false) == false,
+            "变异实现在首次场景不走克隆 —— 这正是死锁的成因")
+    #expect(CloneBranchDecider.shouldClone(suppressVideoClone: false) == true,
+            "真实实现必须与变异实现相反（否则 SRV-B5x 是假绿）")
 }
 
 // MARK: - SRV-B2 / B3 特征化绿（钉住既有正确语义，防地基被动）
 
-@Test("SRV-B2 未配置克隆时不走克隆链路（特征化：本来就不该克隆）")
+@Test("SRV-B2 未压制时走克隆分支（无克隆 = 首次注册，不是不该克隆）")
 func srvB2_noCloneNoBranch() {
-    #expect(CloneBranchDecider.shouldClone(suppressVideoClone: false, hasAnySegmentClone: false) == false,
-            "没有任何克隆声时不应走克隆分支（否则会产生无意义的 demucs 分离费用）")
+    #expect(CloneBranchDecider.shouldClone(suppressVideoClone: false),
+            "未压制即走克隆；无克隆时由 ensureClonedVoice 负责首次注册")
 }
 
 @Test("SRV-B3 已配置全局音色且无克隆时不被克隆分支抢走")
 func srvB3_globalVoiceNotStolen() {
     // 用户已配全局音色、且没有克隆 ⇒ 必须走预置音色（不付分离费用）
-    let shouldClone = CloneBranchDecider.shouldClone(suppressVideoClone: false,
-                                                     hasAnySegmentClone: false)
-    #expect(!shouldClone, "无克隆时不应抢走预置音色")
+    let shouldClone = CloneBranchDecider.shouldClone(suppressVideoClone: false)
+    #expect(shouldClone, "未压制时走克隆分支（预置音色只在用户压制或克隆不可用时才用）")
 
     // 且解析结果应落到项目/全局链路（不是 unconfigured，也不是克隆）
     // ⚠️ 前置：全局默认必须是 **VoiceChoiceCoder 的合法编码**（坏串会被当 nil 回落 ⇒
@@ -119,8 +118,8 @@ func srvG5_defaultArgsPreserveLegacyBehavior() {
     let legacyStyle = VoiceResolver.resolveForLegacyDub(.init(videoCloneVoiceID: "vc1"))
     #expect(legacyStyle == .resolved(.videoClone(voiceID: "vc1")),
             "不传新字段时应与 M2 前一致")
-    #expect(CloneBranchDecider.shouldClone(suppressVideoClone: false, hasAnySegmentClone: false) == false,
-            "不传 hasAnySegmentClone 时不得凭空走克隆")
+    #expect(CloneBranchDecider.shouldClone(suppressVideoClone: false),
+            "默认（未压制）走克隆 —— 这是产品的默认行为：用原声克隆")
 }
 
 // MARK: - SRV-G1 的 Core 侧替身：`isCloneVoice` 段级优先

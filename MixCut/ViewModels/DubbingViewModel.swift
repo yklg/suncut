@@ -563,9 +563,7 @@ final class DubbingViewModel {
         //   ① 用户没显式压制克隆 —— 否则无视其选择、强制克隆 ⇒ 花钱
         //   ② 确实有可用克隆声（段级或存量视频级）—— 否则白跑 demucs 分离
         let shouldCloneBranch = CloneBranchDecider.shouldClone(
-            suppressVideoClone: suppressClone,
-            hasAnySegmentClone: hasAnySegmentClone,
-            hasLegacyVideoClone: (video.clonedVoiceId ?? "").isEmpty == false)
+            suppressVideoClone: suppressClone)
         // ⚠️ `unconfigured` **不能**直接报错退出（M2）：「段级已克隆但没配全局音色」的
         // 场景解析也会落到这里，而克隆音色此时**完全可用** ⇒ 直接 return 等于
         // 把唯一可用的路径堵死。克隆分支的音色由 ensureClonedVoice 给出，不需要预置音色。

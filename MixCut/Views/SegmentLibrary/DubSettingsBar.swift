@@ -44,12 +44,31 @@ struct DubSettingsBar: View {
         if case .resolved = voiceResolution { return true }
         return false
     }
-    /// M1b：该视频存在历史克隆声时，音色状态行才是可切换开关（否则没有「原声克隆」可切）。
-    /// 标量字段读取（非关系边），视图直读合法。
-    private var hasCloneVoice: Bool {
-        guard let id = video.clonedVoiceId?.trimmingCharacters(in: .whitespacesAndNewlines) else { return false }
-        return !id.isEmpty
+    /// **本视频**内「可改写」的分镜（全视频口径）。
+    ///
+    /// ⚠️ 刻意用入参 `videoSegments`，**不用** `video.segments`：后者是 SwiftData 关系
+    /// fault，已真删的分镜可能仍挂在内存对象上，读到就 SIGTRAP（见本文件 `:12-13`）。
+    /// ⚠️ 也必须排除 `isVoiceLocked` 与空台词：否则被保留原声的镜头与空台词分镜
+    /// 会让「全部已克隆」**永远为假** ⇒ 三态永远退化成第二态。
+    private var cloneableSegments: [Segment] {
+        videoSegments.filter { !$0.isVoiceLocked && !$0.text.isEmpty }
     }
+    /// 是否**有任一分镜**已按段级克隆。
+    private var hasAnyClone: Bool {
+        cloneableSegments.contains { ($0.clonedVoiceId ?? "").isEmpty == false }
+    }
+    /// 是否**全部分镜**都已按段级克隆（存量视频级克隆不算——它没有段级窗口信息）。
+    private var hasAllClone: Bool {
+        let cs = cloneableSegments
+        guard !cs.isEmpty else { return false }
+        return cs.allSatisfy { ($0.clonedVoiceId ?? "").isEmpty == false }
+    }
+    /// M1b：该视频存在克隆声时，音色状态行才是可切换开关（否则没有「原声克隆」可切）。
+    ///
+    /// ⚠️ **M2：改按分镜聚合**。旧实现读 `video.clonedVoiceId`，而该字段在 M2 后
+    /// 生产代码已无写点（恒 nil）⇒ `hasCloneVoice` 恒 false ⇒ 音色切换菜单整个不渲染
+    /// ⇒ 用户在素材库里**看不到也选不了「原声克隆」**（用户报告的现象）。
+    private var hasCloneVoice: Bool { hasAnyClone }
     /// 状态文本颜色（克隆=次要灰，全局/项目预置=品牌蓝，未配置=灰）。
     private var isVoiceConfigEnabledColor: Color {
         isVoiceConfigured && usesGlobalVoiceWithoutClone ? Color.accentColor : .secondary
@@ -72,16 +91,42 @@ struct DubSettingsBar: View {
 
     /// 当前生效音色解析（视图只展示，真规则在 Core VoiceResolver）。
     /// M1b：透传视频级「跟随全局/项目」开关（voiceFollowsGlobal），压制历史克隆声。
+    ///
+    /// ⚠️ **M2：必须传段级信息**，否则解析链里只有视频级 `videoCloneVoiceID`，
+    /// 而它在 M2 后恒 nil ⇒ 永远解析成预置/全局音色
+    /// ⇒ 状态文案恒显示「全局默认」、`:84` 的「原声克隆」分支成为死代码。
+    ///
+    /// 本组件是**视频级作用域**（`let video` + `videoSegments`），拿不到单一 segment
+    /// ⇒ 传「第一个已克隆的分镜」作为代表（各分镜音色可能不同，状态行只能给总览）。
     private var voiceResolution: VoiceResolution {
         VoicePreferences.resolveForLegacy(video: video,
                                           projectOverrideRaw: project.preferredVoiceChoiceRaw,
-                                          suppressVideoClone: video.voiceFollowsGlobal)
+                                          suppressVideoClone: video.voiceFollowsGlobal,
+                                          segment: videoSegments.first(where: { ($0.clonedVoiceId ?? "").isEmpty == false }),
+                                          hasAnySegmentClone: hasAnyClone)
     }
+    /// 音色状态文案（**三态**，M2）。
+    ///
+    /// ⚠️ 为什么必须三态而不是二值：段级克隆必然产生**混合状态**
+    /// （视频内部分分镜已克隆、部分还没）。若用二值「有/无」，混合状态会显示成
+    /// 「各分镜用各自原声」—— **这是谎话**：未克隆的那几段实际会走全局默认。
+    ///
+    /// 三态：
+    /// - 全部分镜已克隆 ⇒ 「各分镜用各自原声」
+    /// - **部分已克隆**   ⇒ 「部分分镜用原声（其余用全局默认）」
+    /// - 都没有          ⇒ 「当前音色：XXX（全局默认 / 项目覆盖 / 我的复刻）」
     private var voiceStatusText: String {
+        // 三态判据优先于 voiceResolution：后者只代表「第一个已克隆分镜」这一个样本，
+        // 覆盖不了混合状态。
+        if hasAnyClone, !video.voiceFollowsGlobal {
+            return hasAllClone ? "各分镜用各自原声" : "部分分镜用原声（其余用全局默认）"
+        }
         switch voiceResolution {
         case .resolved(let choice):
             switch choice {
-            case .videoClone: return "原声克隆（本视频）"
+            case .videoClone:
+                // 存量视频级克隆（无段级窗口信息）走这里；段级克隆已被上面的三态接住。
+                return "原声克隆（旧·整片）"
             case .preset(let id):
                 let name = VoiceCatalog.displayName(id: id)
                 return project.preferredVoiceChoiceRaw != nil
@@ -135,9 +180,9 @@ struct DubSettingsBar: View {
                             dubVM.setVideoFollowsGlobal(false, video: video, context: modelContext)
                         } label: {
                             if video.voiceFollowsGlobal {
-                                Text("原声克隆（本视频）")
+                                Text("各分镜用各自原声")
                             } else {
-                                Label("原声克隆（本视频）", systemImage: "checkmark")
+                                Label("各分镜用各自原声", systemImage: "checkmark")
                             }
                         }
                         Button {
