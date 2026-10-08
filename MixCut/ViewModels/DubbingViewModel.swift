@@ -361,10 +361,19 @@ final class DubbingViewModel {
     }
     private var playbackResetTask: Task<Void, Never>?
 
-    /// 该 voiceId 是否是这个视频的克隆原声。
-    private func isCloned(_ voiceId: String, _ video: Video) -> Bool {
-        guard let cv = video.clonedVoiceId else { return false }
-        return voiceId == cv
+    /// 该 voiceId 是否是这个**分镜**（或该视频）的克隆原声。
+    ///
+    /// ⚠️ **M2：必须收 segment**。旧签名收 `video`，只比 `video.clonedVoiceId` ——
+    /// 而该字段在 M2 后**生产代码已无写点**（恒 nil）⇒ 段级克隆音色恒判为「非克隆」
+    /// ⇒ 落进 `generateAudio` 的 `.preset` 分支 ⇒ `VoiceCatalog.voice(id:)` 查不到
+    /// ⇒ 报「该变体的音色未配置或已失效」。
+    ///
+    /// 判据本身在 Core（`CloneBranchDecider.isCloneVoice`），此处只做取参数。
+    private func isCloned(_ voiceId: String, _ segment: Segment) -> Bool {
+        CloneBranchDecider.isCloneVoice(
+            voiceId,
+            segmentCloneVoiceID: segment.clonedVoiceId,
+            legacyVideoCloneVoiceID: segment.video?.clonedVoiceId)
     }
 
     // MARK: - 原声克隆（一键改写时自动确保已克隆）
@@ -532,18 +541,49 @@ final class DubbingViewModel {
         beginBusy(vid)
         defer { endBusy(vid) }
 
-        // 音色解析（唯一入口；UI 与 MCP 同此）：视频克隆优先（存量零变化），
+        // 音色解析（唯一入口；UI 与 MCP 同此）：**段级克隆优先**（M2），
         // 未克隆或已显式跟随全局 → 项目覆盖/全局预置音色，跳过克隆、不付分离注册费。
+        //
+        // ⚠️ **M2：必须把段级信息传进去**，否则分镜级克隆在解析链里不存在：
+        // `LegacyInput` 原先只有视频级 `videoCloneVoiceID`，而它在 M2 后生产代码已无写点
+        // ⇒ 恒 nil ⇒ 已配全局音色时解析成 `.preset` ⇒ 下面的分支判定不是 qwenVC
+        // ⇒ **跳过 `ensureClonedVoice`，已付费注册的段级克隆音色被无视，合成出全局音色的声音**。
+        let hasAnySegmentClone = targets.contains { ($0.clonedVoiceId ?? "").isEmpty == false }
+        let suppressClone = video.voiceFollowsGlobal
         let resolution = VoicePreferences.resolveForLegacy(
             video: video, projectOverrideRaw: projectOverrideRaw,
-            suppressVideoClone: video.voiceFollowsGlobal)
+            suppressVideoClone: suppressClone,
+            segment: targets.first(where: { $0.clonedVoiceId?.isEmpty == false }),
+            hasAnySegmentClone: hasAnySegmentClone)
+        // ⚠️ 分支判据**不能**只看 `initialChoice.engine == .qwenVC`：那依赖解析结果，
+        // 而解析在「视频级 id 为 nil、段级有克隆」时会落到预置音色 ⇒ 分支判错
+        // ⇒ **已付费注册的段级克隆被跳过，合成出全局音色的声音**（实测 R3）。
+        //
+        // 判据抽在 Core（`CloneBranchDecider`），**两个条件缺一不可**：
+        //   ① 用户没显式压制克隆 —— 否则无视其选择、强制克隆 ⇒ 花钱
+        //   ② 确实有可用克隆声（段级或存量视频级）—— 否则白跑 demucs 分离
+        let shouldCloneBranch = CloneBranchDecider.shouldClone(
+            suppressVideoClone: suppressClone,
+            hasAnySegmentClone: hasAnySegmentClone,
+            hasLegacyVideoClone: (video.clonedVoiceId ?? "").isEmpty == false)
+        // ⚠️ `unconfigured` **不能**直接报错退出（M2）：「段级已克隆但没配全局音色」的
+        // 场景解析也会落到这里，而克隆音色此时**完全可用** ⇒ 直接 return 等于
+        // 把唯一可用的路径堵死。克隆分支的音色由 ensureClonedVoice 给出，不需要预置音色。
         let initialChoice: VoiceChoice
         switch resolution {
         case .unconfigured:
-            errorState = .init(
-                message: "尚未配置配音音色：请到「设置 → 配音」选择一个全局音色后再改写；需要保留原博主音色时，可先在该视频上克隆原声。",
-                kind: .generic)
-            return
+            guard shouldCloneBranch else {
+                errorState = .init(
+                    message: "尚未配置配音音色：请到「设置 → 配音」选择一个全局音色后再改写；需要保留原博主音色时，可先在该视频上克隆原声。",
+                    kind: .generic)
+                return
+            }
+            // 占位：克隆分支内从不读 `initialChoice.voiceID`（各分镜音色来自 ensure 的返回值）。
+            // 占位：**绝不能传空串** —— 空 voiceId 是「貌似合法的坏值」，
+            // 一旦有人后来读 `initialChoice.voiceID` 就会拿到"音色 id 为空"这种静默错误。
+            // 克隆分支内确实不读它（各分镜音色来自 ensure 的返回值），
+            // 用视频级 id 作占位；存量视频本来就有值，新库留空也不会被读到。
+            initialChoice = .videoClone(voiceID: video.clonedVoiceId ?? "unresolved-segment-clone")
         case .resolved(let resolved):
             initialChoice = resolved
         }
@@ -553,7 +593,7 @@ final class DubbingViewModel {
         // 旧实现按视频克隆一次、参考音恒取人声轨开头 6 秒 ⇒ 同一视频里跨说话人的分镜
         // 拿到同一个音色（实测某 58.8s 视频 0~18s 男声、21s+ 女声 ⇒ 选女声段却克隆出男声）。
         var voicesBySegment: [UUID: String]
-        if initialChoice.engine == .qwenVC {
+        if shouldCloneBranch {
             // 逐分镜克隆分支：每个分镜用自己的时间范围取参考音；
             // 窗口重叠的相邻分镜会复用（省一次注册计费），见 ensureClonedVoice。
             guard !targets.isEmpty else { return }
@@ -1053,7 +1093,7 @@ final class DubbingViewModel {
         let choice: VoiceChoice
         if let resolvedChoice {
             choice = resolvedChoice
-        } else if isCloned(dub.voiceId, video) {
+        } else if isCloned(dub.voiceId, segment) {
             choice = .videoClone(voiceID: dub.voiceId)
         } else if VoiceCatalog.voice(id: dub.voiceId) != nil {
             choice = .preset(voiceID: dub.voiceId)

@@ -48,14 +48,17 @@ enum VoicePreferences {
     static func resolveForLegacy(video: Video,
                                  projectOverrideRaw: String?,
                                  suppressVideoClone: Bool = false,
-                                 segment: Segment? = nil) -> VoiceResolution {
+                                 segment: Segment? = nil,
+                                 hasAnySegmentClone: Bool = false) -> VoiceResolution {
         // 段级优先；段级为nil（存量库/未克隆）时回落视频级。
         let cloneVoiceID = segment?.clonedVoiceId ?? video.clonedVoiceId
         return VoiceResolver.resolveForLegacyDub(.init(
             projectOverrideRaw: projectOverrideRaw,
             globalDefaultRaw: globalDefaultRaw,
             videoCloneVoiceID: cloneVoiceID,
-            suppressVideoClone: suppressVideoClone))
+            suppressVideoClone: suppressVideoClone,
+            segmentCloneVoiceID: segment?.clonedVoiceId,
+            hasAnySegmentClone: hasAnySegmentClone))
     }
 
     /// 产品脚本成片的音色解析（只看项目覆盖与全局默认，不回退视频克隆）。
