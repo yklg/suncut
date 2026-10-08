@@ -417,8 +417,6 @@ struct TombstoneReadGuardTests {
         (#"MixCut/Views/Import/ImportView.swift"#, "videos", #"let thumbPaths = project.videos.compactMap(\.thumbnailPath)"#, 1),
         (#"MixCut/Views/Overview/ProjectOverviewView.swift"#, "segments", #"Text( video.segments.count )"#, 1),
         (#"MixCut/Views/Schemes/NarrativeStructureEditorView.swift"#, "videos", #"project.videos.flatMap(\.segments).map { seg in"#, 1),
-        // M1b 销账 1/2：变体枚举改走 DubbingVM.effectiveSlotVariants 纯值投影（R3 去重），
-        // 视图不再裸读 segment.effectiveDubVariants。
         (#"MixCut/Views/Schemes/SchemeDetailView.swift"#, "orderedSegments", #"ForEach(Array(scheme.orderedSegments.enumerated()), id: \.element.id) { idx, schemeSeg in"#, 1),
         (#"MixCut/Views/Schemes/SchemeDetailView.swift"#, "orderedSegments", #"ForEach(scheme.orderedSegments) { schemeSeg in"#, 1),
         (#"MixCut/Views/Schemes/SchemeDetailView.swift"#, "orderedSegments", #"for ss in scheme.orderedSegments {"#, 1),
@@ -434,17 +432,15 @@ struct TombstoneReadGuardTests {
         (#"MixCut/Views/Schemes/SchemeListView.swift"#, "schemes", #"} else if strategy.isNarrativeTemplate && strategy.schemes.isEmpty {"#, 1),
         (#"MixCut/Views/Schemes/SchemeListView.swift"#, "videos", #"let allSegments = project.videos.flatMap(\.segments)"#, 1),
         (#"MixCut/Views/Schemes/SegmentPickerDrawer.swift"#, "schemeSegments", #"Set(scheme.schemeSegments.compactMap { liveIndex.uuid(for: $0.segment) })"#, 1),
-        // 全局音色：素材库变体计数已收口到 DubbingVM.readyDubCount（视图不再裸读 segmentDubs），销账 1 条。
         (#"MixCut/Views/SegmentLibrary/SegmentLibraryView.swift"#, "schemeSegments", #"ToastCenter.shared.show( segment.schemeSegments.count ,"#, 1),
         (#"MixCut/Views/SegmentLibrary/SegmentLibraryView.swift"#, "schemeSegments", #"if segment.schemeSegments.isEmpty {"#, 1),
         (#"MixCut/Views/SegmentLibrary/SegmentLibraryView.swift"#, "videos", #"let videoCovers = project.videos.compactMap(\.thumbnailPath)"#, 1),
-        // 计数 2：字幕字号 / 遮挡设置两个「应用到同视频全部分镜」各一处（G08d 守卫自生成基线核对）。
         (#"MixCut/Views/SegmentLibrary/SegmentPropertiesSection.swift"#, "segments", #"let targets = video.segments.filter { $0.id != source.id }"#, 2),
-        // M1b 销账 2/2：检查器有效变体改走 DubbingVM.effectiveLegacyVariants（R3，含项目覆盖/跟随开关）。
         (#"MixCut/Views/SegmentLibrary/SegmentVariantInspector.swift"#, "segmentDubs", #"?? segment.segmentDubs.first { $0.textVariantIndex == t }"#, 1),
-        // 全局音色：变体下标与空壳判定收口到 DubbingVM（presentVariantIndices/hasOnly…），销账 1 条。
+        (#"MixCut/Views/SegmentLibrary/SegmentVariantInspector.swift"#, "segmentDubs", #"for dub in segment.segmentDubs where !dub.isDroppedFromContext {"#, 1),
         (#"MixCut/Views/SegmentLibrary/SegmentVariantInspector.swift"#, "segmentDubs", #"segment.segmentDubs.first { $0.textVariantIndex == t && $0.voiceId == v }"#, 1),
         (#"MixCut/Views/SegmentLibrary/SegmentVariantInspector.swift"#, "segmentDubs", #"} else if segment.segmentDubs.isEmpty {"#, 1),
+        (#"MixCut/Views/SegmentLibrary/SegmentVariantInspector.swift"#, "segments", #"vid.segments.contains(where: { $0.id != segment.id"#, 1),
         (#"MixCut/Views/SegmentLibrary/ShotEditSheet.swift"#, "variants", #"ForEach(shot.variants.sorted { $0.createdAt < $1.createdAt }) { v in"#, 1),
     ]
 
@@ -474,7 +470,11 @@ struct TombstoneReadGuardTests {
                 "SegmentLibraryView 没有任何命中 ⇒ 取样面没覆盖崩点所在文件，下面的零断言是空的")
         #expect(!got.keys.contains { $0.hasPrefix("MixCut/Views/SegmentLibrary/SegmentLibraryView.swift|segments|") },
                 "本次 SIGTRAP 的直接触发点（SegmentLibraryView 读 video.segments）又回来了")
-        #expect(hits.count == 41, "命中总数应为 41（M1b R3 再把变体枚举 2 处裸读收口到 VM：43→41），实得 \(hits.count)")
+        // 数量锁：实得 43（M2 引入：`SegmentVariantInspector.voices` 段级优先时新增
+        // `segmentDubs` 遍历与 `video.segments.contains`（复用可能性判定）两处读取）。
+        // ⚠️ 数字**由生成腿读出**（`TOMBSTONE_DUMP_BASELINE=1 swift test --filter dumpBaselineForRegeneration`，
+        // 看 `.scratch/guard_baseline_new.txt` 首行 TOTAL_HITS），不是手数。
+        #expect(hits.count == 43, "命中总数应为 43（M2 新增 voices 的两处遍历），实得 \(hits.count)")
     }
 
     @Test("G08c 敏感性变异：往真实取样面里注入一处新裸读，门必须立刻认出来")
@@ -779,14 +779,12 @@ struct TombstoneReadGuardTests {
         (#"MixCut/Views/SegmentLibrary/SegmentLibraryView.swift"#, "video", #"let fps = segment.video?.fps ?? 0"#, 1),
         (#"MixCut/Views/SegmentLibrary/SegmentLibraryView.swift"#, "video", #"let st = segment.video?.status, st != .completed, st != .failed {"#, 1),
         (#"MixCut/Views/SegmentLibrary/SegmentPropertiesSection.swift"#, "video", #"private var fps: Double { segment.video?.fps ?? 30 }"#, 1),
-        (#"MixCut/Views/SegmentLibrary/SegmentVariantInspector.swift"#, "video", #"if let vid = segment.video?.id {"#, 1),
         (#"MixCut/Views/SegmentLibrary/SegmentVariantInspector.swift"#, "video", #"if !dubVM.isBusy(videoID: segment.video?.id) {"#, 1),
-        (#"MixCut/Views/SegmentLibrary/SegmentVariantInspector.swift"#, "video", #"if (segment.video?.clonedVoiceId ?? ).isEmpty {"#, 1),
         (#"MixCut/Views/SegmentLibrary/SegmentVariantInspector.swift"#, "video", #"if dubVM.isBusy(videoID: segment.video?.id) {"#, 1),
-        // 空状态忙碌门（与 rewriteBar 同源）：同一行两次跨边读取（busy 判断 + 取 id）。
         (#"MixCut/Views/SegmentLibrary/SegmentVariantInspector.swift"#, "video", #"if dubVM.isBusy(videoID: segment.video?.id), let vid = segment.video?.id {"#, 2),
         (#"MixCut/Views/SegmentLibrary/SegmentVariantInspector.swift"#, "video", #"if id == segment.video?.clonedVoiceId { return }"#, 1),
-        (#"MixCut/Views/SegmentLibrary/SegmentVariantInspector.swift"#, "video", #"private var voices: [String] { segment.video?.selectedVoiceIds ?? [] }"#, 1),
+        (#"MixCut/Views/SegmentLibrary/SegmentVariantInspector.swift"#, "video", #"if let vid = segment.video?.id {"#, 1),
+        (#"MixCut/Views/SegmentLibrary/SegmentVariantInspector.swift"#, "video", #"out = (segment.video?.selectedVoiceIds ?? []).filter { !$0.isEmpty }"#, 1),
         (#"MixCut/Views/SegmentLibrary/SegmentVariantInspector.swift"#, "video", #"} else if !dubVM.isBusy(videoID: segment.video?.id) {"#, 1),
         (#"MixCut/Views/SegmentLibrary/ShotEditSheet.swift"#, "video", #"private var fps: Double { segment.video?.fps ?? 30 }"#, 2),
         (#"MixCut/Views/SegmentLibrary/ShotEditSheet.swift"#, "video", #"private var srcPath: String { segment.video?.localPath ?? }"#, 1),

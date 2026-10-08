@@ -303,7 +303,7 @@ struct SettingsView: View {
                             }
                         Text("开启后模型先推理再作答，效果更好但更慢、消耗更多 tokens。对分镜分析、方案生成、台词改写等所有 AI 调用生效")
                             .font(DesignTokens.Typography.microRegular)
-                            .foregroundStyle(.tertiary)
+                            .foregroundStyle(.secondary)
                     }
                 }
 
@@ -384,7 +384,7 @@ struct SettingsView: View {
                 // 同 Key 身份声明：Key 按提供商身份存储，文本智能选千问时与此处是同一把。
                 Text("千问 Key 同时服务上方文本智能（提供商选「千问」时）与本区域四项能力，是同一把 Key，任一处保存两边同时生效。")
                     .font(DesignTokens.Typography.microRegular)
-                    .foregroundStyle(.tertiary)
+                    .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
 
                 // 共存说明
@@ -466,7 +466,14 @@ struct SettingsView: View {
                 LabeledContent {
                     HStack(spacing: 8) {
                         Button {
-                            auditionPlayer.playPreset(globalVoiceID)
+                            // M2：传**音色身份**（含引擎/型号），不再传裸 voiceId ——
+                            // 裸 id 让播放器无从判断该用 CosyVoice 还是 qwen 客户端，
+                            // 导致复刻音色试听必然失败且错误文案被误诊。
+                            if let ch = VoicePreferences.globalDefaultChoice {
+                                auditionPlayer.play(ch)
+                            } else {
+                                auditionPlayer.playPreset(globalVoiceID)   // 未配置 ⇒ 明确报错
+                            }
                         } label: {
                             Label(auditionPlayer.isAuditioning ? "试听中…" : "试听",
                                   systemImage: "play.circle")
@@ -495,7 +502,7 @@ struct SettingsView: View {
 
                 Text("所有项目的改写配音与「产品脚本成片」默认使用该音色，直接合成、无需逐视频克隆。项目可在概览页单独覆盖；已克隆原声的视频仍保留其克隆音色。")
                     .font(DesignTokens.Typography.microRegular)
-                    .foregroundStyle(.tertiary)
+                    .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
 
                 // M3：原始音频缓存用量与清理。放在「存储」外的「配音」区，
@@ -524,7 +531,7 @@ struct SettingsView: View {
                 }
                 Text("缓存的是 TTS 原始音频（同一段文案换分镜重生成时可直接复用，省一次合成计费）；每个分镜仍按各自时长单独对齐。已生成配音是独立的成品文件，清空缓存不影响它们。")
                     .font(DesignTokens.Typography.microRegular)
-                    .foregroundStyle(.tertiary)
+                    .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
 
                 // M2：我的复刻音色库。放在「配音」区里，因为它就是配音音色的一部分。

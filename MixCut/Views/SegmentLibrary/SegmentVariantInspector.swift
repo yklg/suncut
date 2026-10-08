@@ -31,7 +31,36 @@ struct SegmentVariantInspector<PropertiesContent: View>: View {
 
     private func variantLetter(_ t: Int) -> String { String(Character(UnicodeScalar(65 + t)!)) }
 
-    private var voices: [String] { segment.video?.selectedVoiceIds ?? [] }
+    /// 该分镜要显示的音色列（M2）。
+    ///
+    /// ## 为什么不只读 `video.selectedVoiceIds`
+    ///
+    /// 实测症状：选「全局音色」改写后，卡片上**连播放按钮都没有**。
+    /// 根因不是合成失败（合成失败只会让该格显示「生成」按钮）——
+    /// 而是这个字段的**全部**写点都在克隆链路
+    /// （`DubbingViewModel.ensureClonedVoice`），全局音色分支从不写它
+    /// ⇒ 空数组 ⇒ `ForEach` 零列 ⇒ 整块不渲染。
+    ///
+    /// ## 现在的口径（段级优先 ⇒ 变体实据 ⇒ 视频级回落）
+    ///
+    /// 1. `segment.clonedVoiceId`：该分镜自己的克隆音色（M2 段级克隆）；
+    /// 2. `segmentDubs` 里**实际出现过**的 voiceId：合成成功就有，
+    ///    这是「合成确实发生过」的最强证据（比任何配置字段都可靠）；
+    /// 3. `video.selectedVoiceIds`：存量库回落。
+    private var voices: [String] {
+        var out: [String] = []
+        if let sv = segment.clonedVoiceId, !sv.isEmpty { out.append(sv) }
+        // 变体实据：按首次出现顺序去重（保持列序稳定，不随 Set 抖动）
+        var seen = Set<String>()
+        for dub in segment.segmentDubs where !dub.isDroppedFromContext {
+            let v = dub.voiceId
+            if !v.isEmpty && seen.insert(v).inserted { out.append(v) }
+        }
+        if out.isEmpty {
+            out = (segment.video?.selectedVoiceIds ?? []).filter { !$0.isEmpty }
+        }
+        return out
+    }
     /// 实际已存在的改写版下标（VM 投影，已排除未绑定脚本空壳）。
     private var presentVariantIndices: [Int] {
         dubVM.presentVariantIndices(segment)
@@ -41,7 +70,10 @@ struct SegmentVariantInspector<PropertiesContent: View>: View {
         dubVM.hasOnlyUnboundScriptShells(segment)
     }
     private func voiceName(_ id: String) -> String {
-        if id == segment.video?.clonedVoiceId { return "原声克隆" }
+        // M2：区分「本分镜克隆」与「旧·整片克隆」——段级克隆后两者可能是不同的 voiceId，
+        // 混称「原声克隆」会让用户以为选分镜不影响音色（正是本次 bug 的认知来源）。
+        if id == segment.clonedVoiceId { return "原声克隆（本分镜）" }
+        if id == segment.video?.clonedVoiceId { return "原声克隆（旧·整片）" }
         return VoiceCatalog.displayName(id: id)
     }
     private func dub(textVariant t: Int, voiceId v: String) -> SegmentDub? {
@@ -148,13 +180,29 @@ struct SegmentVariantInspector<PropertiesContent: View>: View {
 
     // MARK: - 单分镜改写（确认策略按「视频是否已克隆」，空状态与 matrix 共用）
 
-    /// 入口：未克隆先弹计费确认；已克隆（小额）直接执行。
+    /// 入口：本分镜未克隆先弹计费确认；已克隆（小额）直接执行。
+    ///
+    /// ⚠️ M2：判据从**视频级**改成**段级优先 + 复用可能性**。
+    /// 视频级判据在按分镜克隆后会误判两种情况：
+    /// ① 该视频别的分镜已克隆 ⇒ 本分镜其实**可能命中窗口复用**（不必再注册）
+    ///    ⇒ 却弹出「要花钱」的确认，用户以为又要扣费；
+    /// ② 本分镜已克隆但视频级字段为空（存量库）⇒ 重复弹确认。
     private func runSingleRewrite() {
-        if (segment.video?.clonedVoiceId ?? "").isEmpty {
-            showCloneCostConfirm = true
-        } else {
+        // 本分镜已有段级克隆 ⇒ 小额，直接执行。
+        if let sv = segment.clonedVoiceId, !sv.isEmpty {
             proceedSingleRewrite()
+            return
         }
+        // 该视频内已有其它分镜的克隆窗口 ⇒ 本分镜很可能复用（`ensureClonedVoice` 会判定），
+        // 先执行；真的需要新注册时，VM 侧会照常弹计费确认。
+        if let vid = segment.video,
+           vid.segments.contains(where: { $0.id != segment.id
+               && ($0.clonedVoiceId ?? "").isEmpty == false
+               && $0.cloneWindowEndFrame > $0.cloneWindowStartFrame }) {
+            proceedSingleRewrite()
+            return
+        }
+        showCloneCostConfirm = true
     }
 
     /// 实际执行：single 作用域走统一管线（句柄由 VM 注册表持有，切换分镜不取消）。

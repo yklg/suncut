@@ -85,9 +85,30 @@ enum APIErrorClassifier {
             || l.contains("good standing") {
             return "账户已欠费或余额不足：请到阿里云百炼（DashScope）控制台充值/检查额度后重试。"
         }
+        // ⚠️ **音色类型与合成模型不匹配**（M2，放在克隆失效规则**之前**）
+        //
+        // 实测踩坑：试听预置音色（CosyVoice）时，若请求体里带了 voice 字段，
+        // 报错文本会同时含 `invalidparameter` 与 `voice` ⇒ 被下面那条规则捞走
+        // ⇒ 归因成「克隆音色绑定原账户、Key 换了」——**而预置音色根本没有这个概念**，
+        // 用户被引导去查完全无关的设置。
+        //
+        // 判据：提到 model/模型 不匹配时优先归因到「类型不匹配」。
+        // ⚠️ 这一批只加**能确定**的判据（关键词明确的情形）；真实试听错误文本
+        // 至今未取到（ai-fail 目录只覆盖 AI 层，TTS 层此前零留证），
+        // 已在 `VoiceAuditionPlayer.play` 补留证，待复现后再补更精确的规则。
+        if (l.contains("model") || l.contains("模型"))
+            && (l.contains("mismatch") || l.contains("not match") || l.contains("不匹配")
+                || l.contains("unsupported"))
+            && l.contains("voice") {
+            return "音色类型与合成模型不匹配：预置音色要用预置模型合成，不能与克隆/复刻音色混用。若这是在试听，请重新从设置里选择音色；若仍失败，请反馈这段错误。"
+        }
         // 克隆音色失效（多因更换 API Key，旧克隆音色绑定原账户）
-        if l.contains("tts speak request failed")
-            || (l.contains("invalidparameter") && l.contains("voice")) {
+        //
+        // ⚠️ 收窄（M2）：`invalidparameter + voice` **单独出现已不足以判定Key 失效**
+        // —— 太多原因（模型不匹配、voice 不存在、账号无权限）都会长这样。
+        // 现在只有出现 `tts speak request failed`（DashScope 的明确措辞）时才直接归因 Key，
+        // 其余情况落到下面的 400 兜底，避免把用户引去查 Key。
+        if l.contains("tts speak request failed") {
             return "克隆音色在当前 API Key 下不可用——通常是更换了千问 API Key（克隆音色绑定原账户）。请重新「一键改写」自动用当前 Key 重克隆原声；若仍失败，请确认该 Key 已开通 qwen3-tts-vc 声音克隆。"
         }
         // API Key 无效 / 未授权

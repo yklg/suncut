@@ -52,7 +52,8 @@ struct CloneLibrarySection: View {
                 }
                 Spacer()
                 Button {
-                    auditionPlayer.playPreset(p.voiceId)
+                    // M2：传音色身份（profile 自带 voiceChoice，含它绑定的型号）。
+                    auditionPlayer.play(p.voiceChoice)
                 } label: {
                     Image(systemName: auditionPlayer.isAuditioning ? "stop.circle" : "play.circle")
                 }

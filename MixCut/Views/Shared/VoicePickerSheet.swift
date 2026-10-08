@@ -208,7 +208,7 @@ struct VoicePickerSheet: View {
                         .lineLimit(1)
                 }
                 Spacer()
-                auditionButton(voiceID: voice.id, auditioning: auditioning)
+                auditionButton(choice: .preset(voiceID: voice.id), auditioning: auditioning)
             }
             .padding(.horizontal, 14)
             .padding(.vertical, 8)
@@ -218,12 +218,14 @@ struct VoicePickerSheet: View {
         .buttonStyle(.plain)
     }
 
-    private func auditionButton(voiceID: String, auditioning: Bool) -> some View {
+    /// - Parameter choice: 音色身份（M2）。本列表是 `VoiceCatalog.active`（预置），
+    ///   `.preset(voice.id)` 即完整身份 —— 预置音色走 CosyVoice 客户端。
+    private func auditionButton(choice: VoiceChoice, auditioning: Bool) -> some View {
         Button {
             if auditioning {
                 auditionPlayer.stop()
             } else {
-                auditionPlayer.playPreset(voiceID)
+                auditionPlayer.play(choice)
             }
         } label: {
             if auditioning {
