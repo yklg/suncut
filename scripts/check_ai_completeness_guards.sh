@@ -100,6 +100,18 @@ expect_min "18 秒规则的定义只在核心层一处" \
   "$(code_count_in_file "$CORE/SegmentationCompleteness.swift" 'static let promptSegmentLimit')" 1
 
 echo
+echo "== 分镜生产者唯一性（抓的失败：规则只插在一条链上，「重跑分析」绕过 = 同实体多处直写）=="
+# 「短视频被切碎」「重跑绕过保护」这两个症状同根：Segment 此前在 5 处直接构造，
+# 任何分镜规则都要逐点插一遍，漏一处就分叉。现在只允许 SegmentCommitter 一家构造。
+COMMITTER="$ROOT/MixCut/Services/Import/SegmentCommitter.swift"
+# 盲区如实写明：只认 `= Segment(` 这个形状；写在数组字面量或裸返回表达式里的
+# `Segment(...)` 不带 `= ` 前缀，本判据抓不到。新增构造点若走那种形状，靠 review 兜。
+expect_zero "App 层裸构造 Segment 只允许出现在 SegmentCommitter 内部" \
+  "$(( $(code_count_in_dir "$ROOT/MixCut" '= Segment(') - $(code_count_in_file "$COMMITTER" '= Segment(') ))"
+expect_min "SegmentCommitter 已被 App target 编译（漏挂 pbxproj 时引用方报 cannot find type）" \
+  "$(grep -c 'SegmentCommitter.swift in Sources' "$PBXPROJ")" 1
+
+echo
 echo "== 失败留证（抓的失败：证据自毁，事后无从复盘）=="
 expect_min "落盘用原始响应体而不是只有正文" \
   "$(code_count_in_file "$CLIENT" 'evidence.rawBody')" 1

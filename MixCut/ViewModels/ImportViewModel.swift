@@ -61,7 +61,8 @@ final class ImportViewModel {
     private let sceneDetection = SceneDetectionService()
     private let asrService = ASRService()
     private let aiAnalysis = AIAnalysisService()
-    private let boundaryOptimizer = BoundaryOptimizerService()
+    /// `Segment` 的唯一生产者。边界吸附与搬字实现都在它里面，不再由本 VM 持有。
+    private let segmentCommitter = SegmentCommitter()
 
     func setModelContext(_ context: ModelContext) {
         self.modelContext = context
@@ -378,7 +379,7 @@ final class ImportViewModel {
 
             context.delete(video.segments)   // 快照由 API 保证（见 ModelContextExtension）
 
-            createSegments(
+            segmentCommitter.commitAIPartition(
                 from: analysisResult,
                 asr: asr,
                 localAnalysis: localAnalysis,
@@ -388,7 +389,7 @@ final class ImportViewModel {
 
             // 台词以「逐分镜各自切音频独立 ASR」为准覆盖：整片流式 ASR 绝对时间戳会漂移、
             // 按整片时间戳切出的分镜台词会错位；单段短音频 ASR 永远准。边界已由本地场景/静音+AI 定好，
-            // 这里只重识别各分镜台词（失败段保留 createSegments 给的原文/AI 文本）。
+            // 这里只重识别各分镜台词（失败段保留 commitAIPartition 给的原文/AI 文本）。
             phase = .transcribing
             await autoReidentifySegments(video, context: context)
 
@@ -531,15 +532,7 @@ final class ImportViewModel {
             try? await generateVideoThumbnail(for: video)
 
             // 5) 建「覆盖整片」的分镜
-            let fps = video.fps > 0 ? video.fps : 30
-            let endFrame = max(1, Int((video.duration * fps).rounded()))
-            let seg = Segment(segmentIndex: "seg_001", startTime: 0, endTime: video.duration,
-                              text: "", semanticTypes: [], positionType: .opening)
-            seg.video = video
-            seg.setFrameRange(startFrame: 0, endFrame: endFrame, fps: fps)
-            seg.thumbnailPath = video.thumbnailPath
-            seg.setSource(source)
-            context.insert(seg)
+            let seg = segmentCommitter.commitWholeVideo(for: video, source: source, context: context)
             context.safeSave()
             onUpdate()   // 占位卡「识别中…」出现
 
@@ -673,7 +666,7 @@ final class ImportViewModel {
         if let analysisResult {
             phase = .optimizing
 
-            createSegments(
+            segmentCommitter.commitAIPartition(
                 from: analysisResult,
                 asr: asr,
                 localAnalysis: localAnalysis,
@@ -683,7 +676,7 @@ final class ImportViewModel {
 
             // 台词以「逐分镜各自切音频独立 ASR」为准覆盖：整片流式 ASR 绝对时间戳会漂移、
             // 按整片时间戳切出的分镜台词会错位；单段短音频 ASR 永远准。边界已由本地场景/静音+AI 定好，
-            // 这里只重识别各分镜台词（失败段保留 createSegments 给的原文/AI 文本）。
+            // 这里只重识别各分镜台词（失败段保留 commitAIPartition 给的原文/AI 文本）。
             phase = .transcribing
             await autoReidentifySegments(video, context: context)
 
@@ -700,76 +693,6 @@ final class ImportViewModel {
 
         context.safeSave()
         MixLog.info(" 分析完成: video=\(video.name), status=\(video.status)")
-    }
-
-    /// 从 AI 结果创建分镜
-    private func createSegments(
-        from analysisResult: AISegmentationResult,
-        asr: TranscriptionResult,
-        localAnalysis: VideoLocalAnalysis,
-        video: Video,
-        context: ModelContext
-    ) {
-        let boundaries = analysisResult.segments.map(\.endTime)
-        let (optimizedBoundaries, _) = boundaryOptimizer.optimize(
-            boundaries: boundaries,
-            asrSentences: asr.sentences,
-            localAnalysis: localAnalysis
-        )
-
-        let asrWords = asr.words
-        let videoDuration = video.duration
-        var createdSegments: [Segment] = []
-        for (i, aiSeg) in analysisResult.segments.enumerated() {
-            var adjustedEnd = i < optimizedBoundaries.count ? optimizedBoundaries[i] : aiSeg.endTime
-            let adjustedStart: Double
-            if i == 0 {
-                adjustedStart = 0.0
-            } else if i - 1 < optimizedBoundaries.count {
-                adjustedStart = optimizedBoundaries[i - 1]
-            } else {
-                adjustedStart = aiSeg.startTime
-            }
-            if i == analysisResult.segments.count - 1 && videoDuration > 0 {
-                adjustedEnd = videoDuration
-            }
-
-            let extractedText = Self.extractTextFromASR(
-                words: asrWords, startTime: adjustedStart, endTime: adjustedEnd
-            )
-            let finalText = extractedText.isEmpty ? aiSeg.text : extractedText
-
-            let globalIndex = String(format: "seg_%03d", i + 1)
-            let segment = Segment(
-                segmentIndex: globalIndex,
-                startTime: adjustedStart,
-                endTime: adjustedEnd,
-                text: finalText,
-                semanticTypes: aiSeg.types.map { Self.normalizeSemanticType($0) },
-                positionType: Self.normalizePositionType(aiSeg.position),
-                qualityScore: aiSeg.dataQuality.score,
-                // 台词是从整片听写的字级结果切下来的 ⇒ fullVideoSlice；
-                // 切不到字、退回 AI 建议文本时**不猜来源**，记"未记录"而不是某个引擎。
-                textSource: extractedText.isEmpty ? .unknownLegacy : .fullVideoSlice
-            )
-            segment.qualityReasoning = aiSeg.dataQuality.reasoning
-            segment.keywords = aiSeg.keywords
-            segment.video = video
-            // 分镜继承视频导入时选定的默认来源（自拍/搬运/AI）；之后可在素材库逐条改
-            segment.setSource(video.defaultSource)
-            context.insert(segment)
-            // 帧化：把秒边界 round 成帧号作为真相（永不差帧）
-            if video.fps > 0 {
-                segment.setFrameRange(
-                    startFrame: FrameTime.frame(seconds: adjustedStart, fps: video.fps),
-                    endFrame: FrameTime.frame(seconds: adjustedEnd, fps: video.fps),
-                    fps: video.fps
-                )
-            }
-            createdSegments.append(segment)
-        }
-
-        Self.mergeShortSegments(&createdSegments, minDuration: 2.0, context: context)
     }
 
     // MARK: - 视频删除（解除关联 vs 真删除）
@@ -877,116 +800,6 @@ final class ImportViewModel {
         }
 
         return false
-    }
-
-    // MARK: - 工具方法
-
-    /// 归一化 AI 返回的语义类型字符串
-    static func normalizeSemanticType(_ raw: String) -> SemanticType {
-        let cleaned = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-
-        if let exact = SemanticType(rawValue: cleaned) {
-            return exact
-        }
-
-        let mapping: [(keywords: [String], type: SemanticType)] = [
-            (["噱头", "hook", "开场", "引入", "吸引"], .hook),
-            (["痛点", "pain", "问题", "烦恼"], .painPoint),
-            (["产品方案", "solution", "产品介绍", "成分", "功能"], .solution),
-            (["效果展示", "effect", "result", "对比", "变化"], .results),
-            (["信任背书", "social proof", "用户评价", "品牌", "背书", "见证"], .socialProof),
-            (["价格对比", "price", "性价比", "价格"], .priceAnchor),
-            (["活动福利", "promotion", "优惠", "福利", "折扣", "赠品"], .promotion),
-            (["行动号召", "call to action", "cta", "购买", "下单", "直播间"], .callToAction),
-            (["产品定位", "positioning", "适用", "人群"], .productPositioning),
-            (["产品使用教育", "usage", "使用方法", "教育", "使用场景"], .usageEducation),
-            (["过渡", "transition", "衔接", "转场"], .transition),
-        ]
-
-        let lower = cleaned.lowercased()
-        for (keywords, type) in mapping {
-            if keywords.contains(where: { lower.contains($0.lowercased()) }) {
-                return type
-            }
-        }
-
-        MixLog.error(" 未识别的语义类型: \"\(raw)\"，降级为 .transition")
-        return .transition
-    }
-
-    /// 归一化位置类型
-    private static func normalizePositionType(_ raw: String) -> PositionType {
-        let cleaned = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-        if let exact = PositionType(rawValue: cleaned) { return exact }
-        let lower = cleaned.lowercased()
-        if lower.contains("开头") || lower.contains("opening") { return .opening }
-        if lower.contains("结尾") || lower.contains("ending") { return .ending }
-        return .middle
-    }
-
-    /// 合并过短的分镜到相邻分镜
-    private static func mergeShortSegments(
-        _ segments: inout [Segment],
-        minDuration: Double,
-        context: ModelContext
-    ) {
-        var i = 0
-        while i < segments.count {
-            let seg = segments[i]
-            guard seg.duration < minDuration, segments.count > 1 else {
-                i += 1
-                continue
-            }
-
-            if i > 0 {
-                let prev = segments[i - 1]
-                if let fps = prev.video?.fps, fps > 0 {
-                    prev.setFrameRange(startFrame: prev.startFrame, endFrame: seg.endFrame, fps: fps)
-                } else {
-                    prev.endTime = seg.endTime
-                }
-                // 搬字：合并后的台词来源记 boundaryShift，**不继承被删那段的来源**
-                // （接口上没有"邻段来源"这个入参，结构上就继承不了；红线 R8）
-                prev.setText(prev.text + seg.text, source: .boundaryShift)
-                var kw = prev.keywords
-                for k in seg.keywords where !kw.contains(k) { kw.append(k) }
-                prev.keywords = kw
-                context.delete(seg)
-                segments.remove(at: i)
-            } else if segments.count > 1 {
-                let next = segments[1]
-                if let fps = next.video?.fps, fps > 0 {
-                    next.setFrameRange(startFrame: seg.startFrame, endFrame: next.endFrame, fps: fps)
-                } else {
-                    next.startTime = seg.startTime
-                }
-                next.setText(seg.text + next.text, source: .boundaryShift)
-                context.delete(seg)
-                segments.remove(at: 0)
-            } else {
-                i += 1
-            }
-        }
-    }
-
-    /// 根据时间范围从 ASR words 中精确提取台词
-    private static func extractTextFromASR(
-        words: [ASRWord],
-        startTime: Double,
-        endTime: Double
-    ) -> String {
-        let matched = words.filter { w in
-            let center = (w.start + w.end) / 2
-            return center >= startTime && center < endTime
-        }
-        let text = matched.map(\.word).joined()
-        var cleaned = text
-            .replacingOccurrences(of: "\u{FFFD}", with: "")
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        while cleaned.contains("  ") {
-            cleaned = cleaned.replacingOccurrences(of: "  ", with: " ")
-        }
-        return cleaned
     }
 
     /// 任务组里发生未捕获异常时的兜底：避免视频卡在中间态
@@ -1258,16 +1071,12 @@ final class ImportViewModel {
         seg.setFrameRange(startFrame: origStart, endFrame: cutFrame, fps: fps)
 
         // 3) B = 新建后段 [cutFrame, origEnd]，继承标签
-        let b = Segment(segmentIndex: "\(seg.segmentIndex)_\(UUID().uuidString.prefix(4))",
-                        startTime: 0, endTime: 0, text: "",
-                        semanticTypes: seg.semanticTypes, positionType: seg.positionType,
-                        qualityScore: seg.qualityScore)
-        b.video = video
-        b.setFrameRange(startFrame: cutFrame, endFrame: origEnd, fps: fps)
-        b.keywords = seg.keywords
-        // 拆出的新段继承原段来源（同一素材切两半，来源不变）
-        b.setSource(seg.source)
-        context.insert(b)
+        let b = segmentCommitter.commitSplitRemainder(
+            of: seg,
+            segmentIndex: "\(seg.segmentIndex)_\(UUID().uuidString.prefix(4))",
+            startFrame: cutFrame, endFrame: origEnd, fps: fps,
+            context: context
+        )
         context.safeSave()
         onUpdate()   // 两段先出现
 

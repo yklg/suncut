@@ -741,11 +741,11 @@ enum DebugSelfTest {
         let video = Video(name: "VOICE-READY-临时视频", localPath: "/tmp/voice-ready.mov")
         ctx.insert(project); ctx.insert(video)
         ProjectVideo.associate(project: project, video: video, in: ctx)
-        let segment = Segment(segmentIndex: "seg_001", startTime: 0, endTime: 3,
-                              text: "这个厨房油污太难搞了", semanticTypes: [.painPoint],
-                              positionType: .middle)
-        segment.video = video
-        ctx.insert(segment)
+        let segment = SegmentCommitter().commitBare(
+            segmentIndex: "seg_001", startTime: 0, endTime: 3,
+            text: "这个厨房油污太难搞了", semanticTypes: [.painPoint],
+            positionType: .middle, video: video, context: ctx
+        )
         do { try ctx.save() } catch {
             write(outPath, r + ["❌ 内存库初始save 失败: \(error.localizedDescription)"]); return
         }
@@ -1093,11 +1093,11 @@ enum DebugSelfTest {
         ProjectVideo.associate(project: b, video: v, in: ctx)
         // 一颗真实分镜挂在 v 上：⑯c/d 的卡片快照断言需要 fetched segments，
         // 否则现场零分镜、快照恒为 0。只写自有列 + 同视频边。
-        let s = Segment(segmentIndex: "IT-1", startTime: 0, endTime: 1,
-                        text: "IT-seg", semanticTypes: [.transition],
-                        positionType: .middle)
-        s.video = v
-        ctx.insert(s)
+        let s = SegmentCommitter().commitBare(
+            segmentIndex: "IT-1", startTime: 0, endTime: 1,
+            text: "IT-seg", semanticTypes: [.transition],
+            positionType: .middle, video: v, context: ctx
+        )
         try ctx.save()
         return (container, ctx, a, b, v, pvA)
     }

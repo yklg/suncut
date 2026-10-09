@@ -203,6 +203,7 @@
 		B0D1A2E3C4F5061728394A5B /* BoundaryAlignmentEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1C2E3D4F5061728394A5B6C /* BoundaryAlignmentEngine.swift */; };
 		B111386C5FD3E945A44D4584 /* ExportView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 79C5325DA9D797B618DF1F22 /* ExportView.swift */; };
 		B1DFB11FBFFAEC5B94951276 /* BoundaryOptimizerService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0C7DF6C8FF5155B793E2F9B3 /* BoundaryOptimizerService.swift */; };
+		AE1D0C0F1234567890ABCDE1 /* SegmentCommitter.swift in Sources */ = {isa = PBXBuildFile; fileRef = AE1D0C0F1234567890ABCDEF /* SegmentCommitter.swift */; };
 		B2C10E4D5A671829304B6002 /* PlaybackCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2C10E4D5A671829304B6001 /* PlaybackCoordinator.swift */; };
 		B6847040AD0E4C4E1CFC2D19 /* ConcurrencyPolicy.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5E38824D4DD571ED6A70E3AB /* ConcurrencyPolicy.swift */; };
 		B6D377C9EA1F522F8341954B /* FFmpegRunner.swift in Sources */ = {isa = PBXBuildFile; fileRef = C858F164A6EEC1BFF4AA2BE2 /* FFmpegRunner.swift */; };
@@ -286,6 +287,7 @@
 		0A500B64AE226C6FD193ACCA /* AIProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIProvider.swift; sourceTree = "<group>"; };
 		0B9979BFB126617C6473DCA2 /* ShotEditSheet.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = ShotEditSheet.swift; sourceTree = "<group>"; };
 		0C7DF6C8FF5155B793E2F9B3 /* BoundaryOptimizerService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BoundaryOptimizerService.swift; sourceTree = "<group>"; };
+		AE1D0C0F1234567890ABCDEF /* SegmentCommitter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SegmentCommitter.swift; sourceTree = "<group>"; };
 		0C8B3017F3E84B095B78933B /* ExportService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExportService.swift; sourceTree = "<group>"; };
 		0E1A7D058E5D3BEA366EA579 /* ProjectVideo.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProjectVideo.swift; sourceTree = "<group>"; };
 		0E48A40ECEECC19FD7C8100A /* FrameCountAligner.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = FrameCountAligner.swift; path = Sources/MixCutCore/FrameCountAligner.swift; sourceTree = "<group>"; };
@@ -901,6 +903,7 @@
 				9A1F466ECD3744B5A4AA2CC8 /* ASR */,
 				D118906C2EFDA6893934EEEB /* BoundaryOptimizer */,
 				21073E65EBB09673AAB9F0EF /* Export */,
+				AE1D0C0F1234567890ABCDE2 /* Import */,
 				6F66DECB70475D2374567DEB /* SceneDetection */,
 				0849E7884853CC51AAA2BBEC /* SchemeGeneration */,
 				EB77528DEFE174D0648B34DA /* TTS */,
@@ -1027,6 +1030,14 @@
 				0C7DF6C8FF5155B793E2F9B3 /* BoundaryOptimizerService.swift */,
 			);
 			path = BoundaryOptimizer;
+			sourceTree = "<group>";
+		};
+		AE1D0C0F1234567890ABCDE2 /* Import */ = {
+			isa = PBXGroup;
+			children = (
+				AE1D0C0F1234567890ABCDEF /* SegmentCommitter.swift */,
+			);
+			path = Import;
 			sourceTree = "<group>";
 		};
 		D448E6A59F96A9DA19B34E60 /* Models */ = {
@@ -1272,6 +1283,7 @@
 				C2D3E4F5A6B1C718293A4B5D /* ASRSettings.swift in Sources */,
 				C1633D8EFDD046447BBE6803 /* ASRService.swift in Sources */,
 				B1DFB11FBFFAEC5B94951276 /* BoundaryOptimizerService.swift in Sources */,
+				AE1D0C0F1234567890ABCDE1 /* SegmentCommitter.swift in Sources */,
 				84D13408434CF8CD59AF65E6 /* BatchSegmentExportService.swift in Sources */,
 				9CFD3CF6C7194508A041D7CC /* VariantBatchExportService.swift in Sources */,
 				F7C1B9CE70319A8280BAF21D /* ExportService.swift in Sources */,

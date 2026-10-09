@@ -638,7 +638,10 @@ struct TombstoneReadGuardTests {
     /// `ProjectViewModel` 与 `MCPToolHandlers` 那 3+3 处**消失**（不是漏登记 —— 是那两份复制粘贴实现没了）；
     /// `DebugSelfTest` 从 9 涨到 21，涨的全是判据矩阵的自检现场（内存/临时容器，不碰用户库）。
     static let deleteRoster: [DeleteRosterEntry] = [
-        .init(file: "MixCut/ViewModels/ImportViewModel.swift", count: 10, exempt: false, reason: ""),
+        // W1 分镜生产者收口：合并过短分镜时的 2 处 delete 随 mergeShortSegments 一起
+        // 从本文件搬进 SegmentCommitter（下面那行成对登记）。真仓总数不变，仍是 53。
+        .init(file: "MixCut/ViewModels/ImportViewModel.swift", count: 8, exempt: false, reason: ""),
+        .init(file: "MixCut/Services/Import/SegmentCommitter.swift", count: 2, exempt: false, reason: ""),
         .init(file: "MixCut/ViewModels/SegmentLibraryViewModel.swift", count: 4, exempt: false, reason: ""),
         .init(file: "MixCut/ViewModels/SchemeViewModel.swift", count: 4, exempt: false, reason: ""),
         .init(file: "MixCut/ViewModels/ShotEditViewModel.swift", count: 3, exempt: false, reason: ""),
