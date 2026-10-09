@@ -117,6 +117,12 @@ expect_zero "App 层不再自己写切分粒度的秒数文案" \
 expect_min "切分粒度整段由规划层 config 生成" \
   "$(code_count_in_file "$ANALYSIS" 'granularityPromptBlock()')" 1
 
+# 两条审计轴必须分开（抓的失败：把规划层合并出来的长段读成"模型漏交付"）
+expect_min "提案完整性审计仍在原位（模型漏交付的唯一判定处）" \
+  "$(code_count_in_dir "$ROOT/MixCut" 'SegmentationCompleteness.audit(')" 1
+expect_min "落库分区有自己的形状审计" \
+  "$(code_count_in_dir "$ROOT/MixCut" 'SegmentPartitionAudit.audit(')" 1
+
 echo
 echo "== 分镜生产者唯一性（抓的失败：规则只插在一条链上，「重跑分析」绕过 = 同实体多处直写）=="
 # 「短视频被切碎」「重跑绕过保护」这两个症状同根：Segment 此前在 5 处直接构造，

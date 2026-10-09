@@ -170,3 +170,89 @@ public enum SegmentationCompleteness {
         }
     }
 }
+
+/// 落库分区的形状审计 —— 与上面 `audit` 问的是**两个不同的问题**，必须分开：
+///
+/// * `audit` 问「模型有没有把答应交付的东西交全」，判在**模型原始结果**上；
+/// * 这里问「最终要落库的分区是否违反应用自己的规则」，判在**规划层产出之后**。
+///
+/// 为什么非拆不可：`audit` 里"某段超过 18 秒"同时充当两件事 —— 既是"违反应用规则"，
+/// 又是"模型丢段的特征签名"（`createSegments` 强制铺满全片，少段必然表现为尾段超长）。
+/// 规划层一旦合并出更长的段，这两种语义就会互相冒充：合并产物被读成"漏交付"，
+/// 真漏交付被读成"只是规则违规"。拆开之后，超长度在分区侧只是规则违规，
+/// 截断签名只在提案侧成立。
+public enum SegmentPartitionAudit {
+
+    /// 一段最终落库区间（秒）。
+    public struct Interval: Equatable, Sendable {
+        public var start: Double
+        public var end: Double
+        public init(start: Double, end: Double) {
+            self.start = start
+            self.end = end
+        }
+        public var seconds: Double { max(0, end - start) }
+    }
+
+    public enum Gap: Equatable, Sendable {
+        /// 一条都没有。与"形状不对"是不同档，必须单独成案。
+        case empty
+        case tooLong(index: Int, seconds: Double, limit: Double)
+        case overlapping(firstIndex: Int, secondIndex: Int, seconds: Double)
+        case holeBetween(firstIndex: Int, secondIndex: Int, seconds: Double)
+        case notCoveringHead(startSeconds: Double)
+        case notCoveringTail(endSeconds: Double, videoDuration: Double)
+    }
+
+    public static func audit(intervals: [Interval],
+                            videoDuration: Double,
+                            maxSeconds: Double = SegmentationCompleteness.promptSegmentLimit) -> [Gap] {
+        let tol = SegmentationCompleteness.floatTolerance
+        guard !intervals.isEmpty else { return [.empty] }
+
+        var gaps: [Gap] = []
+        for (i, iv) in intervals.enumerated() {
+            if iv.seconds > maxSeconds + tol {
+                gaps.append(.tooLong(index: i, seconds: iv.seconds, limit: maxSeconds))
+            }
+            guard i > 0 else { continue }
+            let prev = intervals[i - 1]
+            let delta = iv.start - prev.end
+            if delta < -tol {
+                gaps.append(.overlapping(firstIndex: i - 1, secondIndex: i, seconds: -delta))
+            } else if delta > tol {
+                gaps.append(.holeBetween(firstIndex: i - 1, secondIndex: i, seconds: delta))
+            }
+        }
+        if abs(intervals[0].start) > tol {
+            gaps.append(.notCoveringHead(startSeconds: intervals[0].start))
+        }
+        if videoDuration > 0, abs(intervals[lastIndex(of: intervals)].end - videoDuration) > 0.05 {
+            // 0.05 而非 floatTolerance：帧化会把秒边界挪到不足半帧处（真实库实测差 0.0145s）
+            gaps.append(.notCoveringTail(endSeconds: intervals[lastIndex(of: intervals)].end,
+                                         videoDuration: videoDuration))
+        }
+        return gaps
+    }
+
+    public static func summary(of gaps: [Gap]) -> String {
+        guard !gaps.isEmpty else { return "分区审计：形状合规" }
+        return "分区审计：" + gaps.map { gap -> String in
+            switch gap {
+            case .empty: return "一条分镜都没有"
+            case .tooLong(let i, let s, let limit):
+                return String(format: "第 %d 段 %.2fs 超过应用上限 %.2fs", i + 1, s, limit)
+            case .overlapping(let a, let b, let s):
+                return String(format: "第 %d/%d 段重叠 %.2fs", a + 1, b + 1, s)
+            case .holeBetween(let a, let b, let s):
+                return String(format: "第 %d/%d 段之间有 %.2fs 空洞", a + 1, b + 1, s)
+            case .notCoveringHead(let s):
+                return String(format: "首段没从 0 起（起点 %.2fs）", s)
+            case .notCoveringTail(let e, let d):
+                return String(format: "尾段没到片长（%.2fs vs %.2fs）", e, d)
+            }
+        }.joined(separator: "; ")
+    }
+
+    private static func lastIndex(of intervals: [Interval]) -> Int { intervals.count - 1 }
+}

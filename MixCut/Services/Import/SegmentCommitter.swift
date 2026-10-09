@@ -69,6 +69,17 @@ struct SegmentCommitter {
         let plan = SegmentationPlanner.plan(segments: timings, duration: video.duration, in: planConfig)
         let groups = SegmentationPlanner.intervals(of: plan, segments: timings, duration: video.duration)
 
+        // 分区形状自检：规划层承诺的"无缝、铺满、不超上限"到底守住了没有。
+        // 只告警不抛错 —— 这是内部一致性问题，与"模型漏交付"那种必须拒收的情形不同级，
+        // 抛错会把用户一次导入整条打死。
+        let shapeGaps = SegmentPartitionAudit.audit(
+            intervals: groups.map { SegmentPartitionAudit.Interval(start: $0.start, end: $0.end) },
+            videoDuration: video.duration
+        )
+        if !shapeGaps.isEmpty {
+            MixLog.error("分镜分区自检不通过 video=\(video.name) \(SegmentPartitionAudit.summary(of: shapeGaps))")
+        }
+
         let asrWords = asr.words
         var createdSegments: [Segment] = []
         for (i, group) in groups.enumerated() {
