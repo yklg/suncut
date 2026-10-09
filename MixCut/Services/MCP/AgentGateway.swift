@@ -17,7 +17,21 @@ final class AgentGateway {
 
     private init() {}
 
+    /// 自动化实例专用端口覆盖。显式设了它，语义是「调用方要连的正是这个进程」——
+    /// 所以这种实例绑不上端口时必须**响**（见 `restartFromSettings` 的退出分支），
+    /// 不能像普通实例那样只弹一个 Toast：静默误路由会把请求打到持有该端口的另一个进程，也就是用户的活 App。
+    static let portEnvironmentKey = "MIXCUT_MCP_PORT"
+
+    static var isPortPinnedByEnvironment: Bool { portFromEnvironment != nil }
+
+    private static var portFromEnvironment: UInt16? {
+        guard let raw = ProcessInfo.processInfo.environment[portEnvironmentKey],
+              let value = UInt16(raw), value > 0 else { return nil }
+        return value
+    }
+
     static var configuredPort: UInt16 {
+        if let pinned = portFromEnvironment { return pinned }
         let stored = UserDefaults.standard.integer(forKey: portKey)
         guard stored > 0, stored <= 65535 else { return defaultPort }
         return UInt16(stored)
@@ -56,6 +70,15 @@ final class AgentGateway {
                 await MainActor.run { self.server = newServer }
             } catch {
                 await MainActor.run {
+                    // 由 env 钉了端口的实例：绑不上＝调用会落到持有端口的另一个进程（很可能是用户自己的
+                    // 活 App + 活库）。这种静默误路由比"启动失败"危险得多，所以直接非零退出，让脚本当场看见。
+                    if Self.isPortPinnedByEnvironment {
+                        let line = "[MCP] \(Self.portEnvironmentKey)=\(port) 绑定失败："
+                            + "\(error.localizedDescription)"
+                            + "；本实例没拿到端口，继续跑会让调用打到持有该端口的另一个进程，故退出。\n"
+                        FileHandle.standardError.write(Data(line.utf8))
+                        exit(75)
+                    }
                     ToastCenter.shared.show(
                         "Agent 服务启动失败：端口 \(port) 可能被占用，可在设置中修改",
                         icon: "antenna.radiowaves.left.and.right.slash", style: .error)

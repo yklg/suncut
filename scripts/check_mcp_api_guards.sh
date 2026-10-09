@@ -26,12 +26,17 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 APP_PATH="${SUNCUT_APP:-$ROOT/.scratch/dd/Build/Products/Debug/SunCut.app}"
 CATALOG="${CATALOG_PATH:-$ROOT/Sources/MixCutCore/AgentToolCatalog.swift}"
 PORT="${MCP_PORT:-8787}"
-# 产品的 MCP 端口是硬编码常量（MixCut/Services/MCP/AgentGateway.swift:11
-# `static let defaultPort: UInt16 = 8787`，无 env / 参数覆盖）。
-# 所以换端口毫无意义：App 永远只听 8787，门禁去探测别的端口只会得到"没起来"，
-# 于是扰动测试的红全部来自服务没起而不是判据被抓到 —— 2026-10-04 selftest 就这么假通过过三轮。
-if [ "$PORT" != "8787" ]; then
-    invalid "MCP 端口在产品侧硬编码为 8787，MCP_PORT=${PORT} 不会生效。"
+# 产品侧端口能力（2026-10-09 起）：`AgentGateway` 读 `MIXCUT_MCP_PORT` 覆盖硬编码默认值，
+# 并且**绑不上就非零退出**（`MCPServer.start()` 现在等 NWListener 真进 ready 才算成功）。
+# 早先这里写的是「换端口毫无意义，产品只听 8787」——那是对的，因为当时确实没有覆盖能力；
+# 当时的后果是：门禁与用户自己开着的实例抢 8787，谁先绑上谁应答，
+# 写调用会打到**用户的活库**（2026-10-09 手搓 curl 绕过本门禁时真的发生过一次）。
+# 现在换成反向判据：**覆盖能力不见了就是判据失效**，不许退回静默共用 8787。
+if ! grep -q 'MIXCUT_MCP_PORT' "$ROOT/MixCut/Services/MCP/AgentGateway.swift" 2>/dev/null; then
+    invalid "产品侧读不到 MIXCUT_MCP_PORT 覆盖点 —— 端口重回硬编码，门禁可能与用户实例抢 8787，判据失效"
+fi
+if ! grep -q 'stateUpdateHandler' "$ROOT/MixCut/Services/MCP/MCPServer.swift" 2>/dev/null; then
+    invalid "MCPServer 不再观察 listener 状态 —— 绑不上端口会静默假成功，判据失效"
 fi
 WORK="$ROOT/.scratch/mcp-guards"
 FAKE_ROOT="$WORK/fake-appsupport"
@@ -114,7 +119,7 @@ fi
 
 # ---------- 起 App（假库根）并等端口就绪 ----------
 note "== 启动被测 App（假库根 ${FAKE_ROOT}）=="
-MIXCUT_DEBUG_APP_SUPPORT_ROOT="$FAKE_ROOT" "$APP_PATH/Contents/MacOS/"*SunCut > "$LOG" 2>&1 &
+MIXCUT_DEBUG_APP_SUPPORT_ROOT="$FAKE_ROOT" MIXCUT_MCP_PORT="$PORT" "$APP_PATH/Contents/MacOS/"*SunCut > "$LOG" 2>&1 &
 APP_PID=$!
 ready=0
 for _ in $(seq 1 60); do

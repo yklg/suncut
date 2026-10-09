@@ -13,7 +13,13 @@ actor MCPServer {
         self.handler = handler
     }
 
-    func start() throws {
+    /// 启动并**等到端口真的绑上**才返回。
+    ///
+    /// 为什么必须等：`NWListener.start(queue:)` 是异步的，端口被别的进程占用时这一行**不抛错**，
+    /// 失败只会让 `state` 走到 `.failed`。旧实现在 `start()` 之后直接打「server 已监听」，
+    /// 于是"这个实例根本没拿到端口"在日志、异常、界面上全都看不见 ——
+    /// 后果不是启动失败，而是**自动化调用静默打到持有端口的另一个实例上**（也就是用户的活 App）。
+    func start() async throws {
         guard listener == nil else { return }
         guard let nwPort = NWEndpoint.Port(rawValue: port) else {
             throw MCPServerError.invalidPort(port)
@@ -27,7 +33,30 @@ actor MCPServer {
             guard let self else { connection.cancel(); return }
             Task { await self.serve(connection) }
         }
-        listener.start(queue: .global(qos: .userInitiated))
+
+        try await withCheckedThrowingContinuation { (cont: CheckedContinuation<Void, Error>) in
+            let gate = StartGate(cont)
+            listener.stateUpdateHandler = { state in
+                switch state {
+                case .ready:
+                    gate.succeed()
+                case .failed(let error):
+                    gate.fail(MCPServerError.listenFailed(port: self.port, error: error))
+                case .cancelled:
+                    gate.fail(MCPServerError.cancelled(port: self.port))
+                default:
+                    break
+                }
+            }
+            listener.start(queue: .global(qos: .userInitiated))
+            // 兜底：状态回调一次都不来的话（极端情况），3 秒后按失败处理，
+            // 绝不"超时也算启动成功" —— 那等于把这次的静默失效原样保留。
+            Task {
+                try? await Task.sleep(nanoseconds: 3_000_000_000)
+                gate.fail(MCPServerError.startTimeout(port: self.port))
+            }
+        }
+
         self.listener = listener
         MixLog.info("[MCP] server 已监听 127.0.0.1:\(port)")
     }
@@ -104,10 +133,38 @@ actor MCPServer {
 
 enum MCPServerError: Error, LocalizedError {
     case invalidPort(UInt16)
+    case listenFailed(port: UInt16, error: Error)
+    case cancelled(port: UInt16)
+    case startTimeout(port: UInt16)
 
     var errorDescription: String? {
         switch self {
         case .invalidPort(let p): return "非法端口号：\(p)"
+        case .listenFailed(let p, let error): return "端口 \(p) 绑定失败：\(error.localizedDescription)"
+        case .cancelled(let p): return "端口 \(p) 的监听已取消，未能建立"
+        case .startTimeout(let p): return "端口 \(p) 绑定超时（3s 内没有进入 ready）"
         }
+    }
+}
+
+/// `start()` 的一次性续体盒子：状态回调与超时兜底都可能到，只许放行第一个。
+private final class StartGate: @unchecked Sendable {
+    private var continuation: CheckedContinuation<Void, Error>?
+    private let lock = NSLock()
+
+    init(_ continuation: CheckedContinuation<Void, Error>) {
+        self.continuation = continuation
+    }
+
+    func succeed() { resolve(with: nil) }
+    func fail(_ error: Error) { resolve(with: error) }
+
+    private func resolve(with error: Error?) {
+        lock.lock()
+        let pending = continuation
+        continuation = nil
+        lock.unlock()
+        guard let pending else { return }
+        if let error { pending.resume(throwing: error) } else { pending.resume() }
     }
 }
