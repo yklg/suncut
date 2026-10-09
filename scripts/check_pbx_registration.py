@@ -24,7 +24,8 @@ import sys
 
 PBX = "/Users/yilukaige/mixed_cut-main/MixCut.xcodeproj/project.pbxproj"
 # 本轮新增的两个文件（作为回归样本；后续新增文件请追加到EXPECTED）
-EXPECTED = ["RawAudioCacheStore.swift", "RawAudioCache.swift", "SegmentCommitter.swift"]
+EXPECTED = ["RawAudioCacheStore.swift", "RawAudioCache.swift", "SegmentCommitter.swift",
+             "SegmentationPlanner.swift", "SegmentationPlanSettings.swift"]
 
 
 def main() -> int:

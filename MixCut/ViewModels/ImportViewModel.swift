@@ -686,6 +686,33 @@ final class ImportViewModel {
         clearsExistingSegments: Bool
     ) async throws -> SegmentRebuildOutcome {
         phase = .analyzing
+        let planConfig = SegmentationPlanSettings.current
+
+        // 整片保留必须问在调模型之前 —— 它省的就是这次付费调用。
+        // 单段覆盖全片时也不必再跑逐段重认：那等于把整片音频再听一遍，内容一模一样。
+        if SegmentationPlanner.shouldKeepWholeVideo(duration: video.duration,
+                                                   sentenceCount: asr.sentences.count,
+                                                   in: planConfig) {
+            try checkCancelled(video)
+            if clearsExistingSegments {
+                context.delete(video.segments)   // 快照由 API 保证（见 ModelContextExtension）
+            }
+            let whole = segmentCommitter.commitWholeVideo(
+                for: video, source: video.defaultSource, context: context
+            )
+            if !asr.text.isEmpty {
+                // 段范围就是全片，所以「整片听写后按时间切到这一段」这个来源描述依然成立
+                whole.setText(asr.text, source: .fullVideoSlice)
+            }
+            video.aiOriginalSegmentCount = nil
+            video.segmentationGuardNote = String(
+                format: "整片保留：%.1fs / %d 句，未调用模型切分",
+                video.duration, asr.sentences.count
+            )
+            await generateSegmentThumbnails(segments: video.segments, videoPath: video.localPath)
+            MixLog.info(" 整片保留: video=\(video.name), \(video.segmentationGuardNote ?? "")")
+            return .success
+        }
 
         let analysisResult: AISegmentationResult
         do {
@@ -707,13 +734,20 @@ final class ImportViewModel {
             context.delete(video.segments)   // 快照由 API 保证（见 ModelContextExtension）
         }
 
-        segmentCommitter.commitAIPartition(
+        let commit = segmentCommitter.commitAIPartition(
             from: analysisResult,
             asr: asr,
             localAnalysis: localAnalysis,
             video: video,
-            context: context
+            context: context,
+            planConfig: planConfig
         )
+        // 留痕只在真改写过时写；没改写就别留一串"无"占位
+        video.aiOriginalSegmentCount = commit.appliedRules.isEmpty ? nil : commit.aiSegmentCount
+        video.segmentationGuardNote = commit.appliedRules.isEmpty
+            ? nil
+            : "\(commit.appliedRules.map(\.displayName).joined(separator: "、"))："
+                + "模型返回 \(commit.aiSegmentCount) 段 → 落库 \(commit.committedCount) 段"
 
         // 台词以「逐分镜各自切音频独立 ASR」为准覆盖：整片流式 ASR 绝对时间戳会漂移、
         // 按整片时间戳切出的分镜台词会错位；单段短音频 ASR 永远准。边界已由本地场景/静音+AI 定好，

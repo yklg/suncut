@@ -617,6 +617,24 @@ struct ImportedVideoCard: View {
                 }
             }
 
+            // 分镜规划留痕（F5）：规则改写过这条素材的切分，就必须在卡片上看得见 ——
+            // 否则「AI 本来切成 8 段、被并成 3 段」会看起来像软件漏切。
+            // 文案自带原因与两个数，芯片放不下时由 .help 给全文（沿用仓里既有的 .help 用法）。
+            if let note = video.segmentationGuardNote, !note.isEmpty {
+                HStack(spacing: 3) {
+                    Image(systemName: note.hasPrefix("整片保留") ? "rectangle.split.1x2.fill"
+                                                                : "arrow.triangle.merge")
+                        .font(DesignTokens.Typography.microRegular)
+                        .foregroundStyle(.teal)
+                    Text(note)
+                        .font(DesignTokens.Typography.microRegular)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .textSelection(.enabled)
+                }
+                .help(note)
+            }
+
             // 分镜标签
             if !video.segments.isEmpty {
                 segmentTags

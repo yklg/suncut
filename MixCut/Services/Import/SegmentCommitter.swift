@@ -1,6 +1,16 @@
 import Foundation
 import SwiftData
 
+/// 一次 AI 分区落库的结果，供调用方写留痕（谁改写了素材、改成了几段）。
+struct PartitionCommit {
+    /// 规划层实际生效的规则；空数组表示原样放行。
+    let appliedRules: [SegmentationRule]
+    /// 规划层动手之前 AI 返回的条数 —— 合并后这个数就反推不出来了。
+    let aiSegmentCount: Int
+    /// 最终落库的条数（含极短碎片的兜底合并）。
+    let committedCount: Int
+}
+
 /// `Segment` 的唯一生产者。
 ///
 /// 为什么要收成一个类型：同一个实体的「建对象 / 搬字 / 帧化 / 删除」此前散在 5 处
@@ -17,17 +27,18 @@ struct SegmentCommitter {
 
     private let boundaryOptimizer = BoundaryOptimizerService()
 
-    /// AI 分区结果 → 落库分镜，末尾做一次「过短分镜并入相邻」的兜底合并。
+    /// 落库一条 AI 分区：边界吸附 → 规划层决定是否并组 → 建段帧化 → 极短碎片兜底合并。
     ///
-    /// 原 `ImportViewModel.createSegments` 原样搬入，未改语义：边界先吸附优化，
-    /// 首段强制从 0 起、尾段强制拉到片尾，台词优先取整片字级 ASR 切片、切不到才退回 AI 建议文本。
+    /// 返回 `PartitionCommit`，调用方据此写留痕（本来几段、成了几段、动了哪条规则）。
+    /// 这里不碰 `Video` —— 一个函数同时改两张表，出问题就说不清是谁写的。
     func commitAIPartition(
         from analysisResult: AISegmentationResult,
         asr: TranscriptionResult,
         localAnalysis: VideoLocalAnalysis,
         video: Video,
-        context: ModelContext
-    ) {
+        context: ModelContext,
+        planConfig: SegmentationPlanConfig = SegmentationPlanConfig()
+    ) -> PartitionCommit {
         let boundaries = analysisResult.segments.map(\.endTime)
         let (optimizedBoundaries, _) = boundaryOptimizer.optimize(
             boundaries: boundaries,
@@ -35,9 +46,9 @@ struct SegmentCommitter {
             localAnalysis: localAnalysis
         )
 
-        let asrWords = asr.words
-        let videoDuration = video.duration
-        var createdSegments: [Segment] = []
+        // 顺序不能反：先把每条 AI 分镜换算成「吸附后的区间」，再交给规划层决定要不要并。
+        // 若先并再吸附，边界优化会把刚攒够的组又拆开。
+        var timings: [SegmentTiming] = []
         for (i, aiSeg) in analysisResult.segments.enumerated() {
             var adjustedEnd = i < optimizedBoundaries.count ? optimizedBoundaries[i] : aiSeg.endTime
             let adjustedStart: Double
@@ -48,30 +59,56 @@ struct SegmentCommitter {
             } else {
                 adjustedStart = aiSeg.startTime
             }
-            if i == analysisResult.segments.count - 1 && videoDuration > 0 {
-                adjustedEnd = videoDuration
+            if i == analysisResult.segments.count - 1 && video.duration > 0 {
+                adjustedEnd = video.duration
             }
+            timings.append(SegmentTiming(start: adjustedStart, end: adjustedEnd,
+                                         scoreFromModel: aiSeg.scoreFromModel))
+        }
+
+        let plan = SegmentationPlanner.plan(segments: timings, duration: video.duration, in: planConfig)
+        let groups = SegmentationPlanner.intervals(of: plan, segments: timings, duration: video.duration)
+
+        let asrWords = asr.words
+        var createdSegments: [Segment] = []
+        for (i, group) in groups.enumerated() {
+            let members = group.indices.map { analysisResult.segments[$0] }
+            let first = members[0]
 
             let extractedText = Self.extractTextFromASR(
-                words: asrWords, startTime: adjustedStart, endTime: adjustedEnd
+                words: asrWords, startTime: group.start, endTime: group.end
             )
-            let finalText = extractedText.isEmpty ? aiSeg.text : extractedText
+            let fallbackText = members.map(\.text).filter { !$0.isEmpty }.joined()
+            let finalText = extractedText.isEmpty ? fallbackText : extractedText
+
+            // 并组后的标签口径：类型与关键词取并集（保序去重），
+            // 位置与理由取组内首条 —— 首条最接近这一段开头的语气，尾巴那条不该决定整体定位。
+            // 质量分取**最小**：一段的可用性由最差的那半决定，取平均会让合并段冒充高分段。
+            var mergedTypes: [SemanticType] = []
+            for raw in members.flatMap(\.types) {
+                let normalized = Self.normalizeSemanticType(raw)
+                if !mergedTypes.contains(normalized) { mergedTypes.append(normalized) }
+            }
+            var mergedKeywords: [String] = []
+            for keyword in members.flatMap(\.keywords) where !mergedKeywords.contains(keyword) {
+                mergedKeywords.append(keyword)
+            }
 
             let globalIndex = String(format: "seg_%03d", i + 1)
             let segment = Segment(
                 segmentIndex: globalIndex,
-                startTime: adjustedStart,
-                endTime: adjustedEnd,
+                startTime: group.start,
+                endTime: group.end,
                 text: finalText,
-                semanticTypes: aiSeg.types.map { Self.normalizeSemanticType($0) },
-                positionType: Self.normalizePositionType(aiSeg.position),
-                qualityScore: aiSeg.dataQuality.score,
+                semanticTypes: mergedTypes,
+                positionType: Self.normalizePositionType(first.position),
+                qualityScore: members.map { $0.dataQuality.score }.min() ?? 8.0,
                 // 台词是从整片听写的字级结果切下来的 ⇒ fullVideoSlice；
                 // 切不到字、退回 AI 建议文本时**不猜来源**，记"未记录"而不是某个引擎。
                 textSource: extractedText.isEmpty ? .unknownLegacy : .fullVideoSlice
             )
-            segment.qualityReasoning = aiSeg.dataQuality.reasoning
-            segment.keywords = aiSeg.keywords
+            segment.qualityReasoning = first.dataQuality.reasoning
+            segment.keywords = mergedKeywords
             segment.video = video
             // 分镜继承视频导入时选定的默认来源（自拍/搬运/AI）；之后可在素材库逐条改
             segment.setSource(video.defaultSource)
@@ -79,15 +116,20 @@ struct SegmentCommitter {
             // 帧化：把秒边界 round 成帧号作为真相（永不差帧）
             if video.fps > 0 {
                 segment.setFrameRange(
-                    startFrame: FrameTime.frame(seconds: adjustedStart, fps: video.fps),
-                    endFrame: FrameTime.frame(seconds: adjustedEnd, fps: video.fps),
+                    startFrame: FrameTime.frame(seconds: group.start, fps: video.fps),
+                    endFrame: FrameTime.frame(seconds: group.end, fps: video.fps),
                     fps: video.fps
                 )
             }
             createdSegments.append(segment)
         }
 
-        Self.mergeShortSegments(&createdSegments, minDuration: 2.0, context: context)
+        Self.mergeShortSegments(&createdSegments,
+                                minDuration: planConfig.minSegmentSeconds,
+                                context: context)
+        return PartitionCommit(appliedRules: plan.appliedRules,
+                               aiSegmentCount: analysisResult.segments.count,
+                               committedCount: createdSegments.count)
     }
 
     /// 覆盖整片的单段（自建分镜上传路径；后续「整片保留」规则也接这里）。

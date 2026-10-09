@@ -93,6 +93,16 @@ final class Video: Identifiable {
     /// 文件内容哈希（SHA-256），用于全局去重
     var contentHash: String?
 
+    /// 分镜规划改写留痕：这条视频的切分被哪条规则动过（「整片保留」/「过碎合并」）。
+    /// nil = 规划层原样放行。可选字段 ⇒ 轻量迁移就地加列，`AppSchemaV1`/`stages` 都不用动
+    /// （见 `SchemaVersions.swift` 末尾「以后加字段时改哪里」）。
+    var segmentationGuardNote: String?
+
+    /// 规划层动手之前 AI 实际返回的分镜条数。
+    /// 必须单独存：区间一旦并回去就反推不出来，不留这列就答不出「模型本来切了几段」。
+    /// 整片保留时保持 nil —— 那次根本没调模型，写 0 会是假话。
+    var aiOriginalSegmentCount: Int?
+
     /// true = 用户自建分镜的载体视频（分镜库「自建分镜」分类）。SwiftData 加字段，默认 false，旧数据自动为普通视频。
     var isUserUploaded: Bool = false
 

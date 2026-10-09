@@ -639,8 +639,10 @@ struct TombstoneReadGuardTests {
     /// `DebugSelfTest` 从 9 涨到 21，涨的全是判据矩阵的自检现场（内存/临时容器，不碰用户库）。
     static let deleteRoster: [DeleteRosterEntry] = [
         // W1 分镜生产者收口：合并过短分镜时的 2 处 delete 随 mergeShortSegments 一起
-        // 从本文件搬进 SegmentCommitter（下面那行成对登记）。真仓总数不变，仍是 53。
-        .init(file: "MixCut/ViewModels/ImportViewModel.swift", count: 8, exempt: false, reason: ""),
+        // 从本文件搬进 SegmentCommitter（下面那行成对登记），总数当时不变。
+        // W2 整片保留：重建入口多出**一条**删旧分镜的分支 —— 两条分支各自都得把取消检查放在删除之前
+        // （AI 路径要先等模型返回、整片保留路径根本不返回），删除点合不成一处，故 +1 ⇒ 真仓总数 54。
+        .init(file: "MixCut/ViewModels/ImportViewModel.swift", count: 9, exempt: false, reason: ""),
         .init(file: "MixCut/Services/Import/SegmentCommitter.swift", count: 2, exempt: false, reason: ""),
         .init(file: "MixCut/ViewModels/SegmentLibraryViewModel.swift", count: 4, exempt: false, reason: ""),
         .init(file: "MixCut/ViewModels/SchemeViewModel.swift", count: 4, exempt: false, reason: ""),
@@ -672,11 +674,11 @@ struct TombstoneReadGuardTests {
         return m
     }
 
-    @Test("G12 名册对账：真仓 53 处 delete 必须逐文件等于登记")
+    @Test("G12 名册对账：真仓 54 处 delete 必须逐文件等于登记")
     func realRepoMatchesDeleteRoster() {
         let actual = actualDeleteCounts()
         let total = actual.values.reduce(0, +)
-        #expect(total == 53, "真删站点总数应为 53（全局音色 +2、复刻音色库 +1），实得 \(total) ⇒ 名册或扫描面已漂移")
+        #expect(total == 54, "真删站点总数应为 54（全局音色 +2、复刻音色库 +1、W2 整片保留分支 +1），实得 \(total) ⇒ 名册或扫描面已漂移")
         let problems = Self.rosterProblems(actual: actual, recorded: Self.deleteRoster)
         #expect(problems.isEmpty, "门 4b 不认账：\(problems)")
     }

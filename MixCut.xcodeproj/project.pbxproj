@@ -152,6 +152,8 @@
 		AC0000000000000000000017 /* BochaResponse.swift in Sources */ = {isa = PBXBuildFile; fileRef = AD0000000000000000000017 /* BochaResponse.swift */; };
 		AC0000000000000000000020 /* RawAudioCache.swift in Sources */ = {isa = PBXBuildFile; fileRef = AD0000000000000000000020 /* RawAudioCache.swift */; };
 		AC0000000000000000000023 /* SegmentCloneWindow.swift in Sources */ = {isa = PBXBuildFile; fileRef = AD0000000000000000000023 /* SegmentCloneWindow.swift */; };
+		AE00000000000000000000A1 /* SegmentationPlanner.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF00000000000000000000A1 /* SegmentationPlanner.swift */; };
+		AE00000000000000000000A2 /* SegmentationPlanSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF00000000000000000000A2 /* SegmentationPlanSettings.swift */; };
 		AC0000000000000000000024 /* CloneBranchDecider.swift in Sources */ = {isa = PBXBuildFile; fileRef = AD0000000000000000000024 /* CloneBranchDecider.swift */; };
 		AC0000000000000000000021 /* CloneVoicePolicy.swift in Sources */ = {isa = PBXBuildFile; fileRef = AD0000000000000000000021 /* CloneVoicePolicy.swift */; };
 		AC0000000000000000000022 /* CloneSampleReaper.swift in Sources */ = {isa = PBXBuildFile; fileRef = AD0000000000000000000022 /* CloneSampleReaper.swift */; };
@@ -435,6 +437,8 @@
 		AD0000000000000000000017 /* BochaResponse.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = BochaResponse.swift; path = Sources/MixCutCore/BochaResponse.swift; sourceTree = "<group>"; };
 		AD0000000000000000000020 /* RawAudioCache.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = RawAudioCache.swift; path = Sources/MixCutCore/RawAudioCache.swift; sourceTree = "<group>"; };
 		AD0000000000000000000023 /* SegmentCloneWindow.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = SegmentCloneWindow.swift; path = Sources/MixCutCore/SegmentCloneWindow.swift; sourceTree = "<group>"; };
+		AF00000000000000000000A1 /* SegmentationPlanner.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = SegmentationPlanner.swift; path = Sources/MixCutCore/SegmentationPlanner.swift; sourceTree = "<group>"; };
+		AF00000000000000000000A2 /* SegmentationPlanSettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SegmentationPlanSettings.swift; sourceTree = "<group>"; };
 		AD0000000000000000000024 /* CloneBranchDecider.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = CloneBranchDecider.swift; path = Sources/MixCutCore/CloneBranchDecider.swift; sourceTree = "<group>"; };
 		AD0000000000000000000021 /* CloneVoicePolicy.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = CloneVoicePolicy.swift; path = Sources/MixCutCore/CloneVoicePolicy.swift; sourceTree = "<group>"; };
 		AD0000000000000000000022 /* CloneSampleReaper.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = CloneSampleReaper.swift; path = Sources/MixCutCore/CloneSampleReaper.swift; sourceTree = "<group>"; };
@@ -826,6 +830,7 @@
 				AD0000000000000000000060 /* VoiceChoice.swift */,
 				AD0000000000000000000020 /* RawAudioCache.swift */,
 				AD0000000000000000000023 /* SegmentCloneWindow.swift */,
+				AF00000000000000000000A1 /* SegmentationPlanner.swift */,
 				AD0000000000000000000024 /* CloneBranchDecider.swift */,
 				AD0000000000000000000022 /* CloneSampleReaper.swift */,
 				AD0000000000000000000021 /* CloneVoicePolicy.swift */,
@@ -1036,6 +1041,7 @@
 			isa = PBXGroup;
 			children = (
 				AE1D0C0F1234567890ABCDEF /* SegmentCommitter.swift */,
+				AF00000000000000000000A2 /* SegmentationPlanSettings.swift */,
 			);
 			path = Import;
 			sourceTree = "<group>";
@@ -1470,6 +1476,8 @@
 				AC0000000000000000000060 /* VoiceChoice.swift in Sources */,
 				AC0000000000000000000020 /* RawAudioCache.swift in Sources */,
 				AC0000000000000000000023 /* SegmentCloneWindow.swift in Sources */,
+				AE00000000000000000000A1 /* SegmentationPlanner.swift in Sources */,
+				AE00000000000000000000A2 /* SegmentationPlanSettings.swift in Sources */,
 				AC0000000000000000000024 /* CloneBranchDecider.swift in Sources */,
 				AC0000000000000000000022 /* CloneSampleReaper.swift in Sources */,
 				AC0000000000000000000021 /* CloneVoicePolicy.swift in Sources */,

@@ -130,10 +130,22 @@ expect_eq "分镜重建入口只有一份实现（抓的失败：又拷出一条
 # 会把函数定义 `func analyzeVideo(` 和编排调用 `self.analyzeVideo(video)` 一起数进来（实测 4）。
 expect_eq "AI 分镜调用点只剩入口里那一处（抓的失败：重跑链自己另调一次 analyzeVideo）" \
   "$(code_count_in_file "$IVM" 'aiAnalysis\.analyzeVideo(')" 1
-expect_eq "删旧分镜只由入口按参数执行（抓的失败：取消点被挪到删除之后，会留下空库）" \
-  "$(code_count_in_file "$IVM" 'context\.delete(video\.segments)')" 1
+expect_eq "删旧分镜只出现在重建入口的两条分支里（各 1 处，取消点都必须早于它）" \
+  "$(code_count_in_file "$IVM" 'context\.delete(video\.segments)')" 2
 expect_eq "重建入口被两条链各调一次（1 定义 + 首跑 + 重跑 = 3）" \
   "$(code_count_in_file "$IVM" 'rebuildSegments(')" 3
+
+# 顺序判据：整片保留的价值就是省下那次付费调用，判定一旦挪到 analyzeVideo 之后，
+# 规则照样生效、钱照样烧 —— 只数"存不存在"抓不到这种挪法。
+KEEP_LINE=$(grep -n -- 'shouldKeepWholeVideo' "$IVM" 2>/dev/null | head -1 | cut -d: -f1)
+AI_LINE=$(grep -n -- 'aiAnalysis\.analyzeVideo(' "$IVM" 2>/dev/null | head -1 | cut -d: -f1)
+if [ -z "$KEEP_LINE" ] || [ -z "$AI_LINE" ]; then
+  report_fail "整片保留判定排在调模型之前（取不出行号 ⇒ 判据失效，不算通过）" "缺锚点" "两处都在"
+else
+  ORDER_BAD=0
+  [ "$KEEP_LINE" -lt "$AI_LINE" ] || ORDER_BAD=1
+  expect_zero "整片保留判定排在调模型之前（挪到之后＝省不到这次调用）" "$ORDER_BAD"
+fi
 
 echo
 echo "== 失败留证（抓的失败：证据自毁，事后无从复盘）=="
