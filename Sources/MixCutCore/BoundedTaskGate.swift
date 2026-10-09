@@ -17,9 +17,17 @@ public actor BoundedTaskGate {
 
     private enum Wait { case granted, cancelled }
 
+    /// 排队者带身份标识：`runCancellable` 需要在**入队之前**就落下的取消不被吞掉。
+    private struct Waiter {
+        let id: UUID
+        let cont: CheckedContinuation<Wait, Never>
+    }
+
     private let maxConcurrent: Int
     private var running = 0
-    private var waiters: [CheckedContinuation<Wait, Never>] = []
+    private var waiters: [Waiter] = []
+    /// 取消时刻早于入队时刻的 id：入队时立即自检并直接退场，否则会永久占住一个令牌位。
+    private var earlyCancelled: Set<UUID> = []
     private var cancelled = false
 
     public init(maxConcurrent: Int) {
@@ -29,33 +37,74 @@ public actor BoundedTaskGate {
     /// 当前在飞数（已拿到许可、任务体在跑）。
     public var inFlightCount: Int { running }
 
+    /// 排队中的人数（不含在飞）。
+    public var queuedCount: Int { waiters.count }
+
     /// 取消闸：排队者全部以 .cancelled 唤醒且不分配令牌；在飞任务不强制杀死。
     public func cancelAll() {
         cancelled = true
         let pending = waiters
         waiters.removeAll()
-        for c in pending { c.resume(returning: .cancelled) }
+        for w in pending { w.cont.resume(returning: .cancelled) }
     }
 
     /// 在闸限内执行任务；排队期间被取消则抛 CancellationError，任务体不启动。
     public func run<T: Sendable>(_ operation: @Sendable () async throws -> T) async throws -> T {
         if cancelled { throw CancellationError() }
-        let wait = await acquire()
+        let wait = await acquire(id: UUID())
         guard wait == .granted, !cancelled else { throw CancellationError() }
+        defer { release() }
+        return try await operation()
+    }
+
+    /// 同 `run`，但**当前任务**（不是整个闸）被取消时立即退场：
+    /// 排队中就抛 `CancellationError` 且不占令牌；已拿到令牌则把令牌归还后再抛。
+    /// 用在"取消要秒级生效"的链路上（如导入逐段重认排在 whisper 闸后）。
+    public func runCancellable<T: Sendable>(_ operation: @Sendable () async throws -> T) async throws -> T {
+        if cancelled { throw CancellationError() }
+        let id = UUID()
+        let wait: Wait = await withTaskCancellationHandler(operation: {
+            await self.acquire(id: id)
+        }, onCancel: {
+            Task { await self.cancelWaiting(id: id) }
+        })
+        // 令牌已到手，取消却落在"拿到之后"⇒ 先销掉早取消标记再归还，不许让闸少一路
+        if wait == .granted { discard(earlyCancelFor: id) }
+        guard wait == .granted, !cancelled, !Task.isCancelled else {
+            if wait == .granted { release() }
+            throw CancellationError()
+        }
         defer { release() }
         return try await operation()
     }
 
     // MARK: - Internals
 
-    private func acquire() async -> Wait {
+    private func acquire(id: UUID) async -> Wait {
+        if earlyCancelled.contains(id) {
+            earlyCancelled.remove(id)
+            return .cancelled
+        }
         if running < maxConcurrent {
             running += 1
             return .granted
         }
         return await withCheckedContinuation { (c: CheckedContinuation<Wait, Never>) in
-            waiters.append(c)
+            waiters.append(Waiter(id: id, cont: c))
         }
+    }
+
+    private func cancelWaiting(id: UUID) {
+        if let index = waiters.firstIndex(where: { $0.id == id }) {
+            let waiter = waiters.remove(at: index)
+            waiter.cont.resume(returning: .cancelled)
+            return
+        }
+        earlyCancelled.insert(id)
+    }
+
+    private func discard(earlyCancelFor id: UUID) {
+        earlyCancelled.remove(id)
     }
 
     /// 回收一个令牌并按顺序唤醒排队者；每个被唤醒者都领到一个新令牌。
@@ -64,7 +113,7 @@ public actor BoundedTaskGate {
         while running < maxConcurrent, !waiters.isEmpty {
             let next = waiters.removeFirst()
             running += 1
-            next.resume(returning: .granted)
+            next.cont.resume(returning: .granted)
         }
     }
 }

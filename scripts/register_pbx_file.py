@@ -61,8 +61,12 @@ def main(argv):
                 return ""      # 无前缀风格（Xcode 自动生成的旧文件）
         return None
 
-    def free_id(prefix):
-        """扫已用尾号取空闲。prefix 为 "" 表示沿用 Xcode 的无前缀风格。"""
+    def free_id(prefix, exclude=()):
+        """扫已用尾号取空闲。prefix 为 "" 表示沿用 Xcode 的无前缀风格。
+
+        `exclude` 是给第二次调用用的：同一个文件的 PBXBuildFile 与 PBXFileReference
+        **必须两个不同 ID**，同前缀时两次独立扫描会给出同一个尾号 —— Xcode 会把两个对象
+        判成同一个文件，新文件被静默踢出编译单元。"""
         used = set()
         if prefix:
             pat = re.compile(r"\b%s0*([0-9A-Fa-f]{4})(?=[/\s])" % prefix)
@@ -72,9 +76,11 @@ def main(argv):
         for l in lines:
             for m in pat.finditer(l):
                 used.add(int(m.group(1)[-4:], 16))
+        excl = {t.upper() for t in exclude}
         for n in range(0x20, 0x400):
-            if n not in used:
-                return "%04X" % n
+            tail = "%04X" % n
+            if n not in used and tail not in excl:
+                return tail
         raise RuntimeError("ID 空间耗尽")
 
     build_prefix = prefix_of(tpl_name, "build")
@@ -86,10 +92,20 @@ def main(argv):
         return 1
     def compose_id(prefix, tail4):
         """总长恒为 24（含前缀）。前缀 2 位 ⇒尾数补 20 位；无前缀 ⇒补 24 位。"""
-        return (prefix + tail4.rjust(22, "0")) if prefix else tail4.rjust(24, "0")
+        if prefix:
+            return prefix + tail4.rjust(22, "0")
+        # 模板是老式无前缀 ID 时，仍按本项目「手工新增」的约定用 AF 前缀：
+        # 仓里的自检脚本（check_pbx_registration.py）按 A[EFCD] 认手工段，
+        # 生成 `0000…` 这种形态会让登记**看起来完整但没人认得**。
+        return "AF" + tail4.rjust(22, "0")
 
     build_id = compose_id(build_prefix, free_id(build_prefix))
-    file_id = compose_id(file_prefix, free_id(file_prefix))
+    file_id = compose_id(file_prefix, free_id(file_prefix, exclude=(build_id[-4:],)))
+    # 硬断言：同文件的两个 ID 绝不能相同（2026-10-09 实测：这一条漏了，登记"看起来成功"
+    # 但 Xcode 直接把文件当重复对象丢弃，报错点在别的文件上）。
+    if build_id == file_id:
+        print("ERR build/file ID 相同：%s —— Xcode 会静默丢弃该文件" % build_id)
+        return 1
 
     # 位数断言：Xcode 对非 24 位的 ID 直接解析不出（表现为「Build input file cannot
     # be found」，且报错在别处、根因极难定位）—— 当场拦下，不留到真机。
@@ -175,9 +191,9 @@ def main(argv):
     #  ③ 每条 PBXBuildFile 的 fileRef 存在时，其 PBXFileReference 必须真实存在。
     # 全部按**完整 24 位 ID** 判定，且只在本文件涉及的 ID 上报错（避免全库噪音）。
     mine = {build_id, file_id}
-    ref_defs = set(re.findall(r"\b([A-F][0-9A-F]{23})\s+/\* [^*]*?\*/ = \{isa = PBXFileReference", result))
-    group_refs = set(re.findall(r"^\s+([A-F][0-9A-F]{23})\s+/\* [^*]*?\*/,$", result, re.M))
-    sources_refs = set(re.findall(r"^\s+([A-F][0-9A-F]{23})\s+/\* [^*]*?in Sources \*/,$", result, re.M))
+    ref_defs = set(re.findall(r"\b([0-9A-F]{24})\s+/\* [^*]*?\*/ = \{isa = PBXFileReference", result))
+    group_refs = set(re.findall(r"^\s+([0-9A-F]{24})\s+/\* [^*]*?\*/,$", result, re.M))
+    sources_refs = set(re.findall(r"^\s+([0-9A-F]{24})\s+/\* [^*]*?in Sources \*/,$", result, re.M))
 
     problems = []
     for label, ident in (("build", build_id), ("file", file_id)):

@@ -25,7 +25,8 @@ import sys
 PBX = "/Users/yilukaige/mixed_cut-main/MixCut.xcodeproj/project.pbxproj"
 # 本轮新增的两个文件（作为回归样本；后续新增文件请追加到EXPECTED）
 EXPECTED = ["RawAudioCacheStore.swift", "RawAudioCache.swift", "SegmentCommitter.swift",
-             "SegmentationPlanner.swift", "SegmentationPlanSettings.swift"]
+             "SegmentationPlanner.swift", "SegmentationPlanSettings.swift",
+             "LocalWhisperGate.swift"]
 
 
 def main() -> int:
@@ -34,7 +35,8 @@ def main() -> int:
     fail = 0
 
     # —— 判据 ①：任何 24 位 ID 不得被两个不同文件名共用 ——
-    ids = re.findall(r"\b(A[EFCD][0-9A-F]{22})\s+/\* ([^*]+?) \*/", text)
+    # 覆盖**所有** 24 位 ID：只认 A[EFCD] 手工段的话，老式无前缀 ID 的冲突没人看得到
+    ids = re.findall(r"\b([0-9A-F]{24})\s+/\* ([^*]+?) \*/", text)
     by_id = {}
     for full, name in ids:
         by_id.setdefault(full, set()).add(name.strip())
@@ -57,7 +59,7 @@ def main() -> int:
         # Core 文件：path 必须指向 Sources/MixCutCore/
         if "/" not in name:
             pass
-        ref = re.search(r"A[EFCD][0-9A-F]{22} /\* %s \*/ = \{isa = PBXFileReference;([^}]*)\}" % re.escape(name), text)
+        ref = re.search(r"[0-9A-F]{24} /\* %s \*/ = \{isa = PBXFileReference;([^}]*)\}" % re.escape(name), text)
         if not ref:
             print("FAIL %s 缺 PBXFileReference 段" % name)
             fail = 1

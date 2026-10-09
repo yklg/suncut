@@ -4,7 +4,7 @@
 #
 # 两步：
 #   ① 干净探针树必须全绿 —— 否则"红"可能只是文件没拷到，探针本身在造假数字
-#   ② 注入探针树必须恰好 33 条红 —— 少了说明某条判据恒绿
+#   ② 注入探针树必须恰好 36 条红 —— 少了说明某条判据恒绿
 set -uo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -15,7 +15,8 @@ DIRTY="$PROBE_ROOT/dirty"
 CORE_FILES=(ASRPolicy ASREngineDecision TextProvenance WhisperModelCatalog DubStaleness AgentToolCatalog
             SegmentTranscribeOutcome)
 APP_FILES=(Services/ASR/ASRService.swift Services/ASR/ASRSettings.swift Services/ASR/QwenASRClient.swift
-           Services/ASR/SegmentTranscriber.swift Services/VideoProcessing/FFmpegRunner.swift
+           Services/ASR/SegmentTranscriber.swift Infrastructure/LocalWhisperGate.swift
+           Services/VideoProcessing/FFmpegRunner.swift
            App/DebugSelfTest.swift ViewModels/ImportViewModel.swift
            Views/Settings/SettingsView.swift Views/Sidebar/SidebarView.swift
            Models/Segment.swift Models/SegmentDub.swift Models/Video.swift
@@ -126,6 +127,23 @@ extension ASRService {
 EOF
   # G27：抹掉"只有测试在调"的登记 ⇒ 死码重新伪装成防线
   sed -i '' '/known-dead:/d' "$dirty/Sources/MixCutCore/SegmentTranscribeOutcome.swift"
+
+  # G30：把闸的包装换成一个不存在的直接调用 —— 链路上不再有任何一处真闸
+  sed -i '' 's/LocalWhisperGate\.shared\.run {/BypassedGateCall.run {/' \
+    "$dirty/MixCut/Services/ASR/ASRService.swift"
+  # G30b：闸门尺寸改成写死数字，不再由 ConcurrencyPolicy 裁定（死配置回归）
+  sed -i '' 's/ConcurrencyPolicy\.maxASRConcurrency()/3/' \
+    "$dirty/MixCut/Infrastructure/LocalWhisperGate.swift"
+  # G31：别处直接调无闸入口，绕过带闸的包装函数
+  cat >> "$dirty/MixCut/Services/ASR/SegmentTranscriber.swift" <<'EOF'
+
+extension ASRService {
+    func probeG31Ungated(whisperPath: String, audioPath: String) async throws -> Int { 1 }
+    func probeG31Bypass() async throws {
+        _ = try await probeG31Ungated(whisperPath: "", audioPath: "")
+    }
+}
+EOF
 }
 
 trap 'rm -rf "$PROBE_ROOT"' EXIT
@@ -142,14 +160,14 @@ echo "SELFTEST 步骤① OK：干净树 $clean_pass 条 PASS、0 FAIL"
 
 build_tree "$DIRTY"
 inject "$DIRTY"
-echo "== ② 注入探针树（必须 33 条红）"
+echo "== ② 注入探针树（必须 36 条红）"
 GUARD_ROOT="$DIRTY" bash "$ROOT/scripts/check_asr_guards.sh" --selftest > "$PROBE_ROOT/dirty.log" 2>&1
 rc=$?
 red=$(grep -c "^FAIL" "$PROBE_ROOT/dirty.log")
-echo "注入树变红条数=${red}（期望 33），selftest 退出码=$rc"
+echo "注入树变红条数=${red}（期望 36），selftest 退出码=$rc"
 grep "^FAIL" "$PROBE_ROOT/dirty.log"
-if [[ "$rc" != "0" || "$red" != "33" ]]; then
+if [[ "$rc" != "0" || "$red" != "36" ]]; then
   echo "SELFTEST FAIL：判据没抓全（某条恒绿，或红数超出预期说明探针污染）"
   exit 1
 fi
-echo "ASR 守卫自证通过：33 条判据在违规树上全部变红"
+echo "ASR 守卫自证通过：36 条判据在违规树上全部变红"

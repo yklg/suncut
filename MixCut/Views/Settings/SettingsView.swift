@@ -40,6 +40,8 @@ struct SettingsView: View {
     @AppStorage("hasCompletedOnboarding") private var hasCompletedOnboarding = false
     @AppStorage(AgentGateway.enabledKey) private var agentEnabled = true
     @AppStorage(AgentGateway.portKey) private var agentPort = Int(AgentGateway.defaultPort)
+    /// 导入「同时分析视频数」的手动上限；0 = 跟随硬件建议（见 ConcurrencyPolicy.analyzeOverrideKey）
+    @AppStorage(ConcurrencyPolicy.analyzeOverrideKey) private var analyzeOverrideCount = 0
     @State private var selectedAgentClient: AgentClientSnippet = .claudeCode
 
     /// 全局默认配音音色（VoiceChoiceCoder 串；空=未配置）。
@@ -708,6 +710,20 @@ struct SettingsView: View {
                         .font(DesignTokens.Typography.label)
                         .foregroundStyle(.secondary)
                 }
+                // 一次导入几十条素材时，这一层就是"排队等前面那条跑完"的地方（实测：2 路时
+                // 第三条素材的第一条 ffmpeg 检测被排空等了 80s）。0 表示不覆盖硬件建议。
+                Stepper(value: $analyzeOverrideCount, in: 0...ConcurrencyPolicy.analyzeOverrideCap) {
+                    VStack(alignment: .leading, spacing: DesignTokens.Spacing.tight) {
+                        Text("手动上限（0 = 跟随硬件建议）")
+                            .font(DesignTokens.Typography.label)
+                        Text(analyzeOverrideCount == 0
+                             ? "机器建议 \(ConcurrencyPolicy.hardwareMaxAnalyzeConcurrency()) 路"
+                             : "当前手动 \(analyzeOverrideCount) 路 · 机器建议 \(ConcurrencyPolicy.hardwareMaxAnalyzeConcurrency()) 路")
+                            .font(DesignTokens.Typography.label)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                .help("同时分析多少条视频。本机语音识别另有单模型闸兜着，提高这里不会让两路 whisper 抢 GPU")
                 LabeledContent("同时导出视频数") {
                     Text(ConcurrencyPolicy.explainExport())
                         .font(DesignTokens.Typography.label)

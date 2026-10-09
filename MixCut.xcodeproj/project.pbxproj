@@ -208,6 +208,7 @@
 		AE1D0C0F1234567890ABCDE1 /* SegmentCommitter.swift in Sources */ = {isa = PBXBuildFile; fileRef = AE1D0C0F1234567890ABCDEF /* SegmentCommitter.swift */; };
 		B2C10E4D5A671829304B6002 /* PlaybackCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2C10E4D5A671829304B6001 /* PlaybackCoordinator.swift */; };
 		B6847040AD0E4C4E1CFC2D19 /* ConcurrencyPolicy.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5E38824D4DD571ED6A70E3AB /* ConcurrencyPolicy.swift */; };
+		AF000000000000000000002A /* LocalWhisperGate.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF000000000000000000002B /* LocalWhisperGate.swift */; };
 		B6D377C9EA1F522F8341954B /* FFmpegRunner.swift in Sources */ = {isa = PBXBuildFile; fileRef = C858F164A6EEC1BFF4AA2BE2 /* FFmpegRunner.swift */; };
 		BA2E27944B16BC55D66FE56D /* BrandResidueScanner.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7E8212A6A3C180B93AC5AD93 /* BrandResidueScanner.swift */; };
 		BA680C51E5D4F8253F34B6FD /* LaunchSteps.swift in Sources */ = {isa = PBXBuildFile; fileRef = 765BF3CFE1CA925FB95DD054 /* LaunchSteps.swift */; };
@@ -343,6 +344,7 @@
 		5D410283360B827E20209397 /* ProjectVideoDedup.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = ProjectVideoDedup.swift; path = Sources/MixCutCore/ProjectVideoDedup.swift; sourceTree = "<group>"; };
 		5D595E4E7B57C7DF05BBB26E /* FlowLayout.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FlowLayout.swift; sourceTree = "<group>"; };
 		5E38824D4DD571ED6A70E3AB /* ConcurrencyPolicy.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConcurrencyPolicy.swift; sourceTree = "<group>"; };
+		AF000000000000000000002B /* LocalWhisperGate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalWhisperGate.swift; sourceTree = "<group>"; };
 		60B558A50ABAFE691C14EF5D /* SegmentationCompleteness.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = SegmentationCompleteness.swift; path = Sources/MixCutCore/SegmentationCompleteness.swift; sourceTree = "<group>"; };
 		66877C6CCA03E25280D675CB /* BGMLibraryStore.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = BGMLibraryStore.swift; path = MixCut/Services/BGM/BGMLibraryStore.swift; sourceTree = "<group>"; };
 		668A584A73936DE0EF82FDDE /* PromptPresets.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = PromptPresets.swift; path = ../../../ShotEdit/PromptPresets.swift; sourceTree = "<group>"; };
@@ -885,6 +887,7 @@
 			isa = PBXGroup;
 			children = (
 				5E38824D4DD571ED6A70E3AB /* ConcurrencyPolicy.swift */,
+				AF000000000000000000002B /* LocalWhisperGate.swift */,
 				36131931CC8DA93B33B740F3 /* HardwareProfile.swift */,
 			);
 			path = Infrastructure;
@@ -1253,6 +1256,7 @@
 				C10C9C5291842D9A3C95095B /* SchemaGuard.swift in Sources */,
 				BA680C51E5D4F8253F34B6FD /* LaunchSteps.swift in Sources */,
 				B6847040AD0E4C4E1CFC2D19 /* ConcurrencyPolicy.swift in Sources */,
+				AF000000000000000000002A /* LocalWhisperGate.swift in Sources */,
 				CB0B2974E157D629430CCA8B /* HardwareProfile.swift in Sources */,
 				24D63DBCBE4432D272BA135F /* MixScheme.swift in Sources */,
 				A66CE2CC04E8F513B1DD6E13 /* MixStrategy.swift in Sources */,

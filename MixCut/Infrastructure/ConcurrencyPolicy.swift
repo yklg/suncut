@@ -36,7 +36,35 @@ enum ConcurrencyPolicy {
 
     /// 视频分析（场景检测 + 解码 + AI 文本调用）并发数
     /// 主要受 CPU 滤镜和 SwiftData 写入限制，不全是硬件
+    ///
+    /// 2026-10-09 真机基线（计划 §Q-1）：本机建议 2 路时，第三条素材的**第一段 ffmpeg 检测**
+    /// 被排空等了 80s —— 素材一多，这一层就是用户看到的"导入慢"。所以这里开了一个用户覆盖口，
+    /// 但本机识别另有 `LocalWhisperGate` 单模型闸兜底（§Q-2 实测并行是负收益），
+    /// 提高这一层不会把两路 large-v3 放出来抢 GPU。
     static func maxAnalyzeConcurrency() -> Int {
+        analyzeOverride ?? hardwareMaxAnalyzeConcurrency()
+    }
+
+    /// 用户覆盖键：导入「同时分析视频数」。0 或没写过 = 跟随硬件建议。
+    static let analyzeOverrideKey = "concurrency.maxAnalyzeVideos"
+    /// 上限 6：再高只会让解码/磁盘互相抢，且 20–50 条素材一批也用不到更多路。
+    static let analyzeOverrideCap = 6
+    /// 环境变量优先于偏好：与 `MIXCUT_MCP_PORT` 同一套办法 —— 验证/压测时临时调一个数，
+    /// 不必往用户的默认域里写东西，也不留下"改完忘了改回来"的状态。
+    static let analyzeEnvironmentKey = "MIXCUT_ANALYZE_CONCURRENCY"
+
+    static var analyzeOverride: Int? {
+        if let raw = ProcessInfo.processInfo.environment[analyzeEnvironmentKey],
+           let n = Int(raw.trimmingCharacters(in: .whitespaces)), n >= 1 {
+            return min(n, analyzeOverrideCap)
+        }
+        let stored = UserDefaults.standard.integer(forKey: analyzeOverrideKey)
+        guard stored >= 1 else { return nil }
+        return min(stored, analyzeOverrideCap)
+    }
+
+    /// 硬件建议值。覆盖不许把它抹掉 —— 设置页要能同时显示"你选的"和"机器建议的"。
+    static func hardwareMaxAnalyzeConcurrency() -> Int {
         let profile = HardwareProfile.shared
         let raw: Int = {
             guard profile.isAppleSilicon else {
@@ -89,17 +117,22 @@ enum ConcurrencyPolicy {
     static func explainAnalyze() -> String {
         let n = maxAnalyzeConcurrency()
         let profile = HardwareProfile.shared
-        if profile.isAppleSilicon {
-            return "\(n) 路 (\(profile.chipFamily.rawValue) \(profile.chipTier.displayName) · CPU 滤镜 + VT 解码)"
-        }
-        return "\(n) 路 (\(profile.chipBrandString))"
+        let base: String = {
+            if profile.isAppleSilicon {
+                return "\(n) 路 (\(profile.chipFamily.rawValue) \(profile.chipTier.displayName) · CPU 滤镜 + VT 解码)"
+            }
+            return "\(n) 路 (\(profile.chipBrandString))"
+        }()
+        let hardware = hardwareMaxAnalyzeConcurrency()
+        // 手动覆盖时把机器建议值一并显示：只写"4 路"会让人以为硬件算出来的就是 4
+        return n == hardware ? base : "\(base) · 手动覆盖（机器建议 \(hardware) 路）"
     }
 
     static func explainASR() -> String {
         let n = maxASRConcurrency()
         let profile = HardwareProfile.shared
         if profile.isAppleSilicon {
-            return "\(n) 路 (Metal 抢占，避免互相干扰)"
+            return "\(n) 路 (Metal 抢占，避免互相干扰；全局识别闸已强制生效)"
         }
         return "\(n) 路 (CPU)"
     }

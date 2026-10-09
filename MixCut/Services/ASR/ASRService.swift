@@ -252,6 +252,18 @@ actor ASRService {
         language: String,
         onProgress: (@Sendable (Double) -> Void)?
     ) async throws -> TranscriptionResult {
+        try await LocalWhisperGate.shared.run {
+            try await self.runPythonWhisperUngated(whisperPath: whisperPath, audioPath: audioPath,
+                                                   language: language, onProgress: onProgress)
+        }
+    }
+
+    private func runPythonWhisperUngated(
+        whisperPath: String,
+        audioPath: String,
+        language: String,
+        onProgress: (@Sendable (Double) -> Void)?
+    ) async throws -> TranscriptionResult {
         let outputDir = FileHelper.tempDirectory
             .appendingPathComponent("whisper_\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: outputDir, withIntermediateDirectories: true)
@@ -397,6 +409,22 @@ actor ASRService {
         language: String,
         onProgress: (@Sendable (Double) -> Void)?,
         prompt: String? = nil
+    ) async throws -> TranscriptionResult {
+        try await LocalWhisperGate.shared.run {
+            try await self.runWhisperCppUngated(whisperPath: whisperPath, audioPath: audioPath,
+                                                language: language, onProgress: onProgress,
+                                                prompt: prompt)
+        }
+    }
+
+    /// 真正起进程的那一步（GPU 失败自动降级 CPU 的两次尝试**共用一个令牌**：
+    /// 这是一次逻辑识别，不是两次）。闸门外层由 `runWhisperCpp` 加，这里不许绕过。
+    private func runWhisperCppUngated(
+        whisperPath: String,
+        audioPath: String,
+        language: String,
+        onProgress: (@Sendable (Double) -> Void)?,
+        prompt: String?
     ) async throws -> TranscriptionResult {
         // 红线 R1：识别路径**不再**自动下载模型。以前这里会在用户按下一个"重新识别"之后
         // 静默拉起 1.6GB 下载（且下的是与档位裁定不同的 turbo），用户只看到"怎么这么久"。

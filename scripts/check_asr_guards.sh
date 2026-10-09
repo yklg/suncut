@@ -345,6 +345,34 @@ fi
 # （v8：这里原本还有 G28「裁回放行判据只由门面读」与 G29「keptCoverage 不许写死数字」两条，
 #   它们守的是宽窗裁回那条路 ⇒ 随实现一起删除。守卫 41 → 37 项。）
 
+# G30 本机 whisper 的两个进程汇流点都必须过全局单模型闸（计划 §Q-2：并行实测是负收益）
+# 判的是调用形状 `LocalWhisperGate.shared.run`，数名字改了也不算守住。
+gate_calls=$(grep -c 'LocalWhisperGate\.shared\.run' "$ASR_DIR/ASRService.swift" 2>/dev/null | tr -d ' ')
+if [[ "$gate_calls" == "2" ]]; then
+  pass "G30 本机识别两处进程汇流点都在闸内（cpp + python 各一处）"
+else
+  fail "G30 ASRService 里 LocalWhisperGate.shared.run 命中 $gate_calls 处（应 2 处）：闸门被绕过 = 两路 large-v3 抢 GPU"
+fi
+
+# G30b 闸门的 permits 只能由 ConcurrencyPolicy 裁定，别处不许自己写死数字
+# 只数**代码行**里的调用：文档注释里也会出现这个词（本策略的说明就是），数注释等于造误报机器
+permits=$(grep -rn --include="*.swift" 'ConcurrencyPolicy\.maxASRConcurrency()' "$APP" 2>/dev/null \
+          | sed 's/^[^:]*:[0-9]*://' | grep -vc '^[[:space:]]*//')
+if [[ "$permits" == "1" ]]; then
+  pass "G30b maxASRConcurrency 有一个链路读者（LocalWhisperGate），不再是死配置"
+else
+  fail "G30b maxASRConcurrency 的链路读者有 $permits 个（应 1 个）：闸门尺寸分家或多处各判一次"
+fi
+
+# G31 "裸跑"入口只能被那两个带闸的包装调用，别处直接调就绕过了闸
+bare_calls=$(grep -rn --include="*.swift" 'Ungated(' "$APP" 2>/dev/null | grep -v 'func ' | wc -l | tr -d ' ')
+bare_files=$(grep -rln --include="*.swift" 'Ungated(' "$APP" 2>/dev/null | sed "s|^$APP/||" | tr '\n' ' ')
+if [[ "$bare_calls" == "2" && "$bare_files" == "Services/ASR/ASRService.swift " ]]; then
+  pass "G31 无闸入口只在 ASRService 内被调用 2 次（包装函数各一次）"
+else
+  fail "G31 无闸入口调用 $bare_calls 次、出现在 [$bare_files]（应 2 次且只在 ASRService.swift）"
+fi
+
 if [[ "$SELFTEST" == "1" ]]; then
   if [[ "$FAILED" -gt 0 ]]; then
     echo "SELFTEST PASS：探针树上判据变红 $FAILED 条"
