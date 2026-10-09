@@ -182,10 +182,39 @@ expect_min "AnnotatedSegment 记录分数是否真来自模型" \
 expect_min "lossless 解码累计被丢弃的条数" \
   "$(code_count_in_file "$ANALYSIS" 'skippedUnparsableCount')" 2
 
+echo
+echo "== 思考开关与输出预算（抓的失败：界面关了思考、请求里没发出去，推理把 max_tokens 吃光）=="
+# 一手证据：两次 AI 切分失败都是 completion=8192 被 reasoning_content(12529~15744 字符) 占满。
+# 全部用 code_count_in_file：这些词在文档注释里也会出现，数注释等于造误报机器。
+expect_eq "兼容分支真的在用那份预算（不是又写死一个数）" \
+  "$(code_count_in_file "$CLIENT" '"max_tokens": providerMaxTokens$')" 1
+expect_eq "预算的取值只由 Core 那一张表决定" \
+  "$(code_count_in_file "$CLIENT" 'AIThinkingPolicy\.maxOutputTokens')" 1
+expect_eq "客户端里 max_tokens 的字面量只许出现在 Claude 原生那条分支" \
+  "$(code_count_in_file "$CLIENT" '"max_tokens":')" 2
+expect_eq "思考参数按形态分发（只有一个读者）" \
+  "$(code_count_in_file "$CLIENT" 'thinkingWireShape(model:')" 1
+expect_eq "DeepSeek/Anthropic 形态真的把 enabled|disabled 发出去" \
+  "$(code_count_in_file "$CLIENT" '"type": thinkingEnabled ? "enabled" : "disabled"')" 1
+expect_eq "App 侧能力表把判断交给 Core（不许两处各判一次）" \
+  "$(code_count_in_file "$PROVIDER" 'AIThinkingPolicy\.supportsToggle')" 1
+# 这条是当初把用户坑了的旧断言："DeepSeek 无参数可切换思考" —— 官方文档相反，回来一次就红一次
+expect_zero "旧的\"思考由模型本身决定、无参数可切换\"表不许复活" \
+  "$(code_count_in_file "$PROVIDER" 'case .minimax, .deepseek, .claudeRelay, .custom:')"
+# 2026-10-09 现场：一次切分请求挂到进程被杀都没回来（timeoutInterval 不管响应体，默认 resource 是 7 天）
+expect_eq "AI 请求带真正的总截止（resource 超时）" \
+  "$(code_count_in_file "$CLIENT" 'config\.timeoutIntervalForResource = AIRequestDeadline\.seconds')" 1
+expect_zero "不许退回 URLSession.shared（那个会话没有总截止）" \
+  "$(code_count_in_file "$CLIENT" 'URLSession\.shared')"
+expect_eq "限流要有日志（否则事后分不清 429 与网络挂）" \
+  "$(code_count_in_file "$CLIENT" 'AI 被限流 HTTP 429')" 1
+expect_eq "网络层失败要有日志（原来静默重试，17 分钟只留下一行'重试第 1 次'）" \
+  "$(code_count_in_file "$CLIENT" 'AI 请求第')" 1
+
 if [ -f "$PBXPROJ" ]; then
   echo
   echo "== 工程引用（抓的失败：新源文件没进 App target 编译，运行时根本不存在）=="
-  for f in AIResponseEvidence SegmentationCompleteness; do
+  for f in AIResponseEvidence SegmentationCompleteness AIThinkingPolicy; do
     expect_min "$f.swift 在 Sources 编译阶段被登记" \
       "$(grep -c "$f.swift in Sources" "$PBXPROJ")" 2
   done

@@ -49,9 +49,10 @@ enum AIProviderError: LocalizedError {
         case .emptyModelOutput(let evidence):
             return """
             模型这次没有输出正文（响应证据：\(evidence)）。
-            这不是网络问题，重发同样的请求也不会有结果。常见原因是本次要求它一次吐出的条目太多\
+            这不是网络问题，重发同样的请求大概率还是同样结果。常见原因是本次要求它一次吐出的条目太多\
             ——长度预算被模型的推理过程占满，轮不到写正文。
-            可操作项：① 在「设置」换用未开启推理（思考）的模型；② 一次少导入几个视频、缩短单次素材。
+            可操作项：① 在「设置 › 模型」把"深度思考"关掉（DeepSeek V4 系列现在真的会把这个开关发出去，\
+            以前只是界面摆设）；② 一次少导入几个视频、缩短单次素材。
             \(Self.evidenceHint)
             """
         case .outputTruncated(let evidence):
@@ -290,20 +291,16 @@ enum AIProviderType: String, CaseIterable, Identifiable, Codable {
     }
 
     /// 该模型是否支持「深度思考」参数开关。
-    /// 只对能通过请求参数显式开/关思考的组合返回 true：
-    /// - 千问：DashScope 商业版 qwen3-max / qwen-plus / qwen-flash / qwen-turbo 支持 enable_thinking（非流式可用）；
-    ///   qwen-max-latest（旧架构）与 coder 系不支持
-    /// - Claude 原生：4 系及以上全系支持 extended thinking
-    /// - MiniMax / DeepSeek：思考由模型本身决定，无参数可切换；转发网关/自定义后端参数透传不可靠，均不提供开关
+    /// 判据**不在这张表里**，而在 Core 的 `AIThinkingPolicy`（同一张表两处判一次就会漂移，
+    /// 而且这张表以前写"DeepSeek 无参数可切换思考"是错的：官方文档 `thinking.type` 默认 enabled，
+    /// 于是界面上关了思考、请求里根本没发出去，模型的推理把 8192 的输出额度吃光）。
     func supportsThinkingToggle(model: String) -> Bool {
-        switch self {
-        case .qwen:
-            return ["qwen3-max", "qwen-plus-latest", "qwen-flash", "qwen-turbo-latest"].contains(model)
-        case .claude:
-            return true
-        case .minimax, .deepseek, .claudeRelay, .custom:
-            return false
-        }
+        AIThinkingPolicy.supportsToggle(provider: rawValue, model: model)
+    }
+
+    /// 思考开关落到请求体里的形态（见 `AIThinkingPolicy.ThinkingWireShape`）。
+    func thinkingWireShape(model: String) -> ThinkingWireShape {
+        AIThinkingPolicy.wireShape(provider: rawValue, model: model)
     }
 
     /// 模型显示名称

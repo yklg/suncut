@@ -125,7 +125,15 @@ def main(argv):
         return 1
 
     # Core 侧的 FileReference 需要 name + 全路径；App 侧是裸名 + 组 path
-    is_core = build_prefix in ("AC", "AD") or file_prefix in ("AC", "AD")
+    # Core/App 的判据只能看模板自己的 FileReference 怎么写的：
+    # 按 ID 前缀猜是错的 —— 本工程 Core 侧既有 AC/AD 也有 AF（SegmentationPlanner 就是 AF），
+    # 猜错会把 Core 文件登记成裸 path，Xcode 按组路径解析 ⇒ 找不到文件。
+    tpl_ref_body = ""
+    for l in lines:
+        if tpl_name in l and "PBXFileReference" in l and "isa = PBXBuildFile" not in l:
+            tpl_ref_body = l
+            break
+    is_core = "Sources/MixCutCore/" in tpl_ref_body
     if is_core:
         ref_line = ('{isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = '
                     'sourcecode.swift; name = %s; path = Sources/MixCutCore/%s; '

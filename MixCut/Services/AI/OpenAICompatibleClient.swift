@@ -45,8 +45,26 @@ enum MixLog {
     }
 }
 
+/// 单次 AI 请求的硬截止（秒）。只有一个出处：`URLRequest.timeoutInterval` 与
+/// session 的 `timeoutIntervalForRequest` / `timeoutIntervalForResource` 都从它取，
+/// 免得"2 分钟"这句话在三个地方各写一遍、日后各说各话。
+enum AIRequestDeadline {
+    static let seconds: TimeInterval = 120
+}
+
 /// OpenAI 兼容 API 客户端（支持千问、MiniMax 等）
 actor OpenAICompatibleClient: AIProvider {
+
+    /// 带**总截止**的会话。`URLRequest.timeoutInterval` 只约束"请求发出前的空闲"，
+    /// 响应体能读多久取决于 `timeoutIntervalForResource` —— 系统默认是 **7 天**。
+    /// 2026-10-09 18:49 的一次切分请求就因此挂住：到 19:06 进程被收仍未返回、也没报错，
+    /// 整条导入既不失败也不成功，日志里只剩一行"重试第 1 次"。
+    private static let session: URLSession = {
+        let config = URLSessionConfiguration.ephemeral
+        config.timeoutIntervalForRequest = AIRequestDeadline.seconds
+        config.timeoutIntervalForResource = AIRequestDeadline.seconds
+        return URLSession(configuration: config)
+    }()
 
     private var providerType: AIProviderType
     private var baseURL: String
@@ -55,20 +73,19 @@ actor OpenAICompatibleClient: AIProvider {
     private var thinkingEnabled: Bool
     private var maxRetries = 3
     private var baseRetryDelay: UInt64 = 2_000_000_000 // 2秒
-    private var requestTimeout: TimeInterval = 120 // 2分钟（单次请求；避免长时间卡死）
+    private var requestTimeout: TimeInterval = AIRequestDeadline.seconds
 
-    /// 按 provider 给输出长度上限设不同值。
-    /// 不同 provider 的 max_tokens 实际上限不同：DeepSeek/qwen-max 系 8192，MiniMax M2.7 可吃 16K+。
-    /// 设过低会截断长输出（10 个 segments + reasoning ≈ 5K-6K tokens），设过高会被 API 400 拒绝。
+    /// 输出长度上限由 Core 的 `AIThinkingPolicy` 裁定 —— 开思考时推理与正文**共用同一份**
+    /// completion 额度，把上限写死就会把正文挤没。
+    ///
+    /// 原表按 provider 给死值，并注明"DeepSeek V4-Flash 上限 8192，超出 API 报错"；
+    /// 官方文档实际允许 `1…393216`，且 `thinking.type` 默认 `enabled`、`reasoning_effort` 默认 `high`。
+    /// 2026-10-09 两次 AI 切分失败现场：`completion=8192 / reasoning_content=12529~15744 字符`，
+    /// 一次正文 0 字符、一次正文残缺被截断。
     private var providerMaxTokens: Int {
-        switch providerType {
-        case .deepseek:    return 8192       // V4-Flash 上限 8192，超出 API 报错
-        case .qwen:        return 8192       // qwen3-max 系列稳妥值
-        case .minimax:     return 16384      // M2.7 实际支持 32K，给一半留余量
-        case .claude:      return 8192       // 原生 API 走另一个分支，这里实际不用到
-        case .claudeRelay: return 16384      // 转发到 Claude/Gemini/OpenAI 后端都能吃 16K
-        case .custom:      return 8192       // 未知后端保守值
-        }
+        AIThinkingPolicy.maxOutputTokens(provider: providerType.rawValue,
+                                         model: modelName,
+                                         thinkingEnabled: thinkingEnabled)
     }
 
     init(providerType: AIProviderType, apiKey: String, modelName: String? = nil, thinkingEnabled: Bool = false) {
@@ -375,22 +392,30 @@ actor OpenAICompatibleClient: AIProvider {
                     if jsonMode && !isRelayClaudeOrGemini {
                         b["response_format"] = ["type": "json_object"]
                     }
-                    // 千问（DashScope）：模型支持思考开关时显式传 enable_thinking（商业版非流式可用）。
-                    // 只对支持的模型传参，避免不认识该参数的模型报 400
-                    if providerType == .qwen, providerType.supportsThinkingToggle(model: modelName) {
+                    // 思考开关必须**按各家的参数形态真的发出去**。不支持开关的组合一个字段都不加：
+                    // 硬发会被 400 或静默忽略，而"静默忽略"就是界面上关了思考、模型照旧在想，
+                    // 代价由长度上限来付（正文被推理挤没）。
+                    switch providerType.thinkingWireShape(model: modelName) {
+                    case .none:
+                        break
+                    case .enableThinkingBool:
                         b["enable_thinking"] = thinkingEnabled
+                    case .thinkingTypeObject:
+                        b["thinking"] = ["type": thinkingEnabled ? "enabled" : "disabled"]
                     }
                     body = b
                 }
                 request.httpBody = try JSONSerialization.data(withJSONObject: body)
 
-                let (data, response) = try await URLSession.shared.data(for: request)
+                let (data, response) = try await Self.session.data(for: request)
 
                 guard let httpResponse = response as? HTTPURLResponse else {
                     throw AIProviderError.requestFailed("无效的 HTTP 响应")
                 }
 
                 if httpResponse.statusCode == 429 {
+                    // 原来这条路径一行日志都不打 ⇒ 事后完全分不清"被限流"和"网络挂了"
+                    MixLog.error("AI 被限流 HTTP 429（第 \(attempt + 1)/\(maxRetries) 次尝试），退避后重试")
                     lastError = AIProviderError.rateLimited
                     continue
                 }
@@ -438,10 +463,14 @@ actor OpenAICompatibleClient: AIProvider {
                 if error.isDeterministic { throw error }
             } catch {
                 lastError = error
-                if "\(error)".contains("429") || "\(error)".lowercased().contains("rate") {
+                let text = "\(error)"
+                if text.contains("429") || text.lowercased().contains("rate") {
                     lastError = AIProviderError.rateLimited
                     continue
                 }
+                // 网络层错误（超时/连接重置/证书）以前是**静默重试**的：
+                // 一次 17 分钟不动的导入，日志里只有"重试第 1 次"，没有任何一条说明为什么。
+                MixLog.error("AI 请求第 \(attempt + 1)/\(maxRetries) 次网络层失败：\(text.prefix(200))")
             }
         }
 
