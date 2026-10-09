@@ -179,6 +179,7 @@ actor AIAnalysisService {
         transcript: TranscriptionResult,
         sceneBoundaries: [SceneBoundary],
         localAnalysis: VideoLocalAnalysis? = nil,
+        planConfig: SegmentationPlanConfig = SegmentationPlanConfig(),
         onProgress: ((String) -> Void)? = nil
     ) async throws -> AISegmentationResult {
         onProgress?("正在构建分析 prompt...")
@@ -187,7 +188,8 @@ actor AIAnalysisService {
             videoId: videoId,
             transcript: transcript,
             sceneBoundaries: sceneBoundaries,
-            localAnalysis: localAnalysis
+            localAnalysis: localAnalysis,
+            planConfig: planConfig
         )
 
         onProgress?("正在等待 AI 分析...")
@@ -263,7 +265,8 @@ actor AIAnalysisService {
         videoId: String,
         transcript: TranscriptionResult,
         sceneBoundaries: [SceneBoundary],
-        localAnalysis: VideoLocalAnalysis?
+        localAnalysis: VideoLocalAnalysis?,
+        planConfig: SegmentationPlanConfig
     ) -> String {
         // 加载类型定义
         let segmentTypesDefinition = promptLoader.loadPrompt(named: "segment_types_definition") ?? ""
@@ -376,12 +379,7 @@ actor AIAnalysisService {
 
         ## 切分粒度
 
-        - 目标片段时长：3-15 秒（语义完整性优先于时长）
-        - **硬性上限：任何单个片段不得超过 18 秒**。超过 15 秒时必须寻找内部的语义切分点拆分
-        - 短视频（< 40s）：平均 5-8s/片段
-        - 中视频（40-80s）：平均 6-12s/片段
-        - 长视频（> 80s）：平均 8-15s/片段
-        - 宁可多切几个短片段，也不要把不同主题混在一起
+        \(planConfig.granularityPromptBlock())
 
         ---
 

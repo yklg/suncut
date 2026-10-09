@@ -168,4 +168,49 @@ struct SegmentationPlannerTests {
         #expect(SegmentationPlanConfig().segmentSecondsCap == SegmentationCompleteness.promptSegmentLimit)
         #expect(SegmentationPlanConfig().minSegmentSeconds == 2.0)
     }
+
+    // MARK: prompt 同源（模型听到的秒数 == 代码判的秒数）
+
+    @Test("TC-P16 prompt 粒度段的数字全部来自 config，改一处文本就跟着变")
+    func promptBlockIsGeneratedFromConfig() {
+        var cfg = SegmentationPlanConfig()
+        cfg.suggestedSegmentSeconds = 4...12
+        cfg.segmentSecondsCap = 14
+        let block = cfg.granularityPromptBlock()
+        #expect(block.contains("4-12 秒"))
+        #expect(block.contains("不得超过 14 秒"))
+        #expect(!block.contains("3-15"))
+        #expect(!block.contains("18 秒"))
+    }
+
+    @Test("TC-P17 默认文本与历史 prompt 逐字一致（同源不许偷偷改口）")
+    func defaultBlockMatchesWhatThePromptSaidBefore() {
+        let block = SegmentationPlanConfig().granularityPromptBlock()
+        #expect(block.contains("- 目标片段时长：3-15 秒（语义完整性优先于时长）"))
+        #expect(block.contains("**硬性上限：任何单个片段不得超过 18 秒**"))
+        #expect(block.contains("- 短视频（< 40s）：平均 5-8s/片段"))
+        #expect(block.contains("- 中视频（40-80s）：平均 6-12s/片段"))
+        #expect(block.contains("- 长视频（> 80s）：平均 8-15s/片段"))
+    }
+
+    @Test("TC-P18 各档区间标签取自己前一档的上界，不写死也不串档")
+    func bandScopeFollowsPreviousBand() {
+        var cfg = SegmentationPlanConfig()
+        cfg.granularityBands = [
+            GranularityBand(videoMaxSeconds: 30, label: "短视频", minAverageSeconds: 4, maxAverageSeconds: 7),
+            GranularityBand(videoMaxSeconds: .infinity, label: "长视频", minAverageSeconds: 9, maxAverageSeconds: 14),
+        ]
+        let block = cfg.granularityPromptBlock()
+        #expect(block.contains("短视频（< 30s）：平均 4-7s/片段"))
+        #expect(block.contains("长视频（> 30s）：平均 9-14s/片段"))
+    }
+
+    @Test("TC-P19 提示给模型的最小说片长与规划层下限同源")
+    func minSizeHintSharesTheFloor() {
+        let block = SegmentationPlanConfig().granularityPromptBlock()
+        #expect(block.contains("短于 2 秒的片段几乎一定会被后处理并回相邻段"))
+        var cfg = SegmentationPlanConfig()
+        cfg.minSegmentSeconds = 6          // 提示应跟 minAverage(3.5) 取小的那个，不是 6
+        #expect(cfg.granularityPromptBlock().contains("短于 3.5 秒"))
+    }
 }

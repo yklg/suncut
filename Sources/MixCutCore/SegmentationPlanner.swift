@@ -26,7 +26,78 @@ public struct SegmentationPlanConfig: Equatable, Sendable {
     /// 极短碎片的合并下限。维持历史值 2.0 不变：真实库里 `<2s` 段总数为 0，说明这道兜底本来就在起作用。
     public var minSegmentSeconds: Double = 2.0
 
+    /// 给模型的粒度建议区间（**建议**，不是判据；判据是 `minAverageSegmentSeconds`）。
+    public var suggestedSegmentSeconds: ClosedRange<Double> = 3...15
+
+    /// 按视频时长分档的平均段长建议。原先这三档写死在 prompt 的自然语言里，
+    /// 与代码实际判的秒数各说各话 —— 挪到这儿，prompt 由这些值**生成**。
+    public var granularityBands: [GranularityBand] = [
+        GranularityBand(videoMaxSeconds: 40, label: "短视频", minAverageSeconds: 5, maxAverageSeconds: 8),
+        GranularityBand(videoMaxSeconds: 80, label: "中视频", minAverageSeconds: 6, maxAverageSeconds: 12),
+        GranularityBand(videoMaxSeconds: .infinity, label: "长视频", minAverageSeconds: 8, maxAverageSeconds: 15),
+    ]
+
     public init() {}
+}
+
+/// 一档"该切多粗"的建议。
+public struct GranularityBand: Equatable, Sendable {
+    public var videoMaxSeconds: Double
+    public var label: String
+    public var minAverageSeconds: Double
+    public var maxAverageSeconds: Double
+
+    public init(videoMaxSeconds: Double, label: String,
+                minAverageSeconds: Double, maxAverageSeconds: Double) {
+        self.videoMaxSeconds = videoMaxSeconds
+        self.label = label
+        self.minAverageSeconds = minAverageSeconds
+        self.maxAverageSeconds = maxAverageSeconds
+    }
+}
+
+extension SegmentationPlanConfig {
+
+    /// 生成 prompt 里的「切分粒度」整段文案。
+    ///
+    /// 为什么让 Core 出文案：模型被告知的秒数与代码实际判的秒数必须同源。否则会出现
+    /// "prompt 跟模型说好 5-8s，规划层回头按另一套数把它并掉" —— 两边各自演化，
+    /// 调一个数要改两个地方，正是本仓守卫脚本抓的"同一规则写多遍"。
+    /// 上限那句直接取 `segmentSecondsCap`（默认即 `SegmentationCompleteness.promptSegmentLimit`），
+    /// 不另立数字。
+    public func granularityPromptBlock() -> String {
+        var bandLines: [String] = []
+        var previousUpper = 0.0
+        for band in granularityBands {
+            // 三档各有自己的下界与上界：首档只写「< 上界」，中间档写「下界-上界」，
+            // 末档只写「> 上界」。下界取自前一档的上界 —— 串档或漏界都会让模型以为有两套区间。
+            let scope: String
+            if band.videoMaxSeconds == .infinity {
+                scope = "> \(fmt(previousUpper))s"
+            } else if previousUpper == 0 {
+                scope = "< \(fmt(band.videoMaxSeconds))s"
+            } else {
+                scope = "\(fmt(previousUpper))-\(fmt(band.videoMaxSeconds))s"
+            }
+            bandLines.append("- \(band.label)（\(scope)）：平均 "
+                             + "\(fmt(band.minAverageSeconds))-\(fmt(band.maxAverageSeconds))s/片段")
+            previousUpper = band.videoMaxSeconds
+        }
+        return """
+        - 目标片段时长：\(fmt(suggestedSegmentSeconds.lowerBound))-\(fmt(suggestedSegmentSeconds.upperBound)) 秒（语义完整性优先于时长）
+        - **硬性上限：任何单个片段不得超过 \(fmt(segmentSecondsCap)) 秒**。超过 \(fmt(suggestedSegmentSeconds.upperBound)) 秒时必须寻找内部的语义切分点拆分
+        \(bandLines.joined(separator: "\n"))
+        - 短于 \(fmt(minSegmentHintSeconds)) 秒的片段几乎一定会被后处理并回相邻段，别特意切出这种长度
+        - 宁可多切几个短片段，也不要把不同主题混在一起
+        """
+    }
+
+    /// 提示给模型的最小说片长：与规划层下限同源，免得模型切出注定被并掉的碎片。
+    private var minSegmentHintSeconds: Double { min(minSegmentSeconds, minAverageSegmentSeconds) }
+
+    private func fmt(_ value: Double) -> String {
+        value == value.rounded() ? String(Int(value)) : String(format: "%.1f", value)
+    }
 }
 
 /// 规划结果。

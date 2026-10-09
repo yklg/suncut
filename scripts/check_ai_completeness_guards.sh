@@ -109,6 +109,14 @@ expect_zero "[基线型，非改前变红项] App 层没有自己重写段长/�
 expect_min "18 秒规则的定义只在核心层一处" \
   "$(code_count_in_file "$CORE/SegmentationCompleteness.swift" 'static let promptSegmentLimit')" 1
 
+# prompt 同源（抓的失败：模型听到的秒数与代码判的秒数各说各话，改一处忘另一处）
+expect_zero "App 层不再自己写切分粒度的秒数文案" \
+  "$(code_count_in_dir "$ROOT/MixCut" '目标片段时长：')"
+# 数**调用形状**而不是名字：只 grep `granularityPromptBlock` 时，改名成
+# `granularityPromptBlockXX()` 仍含该子串，判据会恒绿（本条判据自己就被变异验证抓出过这一点）。
+expect_min "切分粒度整段由规划层 config 生成" \
+  "$(code_count_in_file "$ANALYSIS" 'granularityPromptBlock()')" 1
+
 echo
 echo "== 分镜生产者唯一性（抓的失败：规则只插在一条链上，「重跑分析」绕过 = 同实体多处直写）=="
 # 「短视频被切碎」「重跑绕过保护」这两个症状同根：Segment 此前在 5 处直接构造，

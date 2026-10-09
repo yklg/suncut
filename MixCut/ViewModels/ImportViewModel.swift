@@ -720,7 +720,8 @@ final class ImportViewModel {
                 videoId: video.name,
                 transcript: asr,
                 sceneBoundaries: localAnalysis.sceneBoundaries,
-                localAnalysis: localAnalysis
+                localAnalysis: localAnalysis,
+                planConfig: planConfig
             )
         } catch {
             return .aiFailed(error)
