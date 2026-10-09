@@ -51,10 +51,12 @@ public struct AIUsageRecord: Sendable {
     public var elapsedSeconds: Double
     public var usage: AITokenUsage?
     public var outcome: Outcome
+    /// 这颗模型的单价行；nil = 表里没有 ⇒ 金额显示"单价未知"，**不许估算**。
+    public var price: AIModelPrice?
 
     public init(scene: AIScene, provider: String, model: String, thinkingEnabled: Bool,
                 promptChars: Int, responseChars: Int, elapsedSeconds: Double,
-                usage: AITokenUsage?, outcome: Outcome) {
+                usage: AITokenUsage?, outcome: Outcome, price: AIModelPrice? = nil) {
         self.scene = scene
         self.provider = provider
         self.model = model
@@ -64,7 +66,11 @@ public struct AIUsageRecord: Sendable {
         self.elapsedSeconds = elapsedSeconds
         self.usage = usage
         self.outcome = outcome
+        self.price = price
     }
+
+    /// 金额（上界）。nil = 不知道，不是 0。
+    public var cost: Double? { AICostCalculator.cost(usage: usage, per: price) }
 
     /// token 分解。四项各自都可能是缺席（有的网关不返回），**缺席必须写"缺席"而不是 0** ——
     /// 补 0 会把"不知道"伪装成"没花"。整个 usage 全空也按缺席报（与 `AITokenUsage.isEmpty` 同口径）。
@@ -89,5 +95,6 @@ public struct AIUsageRecord: Sendable {
         + " 正文=\(responseChars)字符 结果=\(outcome.rawValue)"
         + (outcome.wasted ? "(已计费但白跑)" : "")
         + " \(tokenBreakdown)"
+        + " " + AICostCalculator.label(usage: usage, per: price)
     }
 }

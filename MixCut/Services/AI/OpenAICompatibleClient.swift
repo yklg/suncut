@@ -449,7 +449,9 @@ actor OpenAICompatibleClient: AIProvider {
                     thinkingEnabled: thinkingEnabled, promptChars: prompt.count,
                     responseChars: evidence.content?.count ?? 0,
                     elapsedSeconds: Date().timeIntervalSince(attemptStarted),
-                    usage: evidence.usage, outcome: usageOutcome).logLine())
+                    usage: evidence.usage, outcome: usageOutcome,
+                    price: AIPriceTable.price(provider: providerType.rawValue,
+                                             model: modelName)).logLine())
 
                 guard evidence.bodyIsJSONObject, let content = evidence.content else {
                     let raw = String(data: data, encoding: .utf8) ?? "(empty)"

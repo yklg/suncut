@@ -29,9 +29,22 @@ def main(argv):
     new_name = argv[1]
     tpl_name = argv[2] if len(argv) > 2 else "VoiceAuditionPlayer.swift"
     pbx = "/Users/yilukaige/mixed_cut-main/MixCut.xcodeproj/project.pbxproj"
+    ROOT = os.path.dirname(os.path.dirname(pbx))
 
     with io.open(pbx, encoding="utf-8") as f:
         text = f.read()
+    # 先验文件真的存在：2026-10-09 实测我把一个写错的名字登记进去了，脚本一声没吭
+    # —— Xcode 侧的症状是 "Build input file cannot be found"，报错点离根因隔一层。
+    found = None
+    for cand in (os.path.join(ROOT, "Sources/MixCutCore", new_name),
+                 os.path.join(ROOT, "MixCut", new_name)):
+        if os.path.isfile(cand):
+            found = cand
+            break
+    if found is None:
+        print("ERR 源文件不存在，拒绝登记：%s（先在 Sources/MixCutCore 与 MixCut 下确认拼写）"
+              % new_name)
+        return 1
     if new_name in text:
         print("SKIP %s 已在 pbxproj 中" % new_name)
         return 0

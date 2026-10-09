@@ -226,7 +226,7 @@ expect_eq "用量落账点全工程只有一处（多处各写一行，口径当
   "$(code_count_in_file "$CLIENT" 'AIUsageRecord(')" 1
 # 顺序判据：白跑（空正文/截断）照样计费，所以落账必须发生在抛错**之前**；
 # 反过来写就会变成"抛了错，这一笔再也没进过账本"
-rec_line=$(grep -n 'usageOutcome)\.logLine()' "$CLIENT" | head -1 | cut -d: -f1)
+rec_line=$(grep -n 'MixLog.info(AIUsageRecord(' "$CLIENT" | head -1 | cut -d: -f1)
 throw_line=$(grep -n 'AIProviderError\.emptyModelOutput(evidence:' "$CLIENT" | head -1 | cut -d: -f1)
 if [ -z "$rec_line" ] || [ -z "$throw_line" ]; then
   report_fail "落账必须早于抛错（行号取不出 ⇒ 判据失效）" \
@@ -260,10 +260,21 @@ else
   report_fail "必须先切后并" "切=$split_line 并=$plan_line" "切 < 并"
 fi
 
+echo
+echo "== 单价与金额：价表只住 Core，App 不许自己算钱（抓的失败：两处各一套价/口径）=="
+expect_zero "App 层不许出现单价字段（价表只有一个出处）" \
+  "$(code_count_in_dir "$ROOT/MixCut" 'inputPerMTokens')"
+expect_eq "客户端查表传价恰好一处" \
+  "$(code_count_in_file "$CLIENT" 'AIPriceTable\.price(')" 1
+expect_zero "客户端不许自己算金额（只能把单价交给记录去算）" \
+  "$(code_count_in_file "$CLIENT" 'AICostCalculator')"
+expect_eq "查价表全 App 只有一个读者（多处各查一次，口径当天分家）" \
+  "$(code_count_in_dir "$ROOT/MixCut" 'AIPriceTable')" 1
+
 if [ -f "$PBXPROJ" ]; then
   echo
   echo "== 工程引用（抓的失败：新源文件没进 App target 编译，运行时根本不存在）=="
-  for f in AIResponseEvidence SegmentationCompleteness AIThinkingPolicy; do
+  for f in AIResponseEvidence SegmentationCompleteness AIThinkingPolicy AIUsageRecord AIModelPricing; do
     expect_min "$f.swift 在 Sources 编译阶段被登记" \
       "$(grep -c "$f.swift in Sources" "$PBXPROJ")" 2
   done
