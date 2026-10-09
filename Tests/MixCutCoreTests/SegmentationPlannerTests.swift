@@ -213,4 +213,102 @@ struct SegmentationPlannerTests {
         cfg.minSegmentSeconds = 6          // 提示应跟 minAverage(3.5) 取小的那个，不是 6
         #expect(cfg.granularityPromptBlock().contains("短于 3.5 秒"))
     }
+    // MARK: 超长再切（与过碎合并对称；2026-10-09 实测误杀之后补的轴）
+
+    @Test("TC-P20 不超过上限的段一律原样带走，origin 就是它自己的下标")
+    func shortSegmentsAreUntouched() {
+        let segs = contiguous([5, 12, 8])
+        let split = SegmentationPlanner.splitOverLong(segments: segs, sentenceEdges: [3, 6, 20])
+        #expect(split.count == 3)
+        #expect(split.map(\.origin) == [0, 1, 2])
+        #expect(split.map(\.timing) == segs)
+    }
+
+    @Test("TC-P21 真机那次形状：尾段 24.2s 超 18s ⇒ 在句边界切成两块，两块都合规")
+    func splitsTheRealTailSegment() {
+        let tail = timing(117.6, 141.8)                       // 实测第 16 段
+        let split = SegmentationPlanner.splitOverLong(segments: [tail],
+                                                      sentenceEdges: [120.0, 126.5, 132.1, 138.0])
+        let shapes = split.map { "\($0.timing.start)-\($0.timing.end)" }
+        #expect(split.count == 2, "实际：\(shapes)")
+        for piece in split {
+            let len = piece.timing.end - piece.timing.start
+            #expect(len <= 18.0 + 0.001, "块长 \(len) 仍超上限")
+            #expect(len >= 2.0, "块长 \(len) 低于下限")
+            #expect(piece.origin == 0)                        // 两块都记得自己来自第 0 条提案
+        }
+        #expect(split[0].timing.start == 117.6)
+        #expect(split.last!.timing.end == 141.8)              // 区间守恒：不许吞掉片尾
+    }
+
+    @Test("TC-P22 贪心取装得下的最后一个边界 ⇒ 块数最少且每块合规")
+    func usesFewestPieces() {
+        let segs = [timing(0, 50)]
+        let edges = stride(from: 2.0, through: 48.0, by: 2.0).map { $0 }
+        let split = SegmentationPlanner.splitOverLong(segments: segs, sentenceEdges: edges)
+        #expect(split.count == 3, "ceil(50/18)=3，实际 \(split.count)")
+        for piece in split {
+            let len = piece.timing.end - piece.timing.start
+            #expect(len <= 18.0 + 0.001 && len >= 2.0, "块长 \(len) 不合规")
+        }
+        // 首尾相接：不许出现空洞或重叠
+        for i in 1..<split.count {
+            #expect(split[i].timing.start == split[i - 1].timing.end)
+        }
+    }
+
+    @Test("TC-P23 段内没有合法边界就原样返回 —— 绝不为了把数字做达标而凭空造刀")
+    func neverInventsACut() {
+        let segs = [timing(0, 18.5)]
+        // 17.0 会让剩下那块只有 1.5s（低于 2s 下限）⇒ 不算合法；1.0 又太靠前
+        let split = SegmentationPlanner.splitOverLong(segments: segs, sentenceEdges: [1.0, 17.0])
+        let shapes = split.map { "\($0.timing.start)-\($0.timing.end)" }
+        #expect(split.count == 1, "实际：\(shapes)")
+        #expect(split[0].timing == segs[0])
+    }
+
+    @Test("TC-P24 边界必须严格晚于「起点+最短段」，恰好在 2.0s 上不算")
+    func edgeMustBeStrictlyInsideTheFloor() {
+        let split = SegmentationPlanner.splitOverLong(segments: [timing(0, 20)],
+                                                      sentenceEdges: [2.0])
+        #expect(split.count == 1, "2.0 处切会让首块正好 2s；边界要求严格大于，不许切")
+    }
+
+    @Test("TC-P25 只有被切过的那条会多出来，其它段的 origin 不许漂")
+    func originsStayAlignedPerSegment() {
+        let segs = contiguous([6, 30, 4])
+        let split = SegmentationPlanner.splitOverLong(segments: segs,
+                                                      sentenceEdges: [10.0, 22.0, 34.0])
+        #expect(split.map(\.origin).first == 0)
+        #expect(split.filter { $0.origin == 1 }.count > 1, "第 1 条 30s 必须被切")
+        #expect(split.last!.origin == 2)
+        #expect(split.filter { $0.origin == 2 }.count == 1)
+    }
+
+    @Test("TC-P26 切完再走合并规划：分组下标仍然覆盖全部块，不吞段也不重段")
+    func plannedGroupsCoverEveryPiece() {
+        let segs = contiguous([24.2, 3.0, 2.5])
+        let split = SegmentationPlanner.splitOverLong(segments: segs,
+                                                      sentenceEdges: [12.0, 20.0, 30.0, 32.0])
+        let plan = SegmentationPlanner.plan(segments: split.map(\.timing), duration: 33.2)
+        let flattened = plan.groups.flatMap { $0 }
+        #expect(flattened.sorted() == Array(0..<split.count), "实际：\(flattened)")
+    }
+
+    @Test("TC-P27 规则名册长出一颗，且给用户看的文案是「超长再切」")
+    func ruleRosterGrowsOneEntry() {
+        #expect(SegmentationRule.allCases.count == 3)
+        #expect(SegmentationRule.overLongSplit.displayName == "超长再切")
+        let raws = SegmentationRule.allCases.map(\.rawValue)
+        #expect(Set(raws).count == raws.count, "实际：\(raws)")
+    }
+
+    @Test("TC-P28 分数从被切的提案继承，不许在切刀处换成别的来源")
+    func scoresSurviveTheCut() {
+        let seg = SegmentTiming(start: 100, end: 124, scoreFromModel: true)
+        let split = SegmentationPlanner.splitOverLong(segments: [seg], sentenceEdges: [112])
+        #expect(split.count == 2)
+        #expect(split.allSatisfy { $0.timing.scoreFromModel == true })
+    }
 }
+

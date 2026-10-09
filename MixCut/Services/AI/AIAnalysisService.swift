@@ -211,14 +211,19 @@ actor AIAnalysisService {
             skippedUnparsableCount: result.skippedUnparsableCount))
         let auditSummary = SegmentationCompleteness.summary(of: gaps)
 
-        // 可证的丢失，或"尾段吞掉全片"这一截断特征形状 —— 绝不能入库成"看起来齐了"的素材。
-        if SegmentationCompleteness.isProvablyIncomplete(gaps)
-            || SegmentationCompleteness.showsTruncationSignature(gaps) {
+        // **只有可证的丢失才判死**。"尾段超长吞到片尾"这一形状不再当截断签名使用：
+        // 传输层对真截断早已抛错（空正文 / finish_reason=length 都在 TC-54 那条判定上死掉），
+        // 能回到这里的正文必然是完整的 ⇒ 再拿形状判死就是拿代理冒充证据。
+        // 实测代价（2026-10-09）：`第 16 段长 24.20s 超过上限 18.00s，且它是尾段、一路吞到片尾`
+        // 让整条素材 status=failed，而同一趟的一手用量写着"结果=成功 completion=1969"。
+        if SegmentationCompleteness.isProvablyIncomplete(gaps) {
             MixLog.error("分镜完整性审计不通过 video=\(videoId) \(auditSummary)")
             throw AIProviderError.incompleteResult(detail: auditSummary)
         }
-        // 其余违规/补值只降级为告警：可能是模型无视 18 秒规则的长镜头，不是丢失，误杀代价更大。
-        if SegmentationCompleteness.violatesSegmentationRules(gaps)
+        // 超长与补值降级为告警：模型真给长镜头是有可能的（现在由规划层「超长再切」接住），
+        // 它不是丢失；误杀一整条素材的代价远大于留一条待切的长段。
+        if SegmentationCompleteness.showsTruncationSignature(gaps)
+            || SegmentationCompleteness.violatesSegmentationRules(gaps)
             || SegmentationCompleteness.hasUntrustedFields(gaps) {
             MixLog.info("分镜完整性告警 video=\(videoId) \(auditSummary)")
         }

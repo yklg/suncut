@@ -126,13 +126,31 @@ public enum SegmentationRule: String, Equatable, Sendable, CaseIterable {
     case wholeVideoKept
     /// 平均段长过短 ⇒ 把相邻分镜并回去
     case fragmentedMerged
+    /// 提案段超过硬上限 ⇒ 在**句子边界**上再切一刀（与过碎合并对称）
+    case overLongSplit
 
     /// 给用户看的说法（与 `TranscriptSource.displayLabel` 同一惯例：措辞只说做过的事）。
     public var displayName: String {
         switch self {
         case .wholeVideoKept:    return "整片保留"
         case .fragmentedMerged:  return "过碎合并"
+        case .overLongSplit:     return "超长再切"
         }
+    }
+}
+
+/// 一条**可能被切过**的提案区间，连同它来自模型返回的第几条。
+///
+/// 为什么要带 `origin`：语义类型 / 位置 / 关键词 / 理由都挂在"模型那条提案"上，
+/// 一刀把 24.2s 的提案切成两块之后，两块都得知道自己继承的是哪条的元数据；
+/// 不带这个字段，执行器就只能靠下标猜 —— 猜错的那天，标签会静默错位到别的画面上。
+public struct SplitTiming: Equatable, Sendable {
+    public let timing: SegmentTiming
+    public let origin: Int
+
+    public init(timing: SegmentTiming, origin: Int) {
+        self.timing = timing
+        self.origin = origin
     }
 }
 
@@ -153,6 +171,45 @@ public enum SegmentationPlanner {
                                            in cfg: SegmentationPlanConfig = SegmentationPlanConfig()) -> Bool {
         guard duration > 0, sentenceCount > 0 else { return false }
         return duration <= cfg.wholeVideoMaxSeconds && sentenceCount <= cfg.wholeVideoMaxSentences
+    }
+
+    /// 超过硬上限的提案段，在**句子边界**上再切。`plan` 管合并、这条管切，两条合起来才是
+    /// "什么时候允许下刀"的完整归属 —— 缺了这一条，模型偶尔吐出的长段就只能被审计判死：
+    /// 2026-10-09 实测 `第 16 段长 24.20s 超过上限 18.00s，且它是尾段、一路吞到片尾`，
+    /// 整条素材 status=failed，而同一趟传输层证据是"成功、completion=1969、没被长度上限截断"。
+    ///
+    /// 三条硬约束：
+    /// - **切点只能是真说过话的地方**（`sentenceEdges` 里的时刻）。段内没有合法边界就**原样带走**，
+    ///   绝不为了把数字做达标而凭空造一刀 —— 那一刀切在画面上是看得见的跳帧。
+    /// - 每一块（含最后剩下的那块）都不短于 `minSegmentSeconds`，否则那个切点不算合法。
+    /// - 贪心取"当前块装得下的最后一个边界" ⇒ 块数最少，且同一份输入永远切出同一个形状。
+    public static func splitOverLong(segments: [SegmentTiming],
+                                     sentenceEdges: [Double],
+                                     in cfg: SegmentationPlanConfig = SegmentationPlanConfig()) -> [SplitTiming] {
+        var result: [SplitTiming] = []
+        for (index, timing) in segments.enumerated() {
+            guard timing.end - timing.start > cfg.segmentSecondsCap else {
+                result.append(SplitTiming(timing: timing, origin: index))
+                continue
+            }
+            var start = timing.start
+            while timing.end - start > cfg.segmentSecondsCap {
+                let candidates = sentenceEdges.filter { edge in
+                    edge > start + cfg.minSegmentSeconds
+                        && edge <= start + cfg.segmentSecondsCap
+                        && edge < timing.end - cfg.minSegmentSeconds
+                }
+                guard let cut = candidates.max() else { break }
+                result.append(SplitTiming(
+                    timing: SegmentTiming(start: start, end: cut,
+                                          scoreFromModel: timing.scoreFromModel), origin: index))
+                start = cut
+            }
+            result.append(SplitTiming(
+                timing: SegmentTiming(start: start, end: timing.end,
+                                      scoreFromModel: timing.scoreFromModel), origin: index))
+        }
+        return result
     }
 
     /// 对 AI 返回的分镜做规划：触发过碎规则时给出合并分组，否则原样。

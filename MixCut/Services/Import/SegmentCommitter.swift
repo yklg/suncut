@@ -66,8 +66,19 @@ struct SegmentCommitter {
                                          scoreFromModel: aiSeg.scoreFromModel))
         }
 
-        let plan = SegmentationPlanner.plan(segments: timings, duration: video.duration, in: planConfig)
-        let groups = SegmentationPlanner.intervals(of: plan, segments: timings, duration: video.duration)
+        // 先切超长、再并过碎。顺序不能反：反过来会把刚按句子边界切开的一块又并回去，
+        // 两条规则互相撤销，留下的分区形状取决于谁先跑 —— 那是不可复现，不是确定性。
+        // 切点只取 ASR 的句子收尾时刻：那一处一定是真说过话的地方。
+        let sentenceEdges = asr.sentences.map(\.endTime)
+        let split = SegmentationPlanner.splitOverLong(segments: timings,
+                                                      sentenceEdges: sentenceEdges,
+                                                      in: planConfig)
+        let splitApplied = split.count != timings.count
+        let planTimings = split.map(\.timing)
+        let plan = SegmentationPlanner.plan(segments: planTimings, duration: video.duration, in: planConfig)
+        let groups = SegmentationPlanner.intervals(of: plan, segments: planTimings, duration: video.duration)
+        var appliedRules = plan.appliedRules
+        if splitApplied { appliedRules.insert(.overLongSplit, at: 0) }
 
         // 分区形状自检：规划层承诺的"无缝、铺满、不超上限"到底守住了没有。
         // 只告警不抛错 —— 这是内部一致性问题，与"模型漏交付"那种必须拒收的情形不同级，
@@ -83,7 +94,8 @@ struct SegmentCommitter {
         let asrWords = asr.words
         var createdSegments: [Segment] = []
         for (i, group) in groups.enumerated() {
-            let members = group.indices.map { analysisResult.segments[$0] }
+            // 下标是「切过的块」的下标，元数据仍要回到它出自哪条提案 —— origin 就是为这一步留的
+            let members = group.indices.map { analysisResult.segments[split[$0].origin] }
             let first = members[0]
 
             let extractedText = Self.extractTextFromASR(
@@ -138,7 +150,7 @@ struct SegmentCommitter {
         Self.mergeShortSegments(&createdSegments,
                                 minDuration: planConfig.minSegmentSeconds,
                                 context: context)
-        return PartitionCommit(appliedRules: plan.appliedRules,
+        return PartitionCommit(appliedRules: appliedRules,
                                aiSegmentCount: analysisResult.segments.count,
                                committedCount: createdSegments.count)
     }

@@ -237,6 +237,29 @@ else
   report_fail "落账必须早于抛错" "落账=$rec_line 抛错=$throw_line" "落账 < 抛错"
 fi
 
+echo
+echo "== 判死只认丢失；超长交给规划层切（抓的失败：拿形状代理误杀整条素材）=="
+# 实测：`第 16 段 24.20s 超 18.00s 且吞到片尾` 判死过一条素材，而同趟一手用量写着"成功 completion=1969"
+expect_eq "判死分支只有 isProvablyIncomplete 一个入子（行尾带 { 才算没有 || 连档）" \
+  "$(code_count_in_file "$ANALYSIS" 'if SegmentationCompleteness\.isProvablyIncomplete(gaps) {')" 1
+expect_eq "形状代理只剩告警那一个读者（回到判死分支就重新误杀）" \
+  "$(code_count_in_file "$ANALYSIS" 'showsTruncationSignature')" 1
+expect_eq "规划层的「超长再切」被执行器真的调用" \
+  "$(code_count_in_file "$COMMITTER" 'SegmentationPlanner\.splitOverLong(')" 1
+expect_eq "切出来的块按 origin 回溯源提案（下标漂了标签就会静默错位）" \
+  "$(code_count_in_file "$COMMITTER" 'split\[\$0\]\.origin')" 1
+# 顺序判据：先切后并。反过来会把刚按句子边界切开的块又并回去，分区形状取决于谁先跑
+split_line=$(grep -n 'SegmentationPlanner\.splitOverLong(' "$COMMITTER" | head -1 | cut -d: -f1)
+plan_line=$(grep -n 'SegmentationPlanner\.plan(segments: planTimings' "$COMMITTER" | head -1 | cut -d: -f1)
+if [ -z "$split_line" ] || [ -z "$plan_line" ]; then
+  report_fail "先切后并（行号取不出 ⇒ 判据失效）" \
+    "切=${split_line:-取不出} 并=${plan_line:-取不出}" "两行都在且 切 < 并"
+elif [ "$split_line" -lt "$plan_line" ]; then
+  report_pass "先切($split_line) 后并($plan_line)"
+else
+  report_fail "必须先切后并" "切=$split_line 并=$plan_line" "切 < 并"
+fi
+
 if [ -f "$PBXPROJ" ]; then
   echo
   echo "== 工程引用（抓的失败：新源文件没进 App target 编译，运行时根本不存在）=="
