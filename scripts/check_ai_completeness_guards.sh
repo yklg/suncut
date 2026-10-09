@@ -55,6 +55,16 @@ expect_zero() {
   fi
 }
 
+# 计数型判据：光"≥1"抓不住"又多出一份拷贝"，必须钉死等于几。
+expect_eq() {
+  local label="$1" actual="$2" want="$3"
+  if [ "$actual" = "$want" ]; then
+    report_pass "$label"
+  else
+    report_fail "$label" "$actual" "$want"
+  fi
+}
+
 echo "== 根因下沉（抓的失败：新规则写在没单测的 App 层 = 等于没测）=="
 for f in AIResponseEvidence.swift SegmentationCompleteness.swift; do
   if [ -f "$CORE/$f" ]; then
@@ -110,6 +120,20 @@ expect_zero "App 层裸构造 Segment 只允许出现在 SegmentCommitter 内部
   "$(( $(code_count_in_dir "$ROOT/MixCut" '= Segment(') - $(code_count_in_file "$COMMITTER" '= Segment(') ))"
 expect_min "SegmentCommitter 已被 App target 编译（漏挂 pbxproj 时引用方报 cannot find type）" \
   "$(grep -c 'SegmentCommitter.swift in Sources' "$PBXPROJ")" 1
+
+# 控制流也只许一份：W1 收了建段，W1.5 收「AI→落库→逐段重认→缩略图」这条链。
+# 这里数的是"某形状出现几次"而不是"有没有"——再拷出一条控制流时数量会变，当场就能认出来。
+IVM="$ROOT/MixCut/ViewModels/ImportViewModel.swift"
+expect_eq "分镜重建入口只有一份实现（抓的失败：又拷出一条控制流）" \
+  "$(code_count_in_file "$IVM" 'commitAIPartition(')" 1
+# 指纹必须带**接收者**并转义点号：裸写 `.analyzeVideo(` 里的 `.` 是正则元字符，
+# 会把函数定义 `func analyzeVideo(` 和编排调用 `self.analyzeVideo(video)` 一起数进来（实测 4）。
+expect_eq "AI 分镜调用点只剩入口里那一处（抓的失败：重跑链自己另调一次 analyzeVideo）" \
+  "$(code_count_in_file "$IVM" 'aiAnalysis\.analyzeVideo(')" 1
+expect_eq "删旧分镜只由入口按参数执行（抓的失败：取消点被挪到删除之后，会留下空库）" \
+  "$(code_count_in_file "$IVM" 'context\.delete(video\.segments)')" 1
+expect_eq "重建入口被两条链各调一次（1 定义 + 首跑 + 重跑 = 3）" \
+  "$(code_count_in_file "$IVM" 'rebuildSegments(')" 3
 
 echo
 echo "== 失败留证（抓的失败：证据自毁，事后无从复盘）=="

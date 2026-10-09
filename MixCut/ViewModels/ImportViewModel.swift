@@ -356,50 +356,37 @@ final class ImportViewModel {
         video.status = .analyzing
         context.safeSave()
 
-        let freshAIAnalysis = AIAnalysisService()
-        var analysisResult: AISegmentationResult?
+        // 与首跑共用同一个分镜重建入口；差异只剩「重跑要先删旧分镜」这一条真实存在的。
+        // 终态与收尾仍由这里落：重跑失败退回 .imported（此刻旧分镜还在，可再试）。
         do {
-            analysisResult = try await freshAIAnalysis.analyzeVideo(
-                videoId: video.name,
-                transcript: asr,
-                sceneBoundaries: localAnalysis.sceneBoundaries,
-                localAnalysis: localAnalysis
+            let rebuild = try await rebuildSegments(
+                video,
+                asr: asr,
+                localAnalysis: localAnalysis,
+                context: context,
+                clearsExistingSegments: true
             )
+            switch rebuild {
+            case .success:
+                video.status = .completed
+                video.errorMessage = nil
+            case .aiFailed(let error):
+                video.errorMessage = "AI 分析失败: \(FriendlyError.reason(for: error))"
+                video.status = .imported
+                context.safeSave()
+                isProcessing = false
+                phase = .idle
+                return
+            }
         } catch {
-            video.errorMessage = "AI 分析失败: \(FriendlyError.reason(for: error))"
+            // 重跑链以前没有取消检查（W1.5 补）。这里旧分镜尚未删 —— 检查点在删除之前 ——
+            // 所以退回 .imported 就是如实状态：素材可用、分镜还是上一版那批。
+            MixLog.info(" 重跑已取消: video=\(video.name)")
             video.status = .imported
             context.safeSave()
             isProcessing = false
             phase = .idle
             return
-        }
-
-        if let analysisResult {
-            phase = .optimizing
-
-            context.delete(video.segments)   // 快照由 API 保证（见 ModelContextExtension）
-
-            segmentCommitter.commitAIPartition(
-                from: analysisResult,
-                asr: asr,
-                localAnalysis: localAnalysis,
-                video: video,
-                context: context
-            )
-
-            // 台词以「逐分镜各自切音频独立 ASR」为准覆盖：整片流式 ASR 绝对时间戳会漂移、
-            // 按整片时间戳切出的分镜台词会错位；单段短音频 ASR 永远准。边界已由本地场景/静音+AI 定好，
-            // 这里只重识别各分镜台词（失败段保留 commitAIPartition 给的原文/AI 文本）。
-            phase = .transcribing
-            await autoReidentifySegments(video, context: context)
-
-            await generateSegmentThumbnails(
-                segments: video.segments,
-                videoPath: video.localPath
-            )
-
-            video.status = .completed
-            video.errorMessage = nil
         }
 
         context.safeSave()
@@ -643,7 +630,64 @@ final class ImportViewModel {
         let activeProvider = KeychainHelper.activeProvider
         MixLog.info(" AI 分析开始: provider=\(activeProvider.displayName)")
 
-        var analysisResult: AISegmentationResult?
+        // Step 4+5: 边界优化 + 创建分镜 —— 与「重跑分析」共用同一个重建入口
+        let rebuild = try await rebuildSegments(
+            video,
+            asr: asr,
+            localAnalysis: localAnalysis,
+            context: context,
+            clearsExistingSegments: false
+        )
+
+        switch rebuild {
+        case .success:
+            video.status = .completed
+        case .aiFailed(let error):
+            // 终态只在这里落：入口不碰 status。首跑此刻没有旧分镜可退，如实标失败。
+            let errMsg = error.localizedDescription
+            if errMsg.contains("API Key") || errMsg.contains("api") || errMsg.contains("key") || errMsg.contains("未配置") {
+                video.errorMessage = (video.errorMessage ?? "") + "\nAI 分析跳过：请先在「设置」中配置 API Key"
+            } else {
+                video.errorMessage = (video.errorMessage ?? "") + "\nAI 分析失败: \(errMsg)"
+            }
+            // 取消优先于失败：AI 挂掉时若用户已按停止，这里仍要抛出去（保持收口前的顺序）
+            try checkCancelled(video)
+            video.status = .failed
+            video.errorMessage = (video.errorMessage ?? "") + "\nAI 分析未产出有效结果"
+        }
+
+        context.safeSave()
+        MixLog.info(" 分析完成: video=\(video.name), status=\(video.status)")
+    }
+
+    /// 分镜重建的结果。失败终态不在这里表达 —— 两条链的终态本来就不该相同（见下）。
+    private enum SegmentRebuildOutcome {
+        case success
+        case aiFailed(Error)
+    }
+
+    /// 分镜重建的**单一入口**：AI 取分区 → 取消检查 →（可选）删旧分镜 → 落库 → 逐段重认台词 → 缩略图。
+    ///
+    /// 为什么要收成这一个：首跑与「重跑分析」此前各有一份这段拷贝，规则只能逐点插、漏一处就分叉
+    /// （W1 把建段收进 `SegmentCommitter` 后，控制流仍是两份）。收口时我核过六处差异，其中两处是
+    /// **假差异**：新建 `AIAnalysisService()` 与复用 `self.aiAnalysis` 在取 Key 上等价（不注入 provider
+    /// 时每次调用都走 `AIProviderManager.currentProvider()`），且两条链失败后都不跑后续步骤。
+    /// 真差异只有一条，做成入参 `clearsExistingSegments`。
+    ///
+    /// 本入口**不写 `video.status`**，也不管 `isProcessing`/`phase` 的收尾值：
+    /// 首跑此刻没有旧分镜可退，失败要如实标 `.failed`；重跑此刻旧分镜还在（删除点在取消检查之后），
+    /// 退回 `.imported` 才是"素材可用、可再试"的真话。收尾同理 —— `phase` 是 VM 级共享单值，
+    /// 多视频并行时谁收尾都会盖掉别人的阶段显示，归属留在各链自己。
+    private func rebuildSegments(
+        _ video: Video,
+        asr: TranscriptionResult,
+        localAnalysis: VideoLocalAnalysis,
+        context: ModelContext,
+        clearsExistingSegments: Bool
+    ) async throws -> SegmentRebuildOutcome {
+        phase = .analyzing
+
+        let analysisResult: AISegmentationResult
         do {
             analysisResult = try await aiAnalysis.analyzeVideo(
                 videoId: video.name,
@@ -652,47 +696,37 @@ final class ImportViewModel {
                 localAnalysis: localAnalysis
             )
         } catch {
-            let errMsg = error.localizedDescription
-            if errMsg.contains("API Key") || errMsg.contains("api") || errMsg.contains("key") || errMsg.contains("未配置") {
-                video.errorMessage = (video.errorMessage ?? "") + "\nAI 分析跳过：请先在「设置」中配置 API Key"
-            } else {
-                video.errorMessage = (video.errorMessage ?? "") + "\nAI 分析失败: \(errMsg)"
-            }
+            return .aiFailed(error)
         }
 
+        // 取消检查必须早于删旧分镜：否则中途停止会留下「旧段已删、新段未建」的空洞。
         try checkCancelled(video)
 
-        // Step 4+5: 边界优化 + 创建分镜
-        if let analysisResult {
-            phase = .optimizing
-
-            segmentCommitter.commitAIPartition(
-                from: analysisResult,
-                asr: asr,
-                localAnalysis: localAnalysis,
-                video: video,
-                context: context
-            )
-
-            // 台词以「逐分镜各自切音频独立 ASR」为准覆盖：整片流式 ASR 绝对时间戳会漂移、
-            // 按整片时间戳切出的分镜台词会错位；单段短音频 ASR 永远准。边界已由本地场景/静音+AI 定好，
-            // 这里只重识别各分镜台词（失败段保留 commitAIPartition 给的原文/AI 文本）。
-            phase = .transcribing
-            await autoReidentifySegments(video, context: context)
-
-            await generateSegmentThumbnails(
-                segments: video.segments,
-                videoPath: video.localPath
-            )
-
-            video.status = .completed
-        } else {
-            video.status = .failed
-            video.errorMessage = (video.errorMessage ?? "") + "\nAI 分析未产出有效结果"
+        phase = .optimizing
+        if clearsExistingSegments {
+            context.delete(video.segments)   // 快照由 API 保证（见 ModelContextExtension）
         }
 
-        context.safeSave()
-        MixLog.info(" 分析完成: video=\(video.name), status=\(video.status)")
+        segmentCommitter.commitAIPartition(
+            from: analysisResult,
+            asr: asr,
+            localAnalysis: localAnalysis,
+            video: video,
+            context: context
+        )
+
+        // 台词以「逐分镜各自切音频独立 ASR」为准覆盖：整片流式 ASR 绝对时间戳会漂移、
+        // 按整片时间戳切出的分镜台词会错位；单段短音频 ASR 永远准。边界已由本地场景/静音+AI 定好，
+        // 这里只重识别各分镜台词（失败段保留 commitAIPartition 给的原文/AI 文本）。
+        phase = .transcribing
+        await autoReidentifySegments(video, context: context)
+
+        await generateSegmentThumbnails(
+            segments: video.segments,
+            videoPath: video.localPath
+        )
+
+        return .success
     }
 
     // MARK: - 视频删除（解除关联 vs 真删除）
