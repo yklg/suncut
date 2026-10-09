@@ -326,7 +326,7 @@ struct SettingsView: View {
                     onTest: {
                         let started = Date()
                         let provider = AIProviderManager.createProvider(for: selectedProvider)
-                        _ = try await provider.generateText(prompt: "ping")
+                        _ = try await provider.generateText(prompt: "ping", scene: .connectionTest)
                         let ms = Int(Date().timeIntervalSince(started) * 1000)
                         return "连接正常 · \(selectedProvider.displayName) · \(ms)ms"
                     },
@@ -406,7 +406,7 @@ struct SettingsView: View {
                     onTest: {
                         let started = Date()
                         let provider = AIProviderManager.createProvider(for: .qwen)
-                        _ = try await provider.generateText(prompt: "ping")
+                        _ = try await provider.generateText(prompt: "ping", scene: .connectionTest)
                         let ms = Int(Date().timeIntervalSince(started) * 1000)
                         return "连接正常 · 千问 DashScope · \(ms)ms"
                     },

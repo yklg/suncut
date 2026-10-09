@@ -132,7 +132,7 @@ final class ProductResearchService {
         // 5. LLM 综合。
         let provider = AIProviderManager.currentProvider()
         do {
-            let markdown = try await provider.generateText(prompt: prompt)
+            let markdown = try await provider.generateText(prompt: prompt, scene: .productResearch)
             return Report(markdown: markdown, sources: sources)
         } catch {
             throw ResearchError.llmFailed(APIErrorClassifier.friendly(error))

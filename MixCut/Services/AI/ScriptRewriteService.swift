@@ -36,7 +36,7 @@ actor ScriptRewriteService {
                                                 priorVersions: priorVersions)
 
         onProgress?("正在调用 AI 改写台词…")
-        let dto = try await provider.generateJSON(prompt: prompt, responseType: RewriteResultDTO.self)
+        let dto = try await provider.generateJSON(prompt: prompt, responseType: RewriteResultDTO.self, scene: .scriptRewrite)
 
         onProgress?("改写完成，正在校验字数预算…")
         return RewriteResultMapper.map(dto: dto, inputs: inputs)

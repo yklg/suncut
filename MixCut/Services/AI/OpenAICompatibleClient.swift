@@ -119,8 +119,9 @@ actor OpenAICompatibleClient: AIProvider {
         }
     }
 
-    func generateJSON<T: Decodable>(prompt: String, responseType: T.Type) async throws -> T {
-        let text = try await sendRequest(prompt: prompt, jsonMode: true)
+    func generateJSON<T: Decodable>(prompt: String, responseType: T.Type,
+                               scene: AIScene) async throws -> T {
+        let text = try await sendRequest(prompt: prompt, jsonMode: true, scene: scene)
         // 预清洗：移除 ASCII 控制字符（保留 \t \n \r），这些是 MiniMax 等常见的 JSON 污染源
         let jsonStr = Self.sanitizeForJSON(extractJSON(from: text))
 
@@ -289,8 +290,8 @@ actor OpenAICompatibleClient: AIProvider {
 
     private static let maxFailureArtifacts = 20
 
-    func generateText(prompt: String) async throws -> String {
-        try await sendRequest(prompt: prompt, jsonMode: false)
+    func generateText(prompt: String, scene: AIScene) async throws -> String {
+        try await sendRequest(prompt: prompt, jsonMode: false, scene: scene)
     }
 
     // MARK: - JSON 输出强提示
@@ -302,7 +303,9 @@ actor OpenAICompatibleClient: AIProvider {
 
     // MARK: - 内部实现
 
-    private func sendRequest(prompt: String, jsonMode: Bool) async throws -> String {
+    /// 唯一的发送口。**每次拿到 2xx 应答都记一行用量**（含空正文与截断那两种：
+    /// 它们照样计费，那才是用户真正想知道的"白跑"）。
+    private func sendRequest(prompt: String, jsonMode: Bool, scene: AIScene) async throws -> String {
         guard !apiKey.isEmpty else {
             MixLog.error("API Key 为空！provider=\(self.providerType.displayName)")
             throw AIProviderError.apiKeyNotConfigured(providerType)
@@ -407,6 +410,7 @@ actor OpenAICompatibleClient: AIProvider {
                 }
                 request.httpBody = try JSONSerialization.data(withJSONObject: body)
 
+                let attemptStarted = Date()
                 let (data, response) = try await Self.session.data(for: request)
 
                 guard let httpResponse = response as? HTTPURLResponse else {
@@ -431,6 +435,21 @@ actor OpenAICompatibleClient: AIProvider {
                 let evidence = AIResponseEvidenceReader.read(
                     body: data,
                     shape: isClaudeAPI ? .claudeNative : .openAICompatible)
+
+                // 用量落账。这一行覆盖"花了钱的四种下场"（成功 / 空正文 / 长度截断 / 无法解析）：
+                // 后三种同样计费 ⇒ 只记成功的那次，账本就永远说不出"白跑了多少"。
+                let usageOutcome: AIUsageRecord.Outcome = {
+                    guard evidence.bodyIsJSONObject, evidence.content != nil else { return .unparsable }
+                    if evidence.isBodyEmpty { return .emptyBody }
+                    if evidence.truncatedByLength { return .truncated }
+                    return .succeeded
+                }()
+                MixLog.info(AIUsageRecord(
+                    scene: scene, provider: providerType.displayName, model: modelName,
+                    thinkingEnabled: thinkingEnabled, promptChars: prompt.count,
+                    responseChars: evidence.content?.count ?? 0,
+                    elapsedSeconds: Date().timeIntervalSince(attemptStarted),
+                    usage: evidence.usage, outcome: usageOutcome).logLine())
 
                 guard evidence.bodyIsJSONObject, let content = evidence.content else {
                     let raw = String(data: data, encoding: .utf8) ?? "(empty)"

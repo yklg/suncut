@@ -895,7 +895,8 @@ enum DebugSelfTest {
     /// 自检腿专用假 AI provider：按 prompt 里出现的分镜 id 回一条可解析结果，**绝不联网**。
     private actor SelfRewriteProvider: AIProvider {
         private(set) var callCount = 0
-        func generateJSON<T: Decodable>(prompt: String, responseType: T.Type) async throws -> T {
+        func generateJSON<T: Decodable>(prompt: String, responseType: T.Type,
+                               scene: AIScene) async throws -> T {
             callCount += 1
             // RewriteResultDTO 是本腿唯一关心的 responseType；其余类型本腿不会请求。
             guard let dto = Self.makeRewriteDTO(from: prompt) as? T else {
@@ -903,7 +904,9 @@ enum DebugSelfTest {
             }
             return dto
         }
-        func generateText(prompt: String) async throws -> String { callCount += 1; return "" }
+        func generateText(prompt: String, scene: AIScene) async throws -> String {
+            callCount += 1; return ""
+        }
 
         /// 从 prompt 里捞出全部 `"seg_xxx"` 形式的分镜 id（RewritePromptBuilder 以 id 建行）。
         /// 返回与原句等长但措辞不同的改写句，落在字数预算内，避免触发 fallback。

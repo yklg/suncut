@@ -196,7 +196,8 @@ actor AIAnalysisService {
 
         let result = try await aiProvider.generateJSON(
             prompt: prompt,
-            responseType: AISegmentationResult.self
+            responseType: AISegmentationResult.self,
+            scene: .segmentAnalysis
         )
 
         // 完整性审计（缺陷 S3/S4 的唯一判定处）。规则本身在 MixCutCore 的纯函数里，可单测。
@@ -252,7 +253,7 @@ actor AIAnalysisService {
         {"semanticTypes": ["痛点"], "position": "开头", "keywords": ["敏感肌","换季"]}
         要求：semanticTypes 从上面定义的中文类型名里选，可多个但至少一个；position 只能是 开头/中间/结尾 之一；keywords 给 2~5 个。
         """
-        let tags = try await aiProvider.generateJSON(prompt: prompt, responseType: SegmentTags.self)
+        let tags = try await aiProvider.generateJSON(prompt: prompt, responseType: SegmentTags.self, scene: .segmentTags)
         let valid = Set(SemanticType.allCases.map(\.rawValue))
         var types = tags.semanticTypes.filter { valid.contains($0) }.compactMap { SemanticType(rawValue: $0) }
         if types.isEmpty { types = [.transition] }

@@ -104,7 +104,7 @@ enum ScriptWritingService {
         let provider = AIProviderManager.currentProvider()
         let raw: String
         do {
-            raw = try await provider.generateText(prompt: prompt)
+            raw = try await provider.generateText(prompt: prompt, scene: .scriptWriting)
         } catch {
             throw WritingError.llmFailed(APIErrorClassifier.friendly(error))
         }

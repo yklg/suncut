@@ -200,8 +200,10 @@ enum APIErrorClassifier {
 
 /// AI 提供商协议
 protocol AIProvider: Actor {
-    func generateJSON<T: Decodable>(prompt: String, responseType: T.Type) async throws -> T
-    func generateText(prompt: String) async throws -> String
+    /// `scene` 是**必填**的：花了钱要能说出这笔花在哪个环节。
+    /// 不给默认值 —— 有默认值就会长出"随手一填"的调用点，名册当天就失真。
+    func generateJSON<T: Decodable>(prompt: String, responseType: T.Type, scene: AIScene) async throws -> T
+    func generateText(prompt: String, scene: AIScene) async throws -> String
 }
 
 /// 支持的 AI 提供商

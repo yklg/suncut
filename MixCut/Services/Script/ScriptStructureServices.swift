@@ -54,7 +54,7 @@ enum ReverseStructuringService {
         let provider = AIProviderManager.currentProvider()
         let response: String
         do {
-            response = try await provider.generateText(prompt: prompt)
+            response = try await provider.generateText(prompt: prompt, scene: .scriptStructure)
         } catch {
             throw StructureError.llmFailed(APIErrorClassifier.friendly(error))
         }
@@ -120,7 +120,7 @@ enum StructureGenerationService {
         let provider = AIProviderManager.currentProvider()
         let response: String
         do {
-            response = try await provider.generateText(prompt: prompt)
+            response = try await provider.generateText(prompt: prompt, scene: .scriptStructure)
         } catch {
             throw StructureError.llmFailed(APIErrorClassifier.friendly(error))
         }

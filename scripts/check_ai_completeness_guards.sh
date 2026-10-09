@@ -211,6 +211,32 @@ expect_eq "限流要有日志（否则事后分不清 429 与网络挂）" \
 expect_eq "网络层失败要有日志（原来静默重试，17 分钟只留下一行'重试第 1 次'）" \
   "$(code_count_in_file "$CLIENT" 'AI 请求第')" 1
 
+echo
+echo "== 成本可见：每个 AI 调用申报场景，且白跑的那次也先落账 =="
+# 判的是"调用点数 - 场景申报数 = 0"，不是"至少有一处申报"：后者会让漏报的调用点永远隐身
+call_sites=$( { grep -rn --include='*.swift' 'generateJSON(\|generateText(' "$ROOT/MixCut" \
+  | grep -v 'func generate' | grep -v 'protocol AIProvider' || true; } | wc -l | tr -d ' ')
+undeclared=$(( call_sites - $(code_count_in_dir "$ROOT/MixCut" 'scene: \.') ))
+if [ "$call_sites" = "0" ]; then
+  report_fail "AI 调用点取样面取不出数（判据失效，不算通过）" "0" "> 0"
+else
+  expect_zero "没申报场景的 AI 调用点" "$undeclared"
+fi
+expect_eq "用量落账点全工程只有一处（多处各写一行，口径当天分家）" \
+  "$(code_count_in_file "$CLIENT" 'AIUsageRecord(')" 1
+# 顺序判据：白跑（空正文/截断）照样计费，所以落账必须发生在抛错**之前**；
+# 反过来写就会变成"抛了错，这一笔再也没进过账本"
+rec_line=$(grep -n 'usageOutcome)\.logLine()' "$CLIENT" | head -1 | cut -d: -f1)
+throw_line=$(grep -n 'AIProviderError\.emptyModelOutput(evidence:' "$CLIENT" | head -1 | cut -d: -f1)
+if [ -z "$rec_line" ] || [ -z "$throw_line" ]; then
+  report_fail "落账必须早于抛错（行号取不出 ⇒ 判据失效）" \
+    "落账=${rec_line:-取不出} 抛错=${throw_line:-取不出}" "两行都在且落账 < 抛错"
+elif [ "$rec_line" -lt "$throw_line" ]; then
+  report_pass "落账($rec_line) 早于空正文抛错($throw_line) ⇒ 白跑的那笔也在账上"
+else
+  report_fail "落账必须早于抛错" "落账=$rec_line 抛错=$throw_line" "落账 < 抛错"
+fi
+
 if [ -f "$PBXPROJ" ]; then
   echo
   echo "== 工程引用（抓的失败：新源文件没进 App target 编译，运行时根本不存在）=="

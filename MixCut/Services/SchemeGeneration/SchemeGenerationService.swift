@@ -285,7 +285,8 @@ actor SchemeGenerationService {
         // 单次调用 —— SchemeStrategyResponse 自适应 3 种格式 + lossless 数组解码
         let response = try await aiProvider.generateJSON(
             prompt: prompt,
-            responseType: SchemeStrategyResponse.self
+            responseType: SchemeStrategyResponse.self,
+            scene: .schemeStrategy
         )
         guard !response.strategies.isEmpty else {
             throw AIProviderError.jsonParsingFailed(
@@ -348,7 +349,8 @@ actor SchemeGenerationService {
             do {
                 let response = try await aiProvider.generateJSON(
                     prompt: prompt,
-                    responseType: CompositionResponse.self
+                    responseType: CompositionResponse.self,
+                    scene: .schemeComposition
                 )
                 batchResult = response.compositions
             } catch {
@@ -414,7 +416,8 @@ actor SchemeGenerationService {
 
         let response = try await aiProvider.generateJSON(
             prompt: prompt,
-            responseType: CompositionResponse.self
+            responseType: CompositionResponse.self,
+            scene: .schemeComposition
         )
 
         // 别名 → id 反查表
@@ -492,7 +495,7 @@ actor SchemeGenerationService {
         let prompt = template.replacingOccurrences(of: "{{SEGMENTS_JSON}}", with: jsonString)
 
         do {
-            return try await aiProvider.generateJSON(prompt: prompt, responseType: CustomSchemeMetadata.self)
+            return try await aiProvider.generateJSON(prompt: prompt, responseType: CustomSchemeMetadata.self, scene: .schemeMetadata)
         } catch {
             MixLog.error(" inferMetadata 失败: \(error.localizedDescription)")
             return nil
