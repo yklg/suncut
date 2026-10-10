@@ -480,16 +480,10 @@ struct NarrativeStructureEditorView: View {
     /// 构建项目库分镜的轻量描述（仅在 .task 切项目时调用一次，结果缓存到 descriptors）
     private func buildDescriptors() -> [SegmentDescriptor] {
         project.videos.flatMap(\.segments).map { seg in
-            SegmentDescriptor(
-                id: seg.id,
-                tags: seg.semanticTypes.map(\.rawValue),
-                text: seg.text,
-                duration: seg.endTime - seg.startTime,
-                quality: seg.qualityScore,
-                sourceKey: seg.video.map { "video:\($0.id.uuidString)" }
-                    ?? "detached:\(seg.id.uuidString)",
-                startSeconds: seg.startTime
-            )
+            // 这一份描述只给叙事结构的候选池展示用，不进连贯性门 ⇒ 不跨 `segment.video` 那条边。
+            // 键给 "unresolved:<id>"：既诚实（这里确实没解析来源），又保证永不与另一条相同，
+            // 万一将来被喂进门，也不会把两条无关分镜误判成同素材相邻。
+            SegmentDescriptor(from: seg, sourceKey: "unresolved:\(seg.id.uuidString)")
         }
     }
 

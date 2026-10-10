@@ -109,6 +109,24 @@ struct NarrativeContinuityTests {
         #expect(hard.contains(.invertedOrder(pairIndex: 0, sourceKey: "video:A")))
     }
 
+    @Test("TC-N11 两条入口（pools+ids 与 已排序序列）必须给同一答案 —— 判据只有一份")
+    func bothEntryPointsAgree() {
+        let a = piece(1, at: 10, dur: 4)
+        let b = piece(2, at: 4, dur: 4)
+        let c = piece(3, src: "video:B", at: 0, dur: 3)
+        let byPools = NarrativeContinuity.issues([a.id, b.id, c.id], pools: pools([[a], [b], [c]]))
+        let byOrder = NarrativeContinuity.issues(inOrder: [a, b, c])
+        #expect(byPools == byOrder, "两条路分家了：\(byPools) vs \(byOrder)")
+        #expect(byPools.contains(.invertedOrder(pairIndex: 0, sourceKey: "video:A")))
+    }
+
+    @Test("TC-N12 空序列与单条序列都不许崩，也不许凭空造问题")
+    func degenerateSequencesAreSilent() {
+        let a = piece(1, at: 0, dur: 3)
+        #expect(NarrativeContinuity.issues(inOrder: []).isEmpty)
+        #expect(NarrativeContinuity.issues(inOrder: [a]).isEmpty)
+    }
+
     @Test("TC-N10 一句话人话：位置从 1 开始数给用户看，别把内部下标 0 甩给用户")
     func descriptionsUseHumanPositions() {
         let a = piece(1, at: 10, dur: 4)

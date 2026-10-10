@@ -331,6 +331,17 @@ final class SchemeViewModel {
             let catalog = buildSegmentCatalog(allSegments)
             let catalogText = catalog.catalogText
             let videoAliases = catalog.videoAliases
+            // 批量组合那条路是按**别名**收回变体的，连贯性门要吃描述才判得了。
+            // 来源键从"按视频摊开"那一步拿，不跨 `segment.video` 这条边（见 SegmentDescriptor.all）。
+            let descriptorByID = Dictionary(uniqueKeysWithValues:
+                project.videos.flatMap { video in
+                    let key = "video:\(video.id.uuidString)"
+                    return video.segments.map { SegmentDescriptor(from: $0, sourceKey: key) }
+                }.map { ($0.id, $0) })
+            var aliasToDescriptor: [String: SegmentDescriptor] = [:]
+            for (alias, seg) in catalog.idMap {
+                if let d = descriptorByID[seg.id] { aliasToDescriptor[alias] = d }
+            }
 
             MixLog.info(" 分镜目录: \(catalog.idMap.count) 个片段, \(catalogText.count) 字符")
 
@@ -359,12 +370,14 @@ final class SchemeViewModel {
 
             let outcomes: [StrategyOutcome] = await withTaskGroup(of: StrategyOutcome.self) { group in
                 for (i, strategyResult) in strategyResults.enumerated() {
-                    group.addTask { [schemeService, catalogText, videoAliases, variationsPerStrategy, customPrompt] in
+                    group.addTask { [schemeService, catalogText, videoAliases, aliasToDescriptor,
+                                    variationsPerStrategy, customPrompt] in
                         do {
                             let compositions = try await schemeService.generateBatchCompositions(
                                 strategy: strategyResult,
                                 catalogText: catalogText,
                                 videoAliases: videoAliases,
+                                segmentByAlias: aliasToDescriptor,
                                 variationCount: variationsPerStrategy,
                                 customPrompt: customPrompt
                             )
@@ -803,17 +816,9 @@ final class SchemeViewModel {
             idToAlias[seg.id] = alias
         }
 
-        let descriptors: [SegmentDescriptor] = allSegments.map { seg in
-            SegmentDescriptor(
-                id: seg.id,
-                tags: seg.semanticTypes.map(\.rawValue),
-                text: seg.text,
-                duration: seg.endTime - seg.startTime,
-                quality: seg.qualityScore,
-                sourceKey: seg.video.map { "video:\($0.id.uuidString)" }
-                    ?? "detached:\(seg.id.uuidString)",
-                startSeconds: seg.startTime
-            )
+        let descriptors: [SegmentDescriptor] = project.videos.flatMap { video in
+            let key = "video:\(video.id.uuidString)"
+            return video.segments.map { SegmentDescriptor(from: $0, sourceKey: key) }
         }
 
         // 2. 每段 candidatePool → topCandidates(30)，渲染每段目录文本

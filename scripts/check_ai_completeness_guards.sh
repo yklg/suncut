@@ -284,8 +284,12 @@ echo "== 连贯性硬校验（抓的失败：prompt 让模型自检，程序侧�
 SCHEME="$ROOT/MixCut/Services/SchemeGeneration/SchemeGenerationService.swift"
 expect_eq "结构门与连贯门都在（两道门不许退成一道）" \
   "$(occ_count_in_file "$SCHEME" 'NarrativeStructureEngine.isValidVariant(')" 1
-expect_eq "连贯性硬校验被过滤循环真的调用" \
-  "$(code_count_in_file "$SCHEME" 'NarrativeContinuity.issues(')" 1
+expect_eq "两条生成路径都被连贯性门接住（批量 + 叙事各一处）" \
+  "$(occ_count_in_file "$SCHEME" 'NarrativeContinuity.issues(')" 2
+expect_eq "批量路径真的拿到别名表（拿不到就是门被静默关掉）" \
+  "$(occ_count_in_file "$ROOT/MixCut/ViewModels/SchemeViewModel.swift" 'segmentByAlias:')" 1
+expect_zero "App 层不许再手写 SegmentDescriptor 逐字段构造（工厂只一处）" \
+  "$(code_count_in_dir "$ROOT/MixCut" 'tags: seg\.semanticTypes')"
 expect_zero "不许绕过 issues 只挑 hard（跳切告警会因此消失）" \
   "$(code_count_in_file "$SCHEME" 'NarrativeContinuity.hardIssues(')"
 

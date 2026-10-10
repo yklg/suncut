@@ -493,3 +493,27 @@ final class DecodedCache<T> {
 ///    （2026-10「标签改了不显示」复盘的根因。）
 ///    丢弃式的 `_ = backingData` 不算满足本条：它不承重，下一个人会当死码清掉。
 ///    守卫见 `Tests/MixCutCoreTests/SegmentRenderFreshnessTests.swift` 的 G2。
+
+
+/// 从 `Segment` 造叙事描述 —— **全仓只此一处**，且**不跨关系边**。
+///
+/// 为什么要收成工厂：`SegmentDescriptor(...)` 的逐字段构造此前在
+/// `SchemeViewModel`（两处生成路径）与 `NarrativeStructureEditorView` 各写了一份，
+/// 连贯性门要的 `sourceKey` / `startSeconds` 一加就是"三份同时改、漏一份就静默失能"。
+///
+/// 为什么 `sourceKey` 由调用方传进来：跨 to-one 边读 `segment.video` 属于
+/// `TombstoneReadGuard` 那族（真删后读死对象 SIGTRAP），而 `.live` 形态又被 G22 明令禁止。
+/// 调用方本来就是按视频摊开分镜的，它手里就有来源 —— 于是这条边一次都不跨。
+extension SegmentDescriptor {
+    init(from segment: Segment, sourceKey: String) {
+        self.init(
+            id: segment.id,
+            tags: segment.semanticTypes.map(\.rawValue),
+            text: segment.text,
+            duration: segment.endTime - segment.startTime,
+            quality: segment.qualityScore,
+            sourceKey: sourceKey,
+            startSeconds: segment.startTime
+        )
+    }
+}

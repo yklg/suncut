@@ -302,6 +302,9 @@ actor SchemeGenerationService {
         strategy: SchemeStrategy,
         catalogText: String,
         videoAliases: String,
+        /// 别名 → 分镜描述。**必填、无默认值**：给一张空表就等于把这条路的连贯性门关掉，
+        /// 而且关得看不出来。
+        segmentByAlias: [String: SegmentDescriptor],
         variationCount: Int = 20,
         batchSize: Int = 10,
         customPrompt: String? = nil
@@ -358,7 +361,23 @@ actor SchemeGenerationService {
                 batchResult = []
             }
 
-            let valid = batchResult.filter { !$0.segments.isEmpty }
+            let valid = batchResult.filter { comp in
+                guard !comp.segments.isEmpty else { return false }
+                let picked = comp.segments.compactMap { segmentByAlias[$0] }
+                if picked.count != comp.segments.count {
+                    // 别名反查不全 ⇒ 这一条**判不了**，不许把它算成"通过了连贯性校验"
+                    MixLog.info(" 批量变体别名反查不全（差 \(comp.segments.count - picked.count) 个），连贯性未判")
+                    return true
+                }
+                let issues = NarrativeContinuity.issues(inOrder: picked)
+                let hard = issues.filter { $0.isHard }
+                guard hard.isEmpty else {
+                    MixLog.info(" 批量变体被连贯性硬校验拒掉: \(hard.map { $0.describe() }.joined(separator: "；"))")
+                    return false
+                }
+                for soft in issues { MixLog.info(" 批量变体连贯性告警: \(soft.describe())") }
+                return true
+            }
             allCompositions.append(contentsOf: valid)
             remaining -= valid.count
 

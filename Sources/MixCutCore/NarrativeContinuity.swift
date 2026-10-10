@@ -85,7 +85,17 @@ public enum NarrativeContinuity {
             // 有 id 在候选里找不到 ⇒ 结构层已经会拒（isValidVariant），这里不重复判
             return []
         }
+        return issues(inOrder: picked, in: cfg)
+    }
+
+    /// 直接吃"已按成片顺序排好的分镜" —— 批量组合那条路（模型直接给一条序列）用它。
+    /// 两条路共用**同一份**判据实现，不各写一遍（否则阈值一改就分家）。
+    public static func issues(inOrder picked: [SegmentDescriptor],
+                              in cfg: ContinuityConfig = .default) -> [ContinuityIssue] {
         var found: [ContinuityIssue] = []
+        // 少于两条没有"相邻对"可言。这里必须显式挡：`0..<(count - 1)` 在 count == 0 时
+        // 会算出 `0..<(-1)` 直接 fatal error（实测：空序列一条就把进程打崩）。
+        guard picked.count >= 2 else { return found }
         for pair in 0..<(picked.count - 1) {
             let a = picked[pair], b = picked[pair + 1]
             guard a.sourceKey == b.sourceKey else { continue }
