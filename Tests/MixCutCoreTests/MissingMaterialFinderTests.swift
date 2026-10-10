@@ -59,6 +59,35 @@ private func probe(_ existing: Set<String>, _ unreadable: Set<String> = [])
 
 private let root = "/v"
 
+// MARK: - 静态判据的取样与判定（TC-M13 / M14 用）
+// 「不许复制第二颗归一」与「永不产出删除动作」今天只活在文件头注释里 —— 注释会被删，判据不会。
+// 判定抽成对字符串的纯函数，所以能用**合成源码**自证有牙（形状照 TombstoneReadGuardTests 的
+// `positiveAndNegativeHalves` / `injectedReadFlipsTheGate`），不必为取证去动生产文件。
+// 剥注释复用 `RelationshipReadScan.codeOnly`（仓里已有的一颗），不另写第二份 —— 两把尺子本身就是债。
+
+private let finderPath = "Sources/MixCutCore/MissingMaterialFinder.swift"
+private let guardRepoRoot: URL = URL(fileURLWithPath: #filePath)
+    .deletingLastPathComponent()   // Tests/MixCutCoreTests
+    .deletingLastPathComponent()   // Tests
+    .deletingLastPathComponent()   // 包根
+
+/// 反向轴的两条硬约束 ⇒ 违规清单（空 = 合规）。
+private func missingAxisViolations(code: String) -> [String] {
+    var out: [String] = []
+    // ① 归一只能共用 orphan 那一颗：自己再写一遍，同一个文件在两侧会被认成两个，
+    //    那正是 GC 误删的形状（TC-MA-10 从行为侧守同一件事，这里从结构侧守）。
+    if code.contains(".lowercased()") { out.append("自造归一：出现了 .lowercased()") }
+    if code.contains("hasSuffix(\"/\"") { out.append("自造归一：自己剥末尾斜杠") }
+    if !code.contains("OrphanFileFinder.normalize") { out.append("没引用共用的一颗归一") }
+    // ② 本类型唯一输出是一组 id；碰文件系统或产出删除动作都越过 R1 的边界。
+    //    探针是**注入**的闭包，所以这些词一个都不该出现在代码里（注释里提到 FileManager 不算）。
+    for token in ["FileManager", "removeItem", ".delete(", "URL(fileURLWithPath"]
+    where code.contains(token) {
+        out.append("越界：出现 \(token)")
+    }
+    return out
+}
+
 @Suite("MissingMaterialFinder · 库↔盘反向对账的三档可信度门")
 struct MissingMaterialFinderTests {
 
@@ -301,5 +330,42 @@ struct MissingMaterialFinderTests {
         #expect(out.excludedRecords == 1, "空路径不该送去问文件系统")
         #expect(out.missingIDs == [vid(2)])
         #expect(!out.degraded, "一条空路径不该把整轮判成不可信")
+    }
+
+    // MARK: TC-M13 / M14：把文件头那两条硬约束变成会红的判据
+
+    @Test("TC-M13 反向轴不许自造第二颗归一、也不许碰文件系统（结构侧守法，与 TC-MA-10 的行为侧互补）")
+    func missingAxisSharesTheOneNormalizerAndStaysPure() {
+        let url = guardRepoRoot.appendingPathComponent(finderPath)
+        guard let raw = try? String(contentsOf: url, encoding: .utf8) else {
+            Issue.record("读不到 \(finderPath) ⇒ 判据无法成立，不算通过")
+            return
+        }
+        let violations = missingAxisViolations(code: RelationshipReadScan.codeOnly(raw))
+        #expect(violations.isEmpty, "反向轴违规：\(violations)")
+    }
+
+    @Test("TC-M14 这条静态判据自己要有牙：逐种违规注入合成源码，都得报出来；合规样本必须干净")
+    func staticCriterionIsNotAlwaysGreen() {
+        let injected: [(String, String)] = [
+            ("自造 lowercased 归一", "func normalize(_ p: String) -> String { p.lowercased() }"),
+            ("自造剥末尾斜杠", "if p.hasSuffix(\"/\") { p.removeLast() }"),
+            ("整颗归一改成自研", "func normalize(_ p: String) -> String { p }"),
+            ("自己碰文件系统", "FileManager.default.removeItem(at: u)"),
+            ("产出删除动作", "context.delete(rows)"),
+            ("自己拼 URL 去删", "URL(fileURLWithPath: p)"),
+        ]
+        for (label, snippet) in injected {
+            #expect(!missingAxisViolations(code: snippet).isEmpty,
+                    "注入「\(label)」却没报出问题 ⇒ 这条判据恒绿，不算防线")
+        }
+        // 反向对照：合规写法判为干净，否则上面六条断言全是假信号（恒真的守卫比没有守卫更糟）
+        let good = "static func normalize(_ path: String) -> String { OrphanFileFinder.normalize(path) }"
+        #expect(missingAxisViolations(code: good).isEmpty, "合规样本被判违规 ⇒ 判据过咬，会把正常改动也拦下")
+        // 注释里的 FileManager 不该算越界（真文件头的说明文字就在提它）
+        #expect(missingAxisViolations(code: RelationshipReadScan.codeOnly(
+            "/// 探针由调用方注入（App 侧走 FileManager，测试用假函数）\n"
+            + "func n(_ p: String) -> String { OrphanFileFinder.normalize(p) }")).isEmpty,
+                "剥注释没生效 ⇒ 说明文字会把判据变成误报机器")
     }
 }
