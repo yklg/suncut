@@ -27,7 +27,10 @@ PBX = "/Users/yilukaige/mixed_cut-main/MixCut.xcodeproj/project.pbxproj"
 EXPECTED = ["RawAudioCacheStore.swift", "RawAudioCache.swift", "SegmentCommitter.swift",
              "SegmentationPlanner.swift", "SegmentationPlanSettings.swift",
              "LocalWhisperGate.swift", "AIThinkingPolicy.swift", "AIUsageRecord.swift",
-             "AIModelPricing.swift", "NarrativeContinuity.swift", "SegmentSplitRule.swift"]
+             "AIModelPricing.swift", "NarrativeContinuity.swift", "SegmentSplitRule.swift",
+             # 方案 kindled-cloud-robin.md 批 1（2026-10-10 登记）：漏登记的典型症状最阴 ——
+             # 沙盒 typecheck 按文件系统扫，看不出漏登记；只有 xcodebuild 会报**别的文件** cannot find type。
+             "MissingMaterialFinder.swift"]
 
 
 def main() -> int:

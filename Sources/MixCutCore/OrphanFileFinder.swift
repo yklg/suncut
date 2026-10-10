@@ -3,8 +3,10 @@ import Foundation
 /// 找出"磁盘上存在但数据库已无任何记录引用"的孤儿文件（供延后删除 GC 使用）。
 /// 安全原则：判断不确定时保守不删——只返回明确未被引用的。
 public enum OrphanFileFinder {
-    /// 归一化路径：去末尾斜杠 + 小写（macOS APFS 默认大小写不敏感）
-    private static func normalize(_ path: String) -> String {
+    /// 归一化路径：去末尾斜杠 + 小写（macOS APFS 默认大小写不敏感）。
+    /// internal 而非 public：`MissingMaterialFinder` 必须共用这一颗 —— 两条轴各写一套归一，
+    /// 同一个文件在两侧会被认成两个，那正是 GC 误删的形状。
+    static func normalize(_ path: String) -> String {
         var p = path
         while p.count > 1 && p.hasSuffix("/") { p.removeLast() }
         return p.lowercased()
