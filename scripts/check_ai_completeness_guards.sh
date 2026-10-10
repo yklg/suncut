@@ -256,6 +256,21 @@ expect_eq "规划层的「超长再切」被执行器真的调用" \
   "$(code_count_in_file "$COMMITTER" 'SegmentationPlanner\.splitOverLong(')" 1
 expect_eq "切出来的块按 origin 回溯源提案（下标漂了标签就会静默错位）" \
   "$(code_count_in_file "$COMMITTER" 'split\[\$0\]\.origin')" 1
+# 留痕的可观测性：整份历史日志里 grep「过碎」零命中（计划 §AD）⇒ 规则只把结论写进库字段，
+# 外面看不见；取证就得开 sqlite3 读列，而这既不可复现也不是用户能看到的东西。
+IMPORTVM="$ROOT/MixCut/ViewModels/ImportViewModel.swift"
+expect_eq "规划层改写过形状必须落一行日志（只进库字段 = 等于没留痕）" \
+  "$(code_count_in_file "$IMPORTVM" '分镜规划改写')" 1
+note_line=$(grep -n 'video.segmentationGuardNote = commit.appliedRules.isEmpty' "$IMPORTVM" | head -1 | cut -d: -f1)
+log_line=$(grep -n 'MixLog.info(" 分镜规划改写' "$IMPORTVM" | head -1 | cut -d: -f1)
+if [ -z "$note_line" ] || [ -z "$log_line" ]; then
+  report_fail "留痕日志必须晚于留痕赋值（行号取不出 ⇒ 判据失效）" \
+    "赋值=${note_line:-取不出} 日志=${log_line:-取不出}" "两行都在且 赋值 < 日志"
+elif [ "$note_line" -lt "$log_line" ]; then
+  report_pass "先赋值($note_line) 再落日志($log_line)（反过来就会永远读到 nil）"
+else
+  report_fail "日志必须落在赋值之后" "赋值=$note_line 日志=$log_line" "赋值 < 日志"
+fi
 # 顺序判据：先切后并。反过来会把刚按句子边界切开的块又并回去，分区形状取决于谁先跑
 split_line=$(grep -n 'SegmentationPlanner\.splitOverLong(' "$COMMITTER" | head -1 | cut -d: -f1)
 plan_line=$(grep -n 'SegmentationPlanner\.plan(segments: planTimings' "$COMMITTER" | head -1 | cut -d: -f1)

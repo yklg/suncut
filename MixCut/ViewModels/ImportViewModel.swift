@@ -749,6 +749,11 @@ final class ImportViewModel {
             ? nil
             : "\(commit.appliedRules.map(\.displayName).joined(separator: "、"))："
                 + "模型返回 \(commit.aiSegmentCount) 段 → 落库 \(commit.committedCount) 段"
+        // 改写过素材形状就必须**出日志**，不能只进库字段：整份历史日志里 grep「过碎」零命中
+        // （计划 §AD 实测），意味着这条规则哪怕天天在跑也没有任何一处能看见，取证只能开 sqlite3 读列。
+        if let note = video.segmentationGuardNote {
+            MixLog.info(" 分镜规划改写: video=\(video.name), \(note)")
+        }
 
         // 台词以「逐分镜各自切音频独立 ASR」为准覆盖：整片流式 ASR 绝对时间戳会漂移、
         // 按整片时间戳切出的分镜台词会错位；单段短音频 ASR 永远准。边界已由本地场景/静音+AI 定好，
