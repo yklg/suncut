@@ -1,6 +1,6 @@
 import Foundation
 
-/// 方案序列的**连贯性硬校验**（纯函数，可单测）。
+/// 方案序列的**连贯性校验**（纯函数，可单测）—— 只装事实层面就错了的那几条。
 ///
 /// 为什么必须有：`generateNarrativeVariants` 的 prompt 里写着"对每个变体做台词连贯性自检，
 /// 只输出连贯的"，而程序侧只跑 `isValidVariant` —— 它判的是**结构**（条数、不重复、每条来自
@@ -11,50 +11,39 @@ import Foundation
 /// （同一份 `pools`、同一串 id），所以它是**加进同一条流水线**的一道门，不是另一套校验。
 public struct ContinuityConfig: Equatable, Sendable {
 
-    /// 同一素材里跳空超过这么多秒 ⇒ 记一条"跳切"（话与画面都断了一截）。
-    /// 取 3.0s：短于一句话的常见长度，再小就会把正常的跨段选择全判成跳切。
-    public var jumpThresholdSeconds: Double
-
     /// 重叠容忍：同素材两段区间相交超过这么多秒才算画面重复（留一点浮点/帧化余量）。
     public var overlapToleranceSeconds: Double
 
-    public init(jumpThresholdSeconds: Double = 3.0, overlapToleranceSeconds: Double = 0.1) {
-        self.jumpThresholdSeconds = jumpThresholdSeconds
+    public init(overlapToleranceSeconds: Double = 0.1) {
         self.overlapToleranceSeconds = overlapToleranceSeconds
     }
 
     public static let `default` = ContinuityConfig()
 }
 
-/// 一条连贯性问题。`hard` 的两类是"事实层面就错了"，soft 是"看着会跳，但可能是刻意的"。
+/// 一条连贯性问题。**这里只允许装"事实层面就错了"的判据** —— 两条都不依赖"多少秒算跳"
+/// 这类拍脑袋的线，所以也都不需要模型意见。
+///
+/// 曾经有第三条 `sourceJump`（同素材相邻两段之间跳掉一截原片内容，阈值 3s），已**删除**：
+/// 真机跑一批方案生成拿到 62 条该告警，跳空中位数 **26.6s**、最大 **87.0s** —— 混剪本来就是
+/// 从一条素材里挑着用的，"跳"是这门手艺的常态而不是缺陷。一条把绝大多数正常产出都点名的规则
+/// 没有信息量，留着只会让人学会无视日志（详见计划 §AB）。
 public enum ContinuityIssue: Equatable, Sendable {
 
     /// 同一素材里，**后说的话被排在先说的话之前**（原始时间顺序倒了）。
     case invertedOrder(pairIndex: Int, sourceKey: String)
     /// 同一素材的两段画面区间相交 ⇒ 同一画面播两遍。
     case overlappingFrames(pairIndex: Int, sourceKey: String, seconds: Double)
-    /// 同一素材相邻两段之间跳掉了一截原始内容。
-    case sourceJump(pairIndex: Int, sourceKey: String, gapSeconds: Double)
-
-    /// 判死的两条：`invertedOrder` 正是用户抱怨的"台词逻辑排反"，
-    /// `overlappingFrames` 是"同一段画面重复"——两者都不需要模型意见。
-    public var isHard: Bool {
-        switch self {
-        case .invertedOrder, .overlappingFrames: return true
-        case .sourceJump: return false
-        }
-    }
 
     /// 给用户看的相邻对位置（内部下标从 0 起，人数的从 1 起 —— 别让 `pairIndex: 0` 出现在日志里）。
     public var pairIndexLabel: Int {
         switch self {
-        case .invertedOrder(let pairIndex, _), .overlappingFrames(let pairIndex, _, _),
-             .sourceJump(let pairIndex, _, _):
+        case .invertedOrder(let pairIndex, _), .overlappingFrames(let pairIndex, _, _):
             return pairIndex + 1
         }
     }
 
-    /// 给人看的一句话（进日志与后续看板；措辞只说观测到的事实）。
+    /// 给人看的一句话（进日志；措辞只说观测到的事实）。
     public func describe() -> String {
         let pairPosition = pairIndexLabel
         switch self {
@@ -63,9 +52,6 @@ public enum ContinuityIssue: Equatable, Sendable {
         case .overlappingFrames(_, let key, let seconds):
             return String(format: "第 %d-%d 条画面重叠 %.1fs（同一素材 %@ 的同一段会播两遍）",
                           pairPosition, pairPosition + 1, seconds, key)
-        case .sourceJump(_, let key, let gap):
-            return String(format: "第 %d-%d 条之间在原片里跳空 %.1fs（同一素材 %@）",
-                          pairPosition, pairPosition + 1, gap, key)
         }
     }
 }
@@ -111,17 +97,7 @@ public enum NarrativeContinuity {
                 found.append(.overlappingFrames(pairIndex: pair, sourceKey: a.sourceKey,
                                                 seconds: overlap))
             }
-            let gap = b.startSeconds - aEnd
-            if gap > cfg.jumpThresholdSeconds {
-                found.append(.sourceJump(pairIndex: pair, sourceKey: a.sourceKey, gapSeconds: gap))
-            }
         }
         return found
-    }
-
-    /// 只报 hard 的那几条（用来决定"这个变体要不要丢"）。
-    public static func hardIssues(_ segmentIDs: [UUID], pools: [[SegmentDescriptor]],
-                                  in cfg: ContinuityConfig = .default) -> [ContinuityIssue] {
-        issues(segmentIDs, pools: pools, in: cfg).filter(\.isHard)
     }
 }

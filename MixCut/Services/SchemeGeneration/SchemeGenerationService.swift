@@ -370,12 +370,10 @@ actor SchemeGenerationService {
                     return true
                 }
                 let issues = NarrativeContinuity.issues(inOrder: picked)
-                let hard = issues.filter { $0.isHard }
-                guard hard.isEmpty else {
-                    MixLog.info(" 批量变体被连贯性硬校验拒掉: \(hard.map { $0.describe() }.joined(separator: "；"))")
+                guard issues.isEmpty else {
+                    MixLog.info(" 批量变体被连贯性校验拒掉: \(issues.map { $0.describe() }.joined(separator: "；"))")
                     return false
                 }
-                for soft in issues { MixLog.info(" 批量变体连贯性告警: \(soft.describe())") }
                 return true
             }
             allCompositions.append(contentsOf: valid)
@@ -451,14 +449,10 @@ actor SchemeGenerationService {
             let ids = comp.segments.compactMap { aliasToID[$0] }
             guard NarrativeStructureEngine.isValidVariant(ids, pools: pools) else { continue }
             let issues = NarrativeContinuity.issues(ids, pools: pools)
-            let hard = issues.filter(\.isHard)
-            if !hard.isEmpty {
-                let why = hard.map { $0.describe() }.joined(separator: "；")
-                MixLog.info(" 变体被连贯性硬校验拒掉: \(why)")
+            guard issues.isEmpty else {
+                let why = issues.map { $0.describe() }.joined(separator: "；")
+                MixLog.info(" 变体被连贯性校验拒掉: \(why)")
                 continue
-            }
-            for soft in issues {
-                MixLog.info(" 变体连贯性告警: \(soft.describe())")
             }
             valid.append(comp.segments)
         }

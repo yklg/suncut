@@ -2,7 +2,8 @@ import Foundation
 import Testing
 @testable import MixCutCore
 
-/// 连贯性硬校验。核心主张：**能不依赖模型自觉判出来的那几条，就不许只写在 prompt 里**。
+/// 连贯性校验。核心主张：**能不依赖模型自觉判出来的那几条，就不许只写在 prompt 里**；
+/// 反过来同样成立 —— 判据只能是事实，"多少秒算跳"这种主观线一旦进判据就会把正常产出点名。
 ///
 /// 现场动因：`generateNarrativeVariants` 的 prompt 要求模型"自检后只输出连贯的"，而程序侧只有
 /// `isValidVariant`（判条数/重复/候选归属）—— 模型说自检过了就没人再查。
@@ -21,17 +22,16 @@ struct NarrativeContinuityTests {
 
     private func pools(_ groups: [[SegmentDescriptor]]) -> [[SegmentDescriptor]] { groups }
 
-    @Test("TC-N01 同素材内台词先后被排反 ⇒ hard（正是用户抱怨的那一条）")
+    @Test("TC-N01 同素材内台词先后被排反 ⇒ 判死（正是用户抱怨的那一条）")
     func detectsInvertedNarration() {
         let a = piece(1, at: 10, dur: 4)      // 原片 10-14s 的话
         let b = piece(2, at: 4, dur: 4)       // 原片 4-8s 的话被排到后面
         let ids = [a.id, b.id]
         let found = NarrativeContinuity.issues(ids, pools: pools([[a], [b]]))
         #expect(found == [.invertedOrder(pairIndex: 0, sourceKey: "video:A")], "实际：\(found)")
-        #expect(found.allSatisfy { $0.isHard })
     }
 
-    @Test("TC-N02 同素材画面重叠 ⇒ hard，并把重叠秒数报出来")
+    @Test("TC-N02 同素材画面重叠 ⇒ 判死，并把重叠秒数报出来")
     func detectsOverlappingFrames() {
         let a = piece(1, at: 0, dur: 10)      // 0-10s
         let b = piece(2, at: 7, dur: 5)       // 7-12s ⇒ 与上一条重叠 3s（顺序没反）
@@ -41,23 +41,23 @@ struct NarrativeContinuityTests {
         #expect(!found.contains(.invertedOrder(pairIndex: 0, sourceKey: "video:A")))
     }
 
-    @Test("TC-N03 同素材跳空超过阈值 ⇒ soft（会跳，但不该因此丢一整个变体）")
-    func detectsSourceJumpAsSoft() {
+    @Test("TC-N03 同素材跳空不算缺陷：混剪就是从一条素材里挑着用，「跳」是常态")
+    func sourceJumpIsNotADefect() {
+        // 这条替代原先的 sourceJump 判据。撤掉它的依据是一手读数而不是我的看法：
+        // 真机一批方案生成里该告警报了 62 条，跳空中位数 26.6s、最大 87.0s ——
+        // 一条把绝大多数正常产出都点名的规则没有信息量（计划 §AB）。
         let a = piece(1, at: 0, dur: 2)       // 0-2s
-        let b = piece(2, at: 9, dur: 2)       // 9-11s ⇒ 中间跳掉 7s
+        let b = piece(2, at: 9, dur: 2)       // 9-11s ⇒ 中间在原片里跳掉 7s
         let found = NarrativeContinuity.issues([a.id, b.id], pools: pools([[a], [b]]))
-        #expect(found == [.sourceJump(pairIndex: 0, sourceKey: "video:A", gapSeconds: 7.0)],
-                 "实际：\(found)")
-        #expect(found.allSatisfy { !$0.isHard })
-        #expect(NarrativeContinuity.hardIssues([a.id, b.id], pools: pools([[a], [b]])).isEmpty)
+        #expect(found.isEmpty, "跳空不该再被当成问题：\(found)")
     }
 
-    @Test("TC-N04 阈值来自配置：把跳空阈值收到 0.5s，同一条输入立刻冒出 sourceJump")
+    @Test("TC-N04 阈值来自配置：重叠容忍收到 0.01s，同一条输入立刻算成重叠")
     func thresholdComesFromConfig() {
-        let a = piece(1, at: 0, dur: 2)
-        let b = piece(2, at: 2.6, dur: 2)      // 间隙 0.6s：默认 3s 阈值下不算跳切
+        let a = piece(1, at: 0, dur: 10)
+        let b = piece(2, at: 9.95, dur: 5)     // 只交 0.05s：默认容忍下不算重复画面
         #expect(NarrativeContinuity.issues([a.id, b.id], pools: pools([[a], [b]])).isEmpty)
-        let tight = ContinuityConfig(jumpThresholdSeconds: 0.5)
+        let tight = ContinuityConfig(overlapToleranceSeconds: 0.01)
         let found = NarrativeContinuity.issues([a.id, b.id], pools: pools([[a], [b]]), in: tight)
         #expect(found.count == 1, "实际：\(found)")
     }
@@ -80,7 +80,7 @@ struct NarrativeContinuityTests {
     func healthySequenceIsSilent() {
         let a = piece(1, at: 0, dur: 3)
         let b = piece(2, at: 3, dur: 3)
-        let c = piece(3, at: 6.5, dur: 3)     // 中间只隔 0.5s，在 3s 阈值内
+        let c = piece(3, at: 6.5, dur: 3)     // 中间只隔 0.5s：段与段之间有间隙是常态，不判
         let seq = [a, b, c]
         let ids = seq.map(\.id)
         #expect(NarrativeContinuity.issues(ids, pools: pools([[a], [b], [c]])).isEmpty)
@@ -96,17 +96,15 @@ struct NarrativeContinuityTests {
         #expect(!NarrativeStructureEngine.isValidVariant([a.id, ghost], pools: pools([[a], []])))
     }
 
-    @Test("TC-N09 只报 hard 的那个入口不许把 soft 混进来（决定「丢不丢变体」靠它）")
-    func hardFilterExcludesSoft() {
-        let a = piece(1, at: 20, dur: 2)
-        let b = piece(2, at: 0, dur: 2)      // 与 a 排反（hard）
-        let c = piece(3, at: 10, dur: 2)     // 与 b 之间在原片里跳空 8s（soft）
-        let ids = [a.id, b.id, c.id]
-        let all = NarrativeContinuity.issues(ids, pools: pools([[a], [b], [c]]))
-        let hard = NarrativeContinuity.hardIssues(ids, pools: pools([[a], [b], [c]]))
-        #expect(all.count > hard.count, "实际：all=\(all) hard=\(hard)")
-        #expect(hard.allSatisfy { $0.isHard })
-        #expect(hard.contains(.invertedOrder(pairIndex: 0, sourceKey: "video:A")))
+    @Test("TC-N09 同一次相邻对可以同时报两条事实：排反与重叠互不吞掉，且判不出第三条")
+    func bothFactsReportedForOnePair() {
+        let a = piece(1, at: 20, dur: 2)      // 原片 20-22s
+        let b = piece(2, at: 0, dur: 30)      // 0-30s：既把先说的话排到后，又把 a 的画面整个盖住
+        let ids = [a.id, b.id]
+        let found = NarrativeContinuity.issues(ids, pools: pools([[a], [b]]))
+        #expect(found.contains(.invertedOrder(pairIndex: 0, sourceKey: "video:A")))
+        #expect(found.contains(.overlappingFrames(pairIndex: 0, sourceKey: "video:A", seconds: 2.0)))
+        #expect(found.count == 2, "判据只剩两条事实性的，不许再多判出第三条：\(found)")
     }
 
     @Test("TC-N11 两条入口（pools+ids 与 已排序序列）必须给同一答案 —— 判据只有一份")

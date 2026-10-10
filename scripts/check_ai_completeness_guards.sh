@@ -280,18 +280,31 @@ expect_eq "查价表全 App 只有一个读者（多处各查一次，口径当�
   "$(code_count_in_dir "$ROOT/MixCut" 'AIPriceTable')" 1
 
 echo
-echo "== 连贯性硬校验（抓的失败：prompt 让模型自检，程序侧只验结构）=="
+echo "== 连贯性校验（抓的失败：prompt 让模型自检，程序侧只验结构）=="
 SCHEME="$ROOT/MixCut/Services/SchemeGeneration/SchemeGenerationService.swift"
+CONT="$CORE/NarrativeContinuity.swift"
 expect_eq "结构门与连贯门都在（两道门不许退成一道）" \
   "$(occ_count_in_file "$SCHEME" 'NarrativeStructureEngine.isValidVariant(')" 1
 expect_eq "两条生成路径都被连贯性门接住（批量 + 叙事各一处）" \
   "$(occ_count_in_file "$SCHEME" 'NarrativeContinuity.issues(')" 2
+expect_eq "判出问题就判死，不许只打日志放行（两条路各一处 guard）" \
+  "$(occ_count_in_file "$SCHEME" 'guard issues.isEmpty else')" 2
 expect_eq "批量路径真的拿到别名表（拿不到就是门被静默关掉）" \
   "$(occ_count_in_file "$ROOT/MixCut/ViewModels/SchemeViewModel.swift" 'segmentByAlias:')" 1
 expect_zero "App 层不许再手写 SegmentDescriptor 逐字段构造（工厂只一处）" \
   "$(code_count_in_dir "$ROOT/MixCut" 'tags: seg\.semanticTypes')"
-expect_zero "不许绕过 issues 只挑 hard（跳切告警会因此消失）" \
+expect_zero "不许绕过 issues 另开一个入口（判据只有一份）" \
   "$(code_count_in_file "$SCHEME" 'NarrativeContinuity.hardIssues(')"
+# 跳切规则已按一手读数作废（同素材跳空中位数 26.6s、最大 87.0s —— 正常产出全被点名）。
+# 判据钉的是"这条主观线不许换个名字回来"：Core 里不许再有跳空阈值/hard-soft 分层。
+expect_zero "跳空阈值不许留在 Core（多少秒算跳是拍脑袋，不是事实）" \
+  "$(code_count_in_file "$CONT" 'jumpThresholdSeconds')"
+expect_zero "sourceJump 规则不许复活（现场证据：它判的是常态不是缺陷）" \
+  "$(code_count_in_file "$CONT" 'sourceJump')"
+expect_zero "连贯性不许再分 hard/soft（只剩事实性两条，分层就是给主观线留门）" \
+  "$(code_count_in_file "$CONT" 'isHard')"
+expect_zero "软告警分支不许回来（判了不判死 = 日志里堆没人看的告警）" \
+  "$(code_count_in_file "$SCHEME" 'for soft in issues')"
 
 if [ -f "$PBXPROJ" ]; then
   echo
