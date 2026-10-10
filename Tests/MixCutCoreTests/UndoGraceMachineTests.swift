@@ -251,6 +251,50 @@ struct UndoGraceMachineTests {
         #expect(b.deadline == t0.addingTimeInterval(5))
         #expect(!b.needsCommitOnSettle)
     }
+
+    // MARK: TC-UG-16 / 17 三态交错与「义务只交一次」的其余形状
+    // UG-05 只测了同一枚 ticket 上重复 expire；这两条补的是**了结之后再登记新的一枚**时
+    // 旧那枚的迟到事件（真机形态：宽限期到点与用户连点/切项目挤在一起）。
+
+    @Test("TC-UG-16 arm→expire→arm 交错：旧事务的迟到 expire/flush 既不动当前事务，也不再交一次义务")
+    func expireThenRearmKeepsObligationSingle() {
+        var m = UndoGraceMachine()
+        let first = deletion("已删除视频 #1")
+        _ = m.arm(first)
+        #expect(m.expire(id: first.id, now: t0.addingTimeInterval(300)) == first, "第一次到点交出义务")
+        #expect(m.phase == .expired)
+
+        let second = deletion("已删除视频 #2", at: t0.addingTimeInterval(301))
+        #expect(m.arm(second) == nil,
+                "已了结的第一枚不该被算成「被顶掉」—— 否则它被真删两次，第二次的 commit 是空转")
+        #expect(m.phase == .armed && m.isStripVisible)
+
+        // 旧 ticket 的定时器此刻才跑到（主线程忙、或 App 侧那条 Task 还挂着）
+        #expect(m.expire(id: first.id, now: t0.addingTimeInterval(9_999)) == nil)
+        #expect(m.flush(id: first.id) == nil)
+        #expect(m.phase == .armed, "当前事务必须毫发无损")
+        #expect(m.ticket == second)
+        // 新的一枚照常可撤销
+        #expect(m.requestUndo(id: second.id, now: t0.addingTimeInterval(301)) == .performUndo(second))
+    }
+
+    @Test("TC-UG-17 undo 迟到（tooLate）之后再 flush / expire：真删义务不二次交出（幂等）")
+    func flushAfterTooLateDoesNotCommitTwice() {
+        var m = UndoGraceMachine()
+        let ticket = deletion()
+        _ = m.arm(ticket)
+        // 点的时候已过 deadline：不撤销，但把义务补交出去（UG-06 那一档）
+        #expect(m.requestUndo(id: ticket.id, now: t0.addingTimeInterval(301)) == .tooLate(commit: ticket))
+        #expect(m.phase == .expired)
+        // 补交之后，任何一条收口路径都不该再交出第二次真删义务
+        #expect(m.flush(id: ticket.id) == nil)
+        #expect(m.flush() == nil, "带 nil id 的「了结当前那枚」同样不许重交")
+        #expect(m.expire(id: ticket.id, now: t0.addingTimeInterval(400)) == nil)
+        #expect(!m.isStripVisible)
+        #expect(m.secondsLeft(now: t0.addingTimeInterval(400)) == 0)
+        // 了结过的事务再 arm 新的一枚：不产生「上一条已确认删除」的交代（它不是被顶掉的）
+        #expect(m.arm(deletion("已删除视频 #2", at: t0.addingTimeInterval(401))) == nil)
+    }
 }
 
 // ============================================================================
@@ -372,5 +416,22 @@ struct GraphChangeTests {
         #expect(notPrunable == [.projectVideo, .scheme, .strategy, .schemeSegment,
                                 .segmentDub, .physicalShot, .shotVariant])
     }
-}
 
+    @Test("TC-UG-15 连 arm N 枚删除类 ⇒ 前 N−1 枚都被交出且都欠即刻真删（「循环单删」的机械证明）")
+    func consecutiveArmsDisplaceEveryPredecessor() {
+        // 素材导入要做批量删除时，最省事的写法是「循环调单条删除」。这条用例就是它的化验单：
+        // 状态机同一时刻只挂一枚 ticket，后一枚登记时前一枚**当场**被交出 ⇒ 前 N−1 条根本没有宽限期。
+        var m = UndoGraceMachine()
+        var displaced: [UndoTicket] = []
+        for i in 1...5 {
+            let t = deletion("已删除视频 #\(i)", at: t0.addingTimeInterval(Double(i)))
+            if let lost = m.arm(t) { displaced.append(lost) }
+        }
+        #expect(displaced.count == 4,
+                "5 枚依次登记，只有最后那枚保得住宽限期；实际交出 \(displaced.count) 枚")
+        #expect(displaced.allSatisfy { $0.needsCommitOnSettle },
+                "被顶掉的每一枚都必须立刻真删 ⇒ 批量删除必须一次登记一枚 ticket，绝不允许循环单删")
+        #expect(displaced.map(\.message) == ["已删除视频 #1", "已删除视频 #2",
+                                             "已删除视频 #3", "已删除视频 #4"])
+    }
+}

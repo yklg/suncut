@@ -379,6 +379,48 @@ struct ProjectVideoDedupTests {
         #expect(out.retainedVideos(inProject: prjA).count == 4)     // 概览「已导入视频」5 → 4 的同源判据
         #expect(out.videoNoByVideoID(inProject: prjB) == [vid3: 1])
     }
+
+    // MARK: TC-PV-16 编号表的定义域（串号 = Agent 按 video_no 取错素材）
+
+    @Test("TC-PV-16 拿别的项目的视频 id 来查本项目的编号：必须查不到，两边条数互不影响")
+    func numberingTableIsScopedToItsOwnProject() {
+        let rows = [row(1, project: 1, video: 7, at: 0.0),
+                    row(2, project: 2, video: 8, at: 1.0),
+                    row(3, project: 2, video: 9, at: 2.0)]
+        let out = ProjectVideoDedup.deduplicate(rows)
+        let p1 = out.videoNoByVideoID(inProject: id(101))
+        #expect(Set(p1.keys) == Set([id(207)]), "项目 1 的表里只该有它自己的视频")
+        #expect(p1[id(208)] == nil, "项目 2 的 8 号视频在项目 1 的表里出现 = 串号")
+        #expect(p1[id(209)] == nil)
+        // 另一侧同判据：项目 2 自己有 1、2 两号，且不含项目 1 的那条
+        let p2 = out.videoNoByVideoID(inProject: id(102))
+        #expect(p2 == [id(208): 1, id(209): 2])
+        #expect(p2[id(207)] == nil)
+    }
+
+    // MARK: TC-PV-17 编号漂移的取证（把方案里那句「后续视频编号会整体前移」从注释变成测试）
+
+    @Test("TC-PV-17 编号漂移是可观测事实：抽掉 2 号那条关联后，原 3 号立刻变成 2 号")
+    func videoNumbersShiftWhenAMiddleAssociationIsRemoved() {
+        // 5 条关联、5 个不同视频，addedAt 递增 ⇒ 编号 1…5 与视频 7…11 一一对应
+        let rows = (1...5).map { row($0, project: 1, video: 6 + $0, at: Double($0)) }
+        let before = ProjectVideoDedup.deduplicate(rows).videoNoByVideoID(inProject: id(101))
+        #expect(before == [id(207): 1, id(208): 2, id(209): 3, id(210): 4, id(211): 5])
+
+        // 摘掉第 2 号那条（= 用户删掉 2 号素材 / 解除它的关联）
+        let after = ProjectVideoDedup.deduplicate(rows.filter { $0.pvID != id(2) })
+            .videoNoByVideoID(inProject: id(101))
+        // video_no 是 `index + 1` 的**位置**编号（ProjectVideoDedup.swift:41-48），没有持久分配，
+        // 所以后面每条都前移一位。方案「素材导入：批量删除」二次确认里那句
+        // 「后续视频编号会整体前移」不是客套话，就是这条用例；MCP 的 video_no 是 Agent 的
+        // 寻址契约（同文件 :53-59 自述），所以这条也顺手把"老编号无法回收"钉住。
+        #expect(after[id(209)] == 2, "原 3 号变 2 号：位置编号跟着集合走，会漂")
+        #expect(after[id(211)] == 4)
+        #expect(before[id(209)] == 3 && after[id(209)] == 2, "同一条素材、两个号 = 漂移本身")
+        #expect(after.values.sorted() == [1, 2, 3, 4],
+                "漂完仍是连续 1…N、没有空洞 ⇒ 拿旧编号去找的那条素材会被静默指到别的内容")
+        #expect(Set(after.keys).isSubset(of: Set(before.keys)) && after.count == before.count - 1)
+    }
 }
 
 // MARK: - 夹具与随机源
