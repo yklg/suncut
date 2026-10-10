@@ -138,6 +138,34 @@ mutate "$D/MixCut/ViewModels/ImportViewModel.swift" \
   $'change.noteDeleted(Set(segmentsToDelete.map(\\.id)), of: .segment)\n        change.noteDeleted([video.id], of: .video)' \
   && check_case "M10 台账里加回 .video（带 video 不带 project 的形状）" "UG-G13" "$D" "$WORK/m10.log"
 
+D="$WORK/m11"; fresh "$D"
+# 批量删除被实现成"再走一遍单删"⇒ 同一文件里出现第二条登记路径，前 N−1 条没有宽限期
+mutate "$D/MixCut/ViewModels/ImportViewModel.swift" \
+  'PendingDeletionCenter.shared.schedule(' \
+  $'PendingDeletionCenter.shared.schedule(\n            message: "探针：第二条登记路径",\n            commit: { GraphChange() },\n            undo: {}\n        )\n        PendingDeletionCenter.shared.schedule(' \
+  && check_case "M11 多出一枚 ticket 的登记点（循环单删的形状）" "UG-G10" "$D" "$WORK/m11.log"
+
+D="$WORK/m12"; fresh "$D"
+# 反向刀：把那唯一一处摘光 ⇒ 必须报"判据失效"，不许把 0 当成"通过"
+mutate "$D/MixCut/ViewModels/ImportViewModel.swift" \
+  'PendingDeletionCenter.shared.schedule(' \
+  'ProbeRenamedAway.schedule(' \
+  && check_case "M12 登记点被摘走 ⇒ 报判据失效而不是静默放行" "UG-G10" "$D" "$WORK/m12.log"
+
+D="$WORK/m13"; fresh "$D"
+# 把中间那次落盘"优化"掉：合并 save 会让 projectVideos.isEmpty 恒 false ⇒ 视频记录删不掉
+mutate "$D/MixCut/ViewModels/ImportViewModel.swift" \
+  $'for pv in pendingPVs { context.delete(pv) }\n        context.safeSave()' \
+  'for pv in pendingPVs { context.delete(pv) }' \
+  && check_case "M13 中间那次 safeSave 被合并掉" "UG-G11" "$D" "$WORK/m13.log"
+
+D="$WORK/m14"; fresh "$D"
+# 顺序刀：主判定挪到第一次落盘**之前** —— 次数还是 2，读到的却是还没被 cascade 摘干净的反向数组
+mutate "$D/MixCut/ViewModels/ImportViewModel.swift" \
+  $'for pv in pendingPVs { context.delete(pv) }\n        context.safeSave()' \
+  $'guard video.projectVideos.isEmpty else { return (false, GraphChange()) }\n        for pv in pendingPVs { context.delete(pv) }\n        context.safeSave()' \
+  && check_case "M14 主判定排在第一次 safeSave 之前（次数没变、顺序变了）" "UG-G11" "$D" "$WORK/m14.log"
+
 echo
 if [ "$fail" = "0" ]; then
   echo "全部自证通过：实得 ${teeth} 条判言逐条可被对应违规变红（条数由自证自己数，不手写）"

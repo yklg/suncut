@@ -79,6 +79,27 @@ def call_spans(code, head):
             bad("调用括号未闭合", head)
     return out
 
+def func_body(code, head):
+    """取 `head` 这个函数的整个函数体（大括号平衡配对）。
+    窗口式截取会漏长函数 ⇒ 恒绿；取不到必须返回 None，由调用方报"判据失效"。"""
+    i = code.find(head)
+    if i < 0:
+        return None
+    j = code.find("{", i)
+    if j < 0:
+        return None
+    depth, k = 0, j
+    while k < len(code):
+        if code[k] == "{":
+            depth += 1
+        elif code[k] == "}":
+            depth -= 1
+            if depth == 0:
+                return code[j:k + 1]
+        k += 1
+    bad("函数体括号未闭合", head)
+    return None
+
 toast = strip_comments(read(os.path.join(src, "Views", "Shared", "Toast.swift")))
 center = strip_comments(read(os.path.join(src, "Views", "Shared", "PendingDeletionCenter.swift")))
 import_vm = strip_comments(read(os.path.join(src, "ViewModels", "ImportViewModel.swift")))
@@ -205,6 +226,46 @@ else:
         bad("UG-G09 空台账不发的规则被摘掉", "否则每条删除都会退化成无载荷全量重载（切页骨架闪烁回归）")
     else:
         ok("UG-G09 真删落地即由中心广播（2 点 1 post，空台账不发）")
+
+# UG-G10：视频删除咽喉同一批**只可能登记一枚** ticket（方案 v3 批 2 预留的编号，提前落）
+#   依据是实读的结构：PendingDeletionCenter 同一时刻只维护一枚 pending，`arm()` 登记新的一枚前会
+#   先把上一枚 settle —— 而 settle 对 deletion 类就是**即刻真删**（PendingDeletionCenter.swift:79-95/134-138）。
+#   所以"把批量删除实现成 `for v in videos { deleteVideo(v, …) }`"不是不够优雅，是数据丢失：
+#   循环 20 次 = 前 19 次根本没有那 5 秒宽限期，且用户只看得见最后一枚浮条。
+#   这条门把那个形状从"不推荐"变成"构造不出来"：调用点必须恰好 1 处。
+n_sched = import_vm.count("PendingDeletionCenter.shared.schedule(")
+if n_sched == 0:
+    bad("UG-G10 取不出 PendingDeletionCenter.shared.schedule 的调用点",
+        "判据失效：视频删除改走了别的登记方式，一枚 ticket 这条前提没人守（不是「通过」）")
+elif n_sched != 1:
+    bad(f"UG-G10 视频删除的 ticket 登记点应为 1 处，实得 {n_sched}",
+        "多于 1 处＝同一文件里存在多条登记路径，批量时极易写成循环单删 ⇒ 前 N−1 条没有宽限期")
+else:
+    ok("UG-G10 视频删除咽喉只有一处 schedule（一批 = 一枚 ticket）")
+
+# UG-G11：commit 里「先落盘、再判空、才连记录一起删」这个顺序不许被"优化"掉（批 2 预留编号）
+#   为什么中间那次 safeSave 绝不能合并到循环外：隐藏只改了 `project.projectVideos` 那一侧，
+#   pv 的反向数组要等**落盘后**才被 cascade 摘掉；合并 save 会让 `video.projectVideos.isEmpty`
+#   恒 false ⇒ "无引用才连视频记录删"这条主判定永久失效，表现是"删了还在"（同 ModelContextExtension
+#   里 ⑭ 格实测的那一条）。所以判据是两条：① 体内 safeSave() ≥ 2；② isEmpty 判定必须在第一次之后。
+body = func_body(import_vm, "private func commitDelete")
+if body is None:
+    bad("UG-G11 取不出 commitDelete 函数体",
+        "判据失效：咽喉换了函数名/形状，落盘顺序这条前提没人守（批 2 改名时要同批把锚点搬过去）")
+else:
+    n_save = body.count("safeSave()")
+    p_guard = body.find("projectVideos.isEmpty")
+    p_save = body.find("safeSave()")
+    if n_save < 2:
+        bad(f"UG-G11 commit 内的 safeSave() 应 ≥ 2 处，实得 {n_save}",
+            "合并成一次 ⇒ projectVideos.isEmpty 恒 false ⇒ 视频记录永远删不掉（表现为「删了还在」）")
+    elif p_guard < 0:
+        bad("UG-G11 取不到 projectVideos.isEmpty 主判定", "判据失效：连记录删的判据被摘走")
+    elif not (0 <= p_save < p_guard):
+        bad("UG-G11 主判定没有排在第一次 safeSave 之后",
+            "顺序错 = 判定读的是还没被 cascade 摘干净的反向数组，同「合并 save」一个后果")
+    else:
+        ok("UG-G11 先落盘再判空（2 次 save 且判定在第一次之后）", f"save={n_save}")
 
 # UG-G13：视频删除咽喉的台账里不许出现 `.video`（方案 v3 批 2 预留的编号，G10/G11/G12 随各自批次落）
 #   依据不是注释而是实读的 `UndoGraceMachine.swift:191-195`：`isPrunable` 对「带 .video 却不带 .project」
