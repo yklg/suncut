@@ -58,9 +58,19 @@ fi
 echo "== TC-19c 崩形 Dictionary(uniqueKeysWithValues:) 的处置范围（§2）=="
 # 只允许动"挂载层"那 2 处；另 2 处（配音/AI alias）与本次无关，必须**仍然存在**——
 # 它们的计数是防"顺手改掉未审计范围"的哨兵，不是漏网
+#
+# ⚠️ 2026-10-10 勘误：配音侧的期望数原文写 1，真树实测一直是 2 —— 这条判据**从入库起就红**，
+#    不是有人越界改了未审计范围。两处都在同一个函数里、同一类键、同级 trap 风险：
+#      DubbingViewModel.swift:622  `Dictionary(uniqueKeysWithValues: targets.map { ($0.id, …) })`
+#      DubbingViewModel.swift:641  `Dictionary(uniqueKeysWithValues: reconfigurable.map { ($0.id.uuidString, $0) })`
+#    （`reconfigurable` 是 `targets` 的 filter 子集 ⇒ 两处都可能因同一分镜出现两次而 trap，
+#     那正是 ProjectVideoDedupTests 头注释里记着的原崩溃形状。）
+#    归因做不到：本仓历史压成首笔 3881457，判据期望值与第二处实现同出自那一笔，git 看不出先后。
+#    ⇒ 该改的是**计数**（哨兵继续有效），实现一处都不许动 —— 把它们"顺手改安全"正是这条门要防的事。
+#    长期带 FAIL 的代价也说死：验证腿一直红，别人就把整支脚本当噪音，真被越界改动时反而看不出。
 check "TC-19c 素材库视图的崩形构造" 'Dictionary(uniqueKeysWithValues' 0 "$SRC/Views/SegmentLibrary"
 check "TC-19c 素材库 VM 的崩形构造" 'Dictionary(uniqueKeysWithValues' 0 "$SRC/ViewModels/SegmentLibraryViewModel.swift"
-check "TC-19c 配音侧仍在（范围外，不该被顺手改）" 'Dictionary(uniqueKeysWithValues' 1 "$SRC/ViewModels/DubbingViewModel.swift"
+check "TC-19c 配音侧仍在（范围外，不该被顺手改）" 'Dictionary(uniqueKeysWithValues' 2 "$SRC/ViewModels/DubbingViewModel.swift"
 check "TC-19c AI alias 侧仍在（范围外，不该被顺手改）" 'Dictionary(uniqueKeysWithValues' 1 "$SRC/Services/SchemeGeneration/SchemeGenerationService.swift"
 
 echo "== TC-19d 唯一出口 + 编号收口（§3.1）=="
