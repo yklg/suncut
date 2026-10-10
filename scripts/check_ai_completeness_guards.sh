@@ -321,10 +321,53 @@ expect_zero "连贯性不许再分 hard/soft（只剩事实性两条，分层就
 expect_zero "软告警分支不许回来（判了不判死 = 日志里堆没人看的告警）" \
   "$(code_count_in_file "$SCHEME" 'for soft in issues')"
 
+echo
+echo "== 工具名册 ↔ 派单 双向守恒（抓的失败：目录里写着能做、实现层没有这条腿，或反过来）=="
+# split_segment 此前"全仓零命中"就是因为没人对这两张表：对外说有什么能力，与代码里真派得动，
+# 是两份各写各的清单。单靠 tools/list 与目录比对抓不到"有定义无实现"（两者都从同一份目录生成）。
+CATALOG="$CORE/AgentToolCatalog.swift"
+DISPATCH="$ROOT/MixCut/Services/MCP/MCPToolHandlers.swift"
+SEGMCP="$ROOT/MixCut/Services/MCP/MCPSegmentToolHandlers.swift"
+SHEET="$ROOT/MixCut/Views/SegmentLibrary/SplitSegmentSheet.swift"
+tools=$(grep -o 'name: "[a-z_]*"' "$CATALOG" | sed 's/.*"\(.*\)"/\1/' | sort)
+cases=$(grep -oE 'case "[a-z_]+": return' "$DISPATCH" | sed 's/case "\(.*\)":.*/\1/' | sort)
+n_tools=$(printf '%s\n' "$tools" | grep -c .)
+n_cases=$(printf '%s\n' "$cases" | grep -c .)
+if [ "$n_tools" -lt 20 ] || [ "$n_cases" -lt 20 ]; then
+  report_fail "名册或派单取样面取不出数（判据失效，不算通过）" \
+    "目录=$n_tools 派单=$n_cases" "两边都 >= 20"
+else
+  only_catalog=$(comm -23 <(printf '%s\n' "$tools") <(printf '%s\n' "$cases"))
+  only_case=$(comm -13 <(printf '%s\n' "$tools") <(printf '%s\n' "$cases"))
+  if [ -n "$only_catalog" ]; then
+    report_fail "目录里声明了但没有派单实现" "$(printf '%s ' $only_catalog)" "空"
+  else
+    report_pass "目录声明的 $n_tools 个工具全部有派单"
+  fi
+  if [ -n "$only_case" ]; then
+    report_fail "有派单但目录里没声明（对外不可发现 = 死代码）" "$(printf '%s ' $only_case)" "空"
+  else
+    report_pass "派单的 $n_cases 条全部在目录里声明"
+  fi
+fi
+
+echo
+echo "== 分镜拆分：规则与执行者都只许一份（抓的失败：MCP 另写一套切法）=="
+expect_zero "App 层不许再手写 0.3s→帧 的折算（规则住 Core 的 SegmentSplitRule）" \
+  "$(code_count_in_dir "$ROOT/MixCut" '0\.3 \* fps')"
+expect_eq "UI 读 Core 那条拆分规则（判定点只此一处，写了别处就等于另起一套）" \
+  "$(code_count_in_file "$SHEET" 'SegmentSplitRule\.legalCutRange(')" 1
+expect_eq "MCP 读同一条拆分规则" \
+  "$(code_count_in_file "$SEGMCP" 'SegmentSplitRule\.isLegalCut(')" 1
+expect_eq "拆分的执行者只有一个（MCP 必须委托 VM，不许自己建后段；只数调用点，定义另算）" \
+  "$(code_count_in_dir "$ROOT/MixCut" 'segmentCommitter\.commitSplitRemainder(')" 1
+expect_eq "MCP 的拆分腿真的委托给 UI 那条路径" \
+  "$(code_count_in_file "$SEGMCP" 'importVM\.splitSegment(')" 1
+
 if [ -f "$PBXPROJ" ]; then
   echo
   echo "== 工程引用（抓的失败：新源文件没进 App target 编译，运行时根本不存在）=="
-  for f in AIResponseEvidence SegmentationCompleteness AIThinkingPolicy AIUsageRecord AIModelPricing NarrativeContinuity; do
+  for f in AIResponseEvidence SegmentationCompleteness AIThinkingPolicy AIUsageRecord AIModelPricing NarrativeContinuity SegmentSplitRule; do
     expect_min "$f.swift 在 Sources 编译阶段被登记" \
       "$(grep -c "$f.swift in Sources" "$PBXPROJ")" 2
   done

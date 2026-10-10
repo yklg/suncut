@@ -4,19 +4,35 @@ import Testing
 
 @Suite("AgentToolCatalog")
 struct AgentToolCatalogTests {
-    @Test("24 个工具且命名齐全")
+    @Test("25 个工具且命名齐全")
     func allTools() {
         let names = AgentToolCatalog.all.map(\.name)
         // 2026-09-29：**有意的契约变更 23→24**（新增只读工具 get_asr_status，计划 §3.5）。
-        // 改前快照已取证为红 —— 名单是逐名比对的，不是数个数，所以改名/漏名/多名都会在这里被抓。
+        // 2026-10-10：24→25（新增 split_segment，计划 §AE —— 拆分此前只能手点）。
+        // 名单是逐名比对的，不是数个数，所以改名/漏名/多名都会在这里被抓。
         #expect(names == [
             "list_projects", "get_project", "list_segments", "list_schemes", "get_job", "get_asr_status",
             "create_project", "import_videos", "retry_analysis", "retry_asr", "remove_video",
             "generate_schemes", "export_scheme", "delete_project",
-            "update_segment_tags", "update_segment_text", "adjust_segment_boundary", "set_subtitle_mode",
+            "update_segment_tags", "update_segment_text", "adjust_segment_boundary", "split_segment",
+            "set_subtitle_mode",
             "set_voice_keep_original", "set_dub_participation", "generate_voice_variants",
             "delete_segments", "create_custom_scheme", "export_segments",
         ])
+    }
+
+    @Test("split_segment 必须声明破坏性（拆完不可恢复），且拆分点两种写法都在 schema 里")
+    func splitSegmentIsMarkedDestructive() throws {
+        let tool = try #require(AgentToolCatalog.all.first { $0.name == "split_segment" })
+        let annotations = try #require(tool.annotationsJSON)
+        #expect(annotations.contains("\"destructiveHint\":true"), "实际：\(annotations)")
+        let obj = try #require(JSONSerialization.jsonObject(with: Data(tool.inputSchemaJSON.utf8)) as? [String: Any])
+        let props = try #require(obj["properties"] as? [String: Any])
+        for key in ["project_id", "video_no", "segment_no", "segment_id", "cut_frame", "cut_seconds"] {
+            #expect(props[key] != nil, "split_segment 缺 \(key)")
+        }
+        // 必填留空：cut_frame 与 cut_seconds 是「二选一」，写进 required 就变成两个都得给
+        #expect((obj["required"] as? [Any] ?? []).isEmpty, "实际：\(obj)")
     }
 
     @Test("get_asr_status 必须声明为只读且无必填参数（它只报现状，不许改任何东西）")

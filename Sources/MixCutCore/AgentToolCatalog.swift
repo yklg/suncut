@@ -43,7 +43,7 @@ public enum AgentToolCatalog {
 
     核心工作流：
     1. 导入分析：create_project → import_videos（返回 job_id）→ get_job 轮询直到 state 不是 running → list_segments 查看分镜，失败用 retry_analysis / retry_asr。
-    2. 分镜修改：update_segment_tags 改标签；update_segment_text 改台词（修错别字/润色）；adjust_segment_boundary 按帧调边界；set_subtitle_mode 设字幕；set_voice_keep_original 保留原声；generate_voice_variants 生成声音变体（job）；delete_segments 删分镜。
+    2. 分镜修改：update_segment_tags 改标签；update_segment_text 改台词（修错别字/润色）；adjust_segment_boundary 按帧调边界；split_segment 把一个分镜按帧拆成两段（不可恢复，会清空原配音与画面替换）；set_subtitle_mode 设字幕；set_voice_keep_original 保留原声；generate_voice_variants 生成声音变体（job）；delete_segments 删分镜。
     3. 组合与导出：generate_schemes AI 生成方案（job）；create_custom_scheme 自选分镜组方案；export_scheme 导出方案成片（job）；export_segments 导出分镜片段（job）。
 
     重要规则：
@@ -143,6 +143,11 @@ public enum AgentToolCatalog {
             description: "按帧批量调整分镜边界（start_delta_frames/end_delta_frames 可负；绝对值 start_frame/end_frame 仅单分镜可用）。自动重配台词与缩略图。⚠️ 已生成配音的分镜会返回 stale_dubs 提醒（配音按旧时长合成，导出会静默用旧音频），是否重新生成由用户决定",
             inputSchemaJSON: #"{"type":"object","properties":{"project_id":{"type":"string","description":"项目 UUID（与 video_no/segment_nos 配合使用）"},"video_no":{"type":"integer","description":"视频编号：项目内按导入顺序 1 起"},"segment_nos":{"type":"array","items":{"type":"integer"},"description":"分镜编号数组：视频内按时间顺序 1 起"},"segment_ids":{"type":"array","items":{"type":"string"},"description":"分镜 UUID 数组（与编号方式二选一）"},"start_delta_frames":{"type":"integer","description":"起点偏移帧数，可负"},"end_delta_frames":{"type":"integer","description":"终点偏移帧数，可负（往后延伸用正数）"},"start_frame":{"type":"integer","description":"起点绝对帧（仅单分镜）"},"end_frame":{"type":"integer","description":"终点绝对帧（仅单分镜）"}},"required":[]}"#,
             annotationsJSON: #"{"readOnlyHint":false,"destructiveHint":false}"#),
+        MCPToolDefinition(
+            name: "split_segment",
+            description: "把一个分镜切成前后两段（与 UI 右键「拆分」走同一条路径）。cut_frame 是源视频绝对帧，或改给 cut_seconds（二选一，不能同时给）。合法性由 Core 的 SegmentSplitRule 判：拆开后每段不少于 0.3 秒，不合法时报错并给出本段可用的帧区间。⚠️ 不可恢复：原分镜的已生成配音、逐句字幕、画面替换、物理镜头变体全部清空；分镜若已被混剪方案引用则拒绝拆。两段会各自重抽首帧缩略图并重识别台词（走识别链路，可能计费、耗时数秒）",
+            inputSchemaJSON: #"{"type":"object","properties":{"project_id":{"type":"string","description":"项目 UUID（与 video_no/segment_no 配合使用）"},"video_no":{"type":"integer","description":"视频编号：项目内按导入顺序 1 起"},"segment_no":{"type":"integer","description":"分镜编号：视频内按时间顺序 1 起（与 segment_id 二选一）"},"segment_id":{"type":"string","description":"分镜 UUID（与编号方式二选一）"},"cut_frame":{"type":"integer","description":"拆分点：源视频绝对帧号"},"cut_seconds":{"type":"number","description":"拆分点：源视频秒数，按帧率折算成帧"}},"required":[]}"#,
+            annotationsJSON: #"{"readOnlyHint":false,"destructiveHint":true}"#),
         MCPToolDefinition(
             name: "set_subtitle_mode",
             description: "设置字幕处理模式，只认三档：直接烧录（新字幕直接叠加）/模糊虚化（原字幕区域模糊后烧新字幕）/纯色遮挡（色块盖住原字幕再烧新字幕）。用户用词含糊时必须报出三档名称请其确认。可同时设字号 font_ratio（0.030-0.085）与遮挡区域 mask_y/mask_height（0-1）。保留原声的分镜自动跳过",

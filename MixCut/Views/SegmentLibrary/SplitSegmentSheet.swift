@@ -16,8 +16,14 @@ struct SplitSegmentSheet: View {
     @State private var splitError: String?
 
     /// 分镜是否短到根本没有合法拆分点（前后各要留 0.3s）。
-    /// 太短时 `lo == hi`，Slider 拿到零宽区间会算出 NaN 布局，必须在 UI 上直接拦掉。
-    private var isTooShortToSplit: Bool { hi <= lo }
+    /// 太短时 `Slider` 拿到零宽区间会算出 NaN 布局，必须在 UI 上直接拦掉。
+    ///
+    /// 规则本身住 Core（`SegmentSplitRule`）：MCP 的 `split_segment` 与这里必须给同一个答案，
+    /// 写在视图私有变量里就只能被第二条腿复制一份。
+    private var legalRange: ClosedRange<Int>? {
+        SegmentSplitRule.legalCutRange(startFrame: startFrame, endFrame: endFrame, fps: fps)
+    }
+    private var isTooShortToSplit: Bool { legalRange == nil }
 
     private var fps: Double {
         let f = segment.video?.fps ?? 30
@@ -25,9 +31,6 @@ struct SplitSegmentSheet: View {
     }
     private var startFrame: Int { segment.startFrame }
     private var endFrame: Int { segment.endFrame }
-    private var minFrames: Int { max(1, Int((0.3 * fps).rounded())) }   // 每段 ≥ 0.3s
-    private var lo: Int { startFrame + minFrames }
-    private var hi: Int { max(startFrame + minFrames, endFrame - minFrames) }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -45,17 +48,17 @@ struct SplitSegmentSheet: View {
                     .font(.system(size: 13, design: .monospaced))
                 // 分镜太短时区间会退化成一个点，Slider 内部除以区间长度会产生 NaN 布局
                 if isTooShortToSplit {
-                    Text("这个分镜只有 \(String(format: "%.1f", segment.duration))s，拆开后每段不足 0.3 秒，无法再拆分。")
+                    Text("这个分镜只有 \(String(format: "%.1f", segment.duration))s，拆开后每段不足 \(String(format: "%.1f", SegmentSplitRule.minimumSliceSeconds)) 秒，无法再拆分。")
                         .font(DesignTokens.Typography.caption)
                         .foregroundStyle(.orange)
                         .multilineTextAlignment(.center)
-                } else {
+                } else if let range = legalRange {
                     Slider(
                         value: Binding(
                             get: { Double(cutFrame) },
                             set: { cutFrame = Int($0.rounded()); seek() }
                         ),
-                        in: Double(lo)...Double(hi)
+                        in: Double(range.lowerBound)...Double(range.upperBound)
                     )
                     .tint(.red)
                 }
@@ -125,7 +128,11 @@ struct SplitSegmentSheet: View {
         p.isMuted = true
         player = p
         // 中点必须夹到合法区间内，否则短分镜下初值会落在 Slider 区间之外
-        cutFrame = min(max((startFrame + endFrame) / 2, lo), max(lo, hi))
+        if let range = legalRange {
+            cutFrame = min(max((startFrame + endFrame) / 2, range.lowerBound), range.upperBound)
+        } else {
+            cutFrame = startFrame
+        }
         seek()
     }
 

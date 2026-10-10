@@ -399,6 +399,96 @@ extension MCPToolHandlers {
         return success(payload)
     }
 
+    // MARK: - 拆分分镜
+
+    private struct SplitArgs: Decodable {
+        let project_id: String?
+        let video_no: Int?
+        let segment_no: Int?
+        let segment_id: String?
+        let cut_frame: Int?
+        let cut_seconds: Double?
+    }
+
+    /// 拆分**走 UI 同一条路径**（`ImportViewModel.splitSegment`）：衍生物清空、A/B 区间、
+    /// 缩略图重生、两段台词重识别都在那一个函数里。这一层只补两件 UI 在外面做的事：
+    /// 拆分点合法性判定（规则住 `SegmentSplitRule`，两条腿共用同一个函数）与结果如实回报。
+    func splitSegmentTool(_ data: Data) async throws -> Outcome {
+        let args = try JSONDecoder().decode(SplitArgs.self, from: data)
+        let hasFrame = args.cut_frame != nil, hasSeconds = args.cut_seconds != nil
+        guard hasFrame || hasSeconds else {
+            throw ToolFailure(code: .invalidArgument, message: "必须提供 cut_frame 或 cut_seconds（二选一）")
+        }
+        guard !(hasFrame && hasSeconds) else {
+            throw ToolFailure(code: .invalidArgument, message: "cut_frame 与 cut_seconds 不能同时给")
+        }
+        let segments = try resolveSegments(SelectorArgs(
+            project_id: args.project_id, video_no: args.video_no,
+            segment_nos: args.segment_no.map { [$0] },
+            segment_ids: args.segment_id.map { [$0] }))
+        guard segments.count == 1 else {
+            throw ToolFailure(code: .invalidArgument, message: "一次只能拆一个分镜（本次解析出 \(segments.count) 个）")
+        }
+        let seg = segments[0]
+        guard let video = seg.video, video.fps > 0 else {
+            throw ToolFailure(code: .invalidArgument, message: "这个分镜没有可用的源视频或帧率缺失，无法按帧拆分")
+        }
+        let fps = video.fps
+        let cut: Int
+        if let frame = args.cut_frame {
+            cut = frame
+        } else {
+            cut = Int(((args.cut_seconds ?? 0) * fps).rounded())
+        }
+        guard SegmentSplitRule.isLegalCut(cut, startFrame: seg.startFrame,
+                                          endFrame: seg.endFrame, fps: fps) else {
+            throw ToolFailure(code: .invalidArgument,
+                              message: "拆分点 \(cut) 帧不合法：" + SegmentSplitRule.refusal(
+                                startFrame: seg.startFrame, endFrame: seg.endFrame, fps: fps))
+        }
+
+        let before: [String: Any] = ["segment_index": seg.segmentIndex,
+                                     "start_frame": seg.startFrame, "end_frame": seg.endFrame,
+                                     "duration_sec": seg.duration]
+        // 拆分不是 job（它是同步等结果的），但必须与 job 那条腿互斥：导入正在重建同一批分镜时
+        // 插一刀，等于把刚落库的段再切一半、台词归属也会串。
+        try ensureNoActiveJob()
+        // 用 id 集合差分找"新出现的那一段"，不拿帧号反猜：猜错的那天会把台词归到别的画面上
+        let idsBefore = Set(video.segments.map(\.id))
+        let outcome = await importVM.splitSegment(seg, atFrame: cut) { Self.notifyUIReload() }
+        let fresh = video.segments.filter { !idsBefore.contains($0.id) }
+
+        var pairs: [[String: Any]] = []
+        pairs.append(["segment_index": seg.segmentIndex,
+                      "start_frame": seg.startFrame, "end_frame": seg.endFrame,
+                      "duration_sec": seg.duration, "text": seg.text])
+        for b in fresh {
+            pairs.append(["segment_index": b.segmentIndex,
+                          "start_frame": b.startFrame, "end_frame": b.endFrame,
+                          "duration_sec": b.duration, "text": b.text])
+        }
+
+        var payload: [String: Any] = [
+            "before": before,
+            "cut_frame": cut,
+            "segments": pairs,
+            "note": "原分镜的配音/逐句字幕/画面替换/物理镜头变体已清空，不可恢复",
+        ]
+        switch outcome {
+        case .failed(let reason):
+            throw ToolFailure(code: .invalidArgument, message: "未拆分：\(reason)")
+        case .successWithWarning(let warning):
+            payload["warning"] = warning
+        case .success:
+            break
+        }
+        if fresh.isEmpty {
+            // 拆成功后却没回读到后一段 ⇒ 必须说出来，不能让调用方以为列表里只多了一段
+            payload["remainder_unresolved"] = true
+        }
+        return success(payload)
+    }
+
     // MARK: - 删除分镜
 
     func deleteSegments(_ data: Data) throws -> Outcome {
