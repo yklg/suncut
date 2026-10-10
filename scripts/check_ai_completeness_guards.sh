@@ -30,6 +30,14 @@ code_count_in_file() {
   echo "${n:-0}"
 }
 
+# 按**出现次数**数，不是按行数：`A && A` 写在同一行，行数取样器看不见第二个 A（实测漏过一次）。
+occ_count_in_file() {
+  local file="$1" pattern="$2" n
+  [ -f "$file" ] || { echo "NOFILE"; return; }
+  n=$(grep -h -- "$pattern" "$file" 2>/dev/null | grep -o -- "$pattern" 2>/dev/null | wc -l | tr -d ' ')
+  echo "${n:-0}"
+}
+
 code_count_in_dir() {
   local dir="$1" pattern="$2" n
   [ -d "$dir" ] || { echo "NODIR"; return; }
@@ -271,10 +279,20 @@ expect_zero "客户端不许自己算金额（只能把单价交给记录去算�
 expect_eq "查价表全 App 只有一个读者（多处各查一次，口径当天分家）" \
   "$(code_count_in_dir "$ROOT/MixCut" 'AIPriceTable')" 1
 
+echo
+echo "== 连贯性硬校验（抓的失败：prompt 让模型自检，程序侧只验结构）=="
+SCHEME="$ROOT/MixCut/Services/SchemeGeneration/SchemeGenerationService.swift"
+expect_eq "结构门与连贯门都在（两道门不许退成一道）" \
+  "$(occ_count_in_file "$SCHEME" 'NarrativeStructureEngine.isValidVariant(')" 1
+expect_eq "连贯性硬校验被过滤循环真的调用" \
+  "$(code_count_in_file "$SCHEME" 'NarrativeContinuity.issues(')" 1
+expect_zero "不许绕过 issues 只挑 hard（跳切告警会因此消失）" \
+  "$(code_count_in_file "$SCHEME" 'NarrativeContinuity.hardIssues(')"
+
 if [ -f "$PBXPROJ" ]; then
   echo
   echo "== 工程引用（抓的失败：新源文件没进 App target 编译，运行时根本不存在）=="
-  for f in AIResponseEvidence SegmentationCompleteness AIThinkingPolicy AIUsageRecord AIModelPricing; do
+  for f in AIResponseEvidence SegmentationCompleteness AIThinkingPolicy AIUsageRecord AIModelPricing NarrativeContinuity; do
     expect_min "$f.swift 在 Sources 编译阶段被登记" \
       "$(grep -c "$f.swift in Sources" "$PBXPROJ")" 2
   done

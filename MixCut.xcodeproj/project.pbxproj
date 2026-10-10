@@ -153,6 +153,7 @@
 		AC0000000000000000000020 /* RawAudioCache.swift in Sources */ = {isa = PBXBuildFile; fileRef = AD0000000000000000000020 /* RawAudioCache.swift */; };
 		AC0000000000000000000023 /* SegmentCloneWindow.swift in Sources */ = {isa = PBXBuildFile; fileRef = AD0000000000000000000023 /* SegmentCloneWindow.swift */; };
 		AE00000000000000000000A1 /* SegmentationPlanner.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF00000000000000000000A1 /* SegmentationPlanner.swift */; };
+		AE000000000000000000002D /* NarrativeContinuity.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF000000000000000000002F /* NarrativeContinuity.swift */; };
 		AE000000000000000000002C /* AIModelPricing.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF000000000000000000002E /* AIModelPricing.swift */; };
 		AE000000000000000000002B /* AIUsageRecord.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF000000000000000000002D /* AIUsageRecord.swift */; };
 		AE000000000000000000002A /* AIThinkingPolicy.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF000000000000000000002C /* AIThinkingPolicy.swift */; };
@@ -443,6 +444,7 @@
 		AD0000000000000000000020 /* RawAudioCache.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = RawAudioCache.swift; path = Sources/MixCutCore/RawAudioCache.swift; sourceTree = "<group>"; };
 		AD0000000000000000000023 /* SegmentCloneWindow.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = SegmentCloneWindow.swift; path = Sources/MixCutCore/SegmentCloneWindow.swift; sourceTree = "<group>"; };
 		AF00000000000000000000A1 /* SegmentationPlanner.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = SegmentationPlanner.swift; path = Sources/MixCutCore/SegmentationPlanner.swift; sourceTree = "<group>"; };
+		AF000000000000000000002F /* NarrativeContinuity.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = NarrativeContinuity.swift; path = Sources/MixCutCore/NarrativeContinuity.swift; sourceTree = "<group>"; };
 		AF000000000000000000002E /* AIModelPricing.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = AIModelPricing.swift; path = Sources/MixCutCore/AIModelPricing.swift; sourceTree = "<group>"; };
 		AF000000000000000000002D /* AIUsageRecord.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = AIUsageRecord.swift; path = Sources/MixCutCore/AIUsageRecord.swift; sourceTree = "<group>"; };
 		AF000000000000000000002C /* AIThinkingPolicy.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = AIThinkingPolicy.swift; path = Sources/MixCutCore/AIThinkingPolicy.swift; sourceTree = "<group>"; };
@@ -839,6 +841,7 @@
 				AD0000000000000000000020 /* RawAudioCache.swift */,
 				AD0000000000000000000023 /* SegmentCloneWindow.swift */,
 				AF00000000000000000000A1 /* SegmentationPlanner.swift */,
+				AF000000000000000000002F /* NarrativeContinuity.swift */,
 				AF000000000000000000002E /* AIModelPricing.swift */,
 				AF000000000000000000002D /* AIUsageRecord.swift */,
 				AF000000000000000000002C /* AIThinkingPolicy.swift */,
@@ -1490,6 +1493,7 @@
 				AC0000000000000000000020 /* RawAudioCache.swift in Sources */,
 				AC0000000000000000000023 /* SegmentCloneWindow.swift in Sources */,
 				AE00000000000000000000A1 /* SegmentationPlanner.swift in Sources */,
+				AE000000000000000000002D /* NarrativeContinuity.swift in Sources */,
 				AE000000000000000000002C /* AIModelPricing.swift in Sources */,
 				AE000000000000000000002B /* AIUsageRecord.swift in Sources */,
 				AE000000000000000000002A /* AIThinkingPolicy.swift in Sources */,

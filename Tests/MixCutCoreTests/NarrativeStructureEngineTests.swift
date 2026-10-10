@@ -22,9 +22,11 @@ import Foundation
     #expect(NarrativeStructureEngine.structureName(for: slots) == "A · B · C")
 }
 
-private func seg(_ id: String, _ tags: [String] = [], q: Double = 1, d: Double = 1) -> SegmentDescriptor {
+private func seg(_ id: String, _ tags: [String] = [], q: Double = 1, d: Double = 1,
+                  src: String = "other", at: Double = 0) -> SegmentDescriptor {
     SegmentDescriptor(id: UUID(uuidString: "00000000-0000-0000-0000-0000000000\(id)")!,
-                      tags: tags, text: "t\(id)", duration: d, quality: q)
+                      tags: tags, text: "t\(id)", duration: d, quality: q,
+                      sourceKey: src, startSeconds: at)
 }
 
 @Test func candidatePool_matchesUnionOfTags() {

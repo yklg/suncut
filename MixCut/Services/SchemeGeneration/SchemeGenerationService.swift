@@ -423,13 +423,25 @@ actor SchemeGenerationService {
         // 别名 → id 反查表
         let aliasToID = Dictionary(uniqueKeysWithValues: idAliasMap.map { ($0.value, $0.key) })
 
-        // 程序侧二次过滤：别名→id，再用 NarrativeStructureEngine.isValidVariant 校验（不只信 AI 自觉）
+        // 程序侧二次过滤：别名→id，先用 NarrativeStructureEngine.isValidVariant 校验结构
+        // （条数、重复、每条来自本段候选），再用 NarrativeContinuity 校验连贯性。
+        // 加后者是因为：prompt 里那句"自检后只输出连贯的"只有模型自觉撑着，
+        // 模型说"我连贯"就没人再查 —— 而台词排反、画面重复这两条是**事实**，不需要模型意见。
         var valid: [[String]] = []
         for comp in response.compositions {
             let ids = comp.segments.compactMap { aliasToID[$0] }
-            if NarrativeStructureEngine.isValidVariant(ids, pools: pools) {
-                valid.append(comp.segments)
+            guard NarrativeStructureEngine.isValidVariant(ids, pools: pools) else { continue }
+            let issues = NarrativeContinuity.issues(ids, pools: pools)
+            let hard = issues.filter(\.isHard)
+            if !hard.isEmpty {
+                let why = hard.map { $0.describe() }.joined(separator: "；")
+                MixLog.info(" 变体被连贯性硬校验拒掉: \(why)")
+                continue
             }
+            for soft in issues {
+                MixLog.info(" 变体连贯性告警: \(soft.describe())")
+            }
+            valid.append(comp.segments)
         }
         return valid
     }

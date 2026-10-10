@@ -27,7 +27,7 @@ PBX = "/Users/yilukaige/mixed_cut-main/MixCut.xcodeproj/project.pbxproj"
 EXPECTED = ["RawAudioCacheStore.swift", "RawAudioCache.swift", "SegmentCommitter.swift",
              "SegmentationPlanner.swift", "SegmentationPlanSettings.swift",
              "LocalWhisperGate.swift", "AIThinkingPolicy.swift", "AIUsageRecord.swift",
-             "AIModelPricing.swift"]
+             "AIModelPricing.swift", "NarrativeContinuity.swift"]
 
 
 def main() -> int:

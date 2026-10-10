@@ -809,7 +809,10 @@ final class SchemeViewModel {
                 tags: seg.semanticTypes.map(\.rawValue),
                 text: seg.text,
                 duration: seg.endTime - seg.startTime,
-                quality: seg.qualityScore
+                quality: seg.qualityScore,
+                sourceKey: seg.video.map { "video:\($0.id.uuidString)" }
+                    ?? "detached:\(seg.id.uuidString)",
+                startSeconds: seg.startTime
             )
         }
 
