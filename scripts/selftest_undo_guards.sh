@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # check_undo_guards.sh 的自证：在合成违规树上跑**同一判据**，必须逐条变红。
-# 没跑过这一轮，就不能说那 9 条判据是防线 —— 恒绿的守卫比没有守卫更糟。
+# 没跑过这一轮，就不能说那些判据是防线 —— 恒绿的守卫比没有守卫更糟。
+# ⚠️ 条数不再手写（原先硬编码「9 条判言」，加一颗门就得记得改文案 —— 忘了就是自证与守卫脱钩，
+#    正是本脚本自己写的「判据缺席比判据变红危险」）。现在由 check_case 成功一次计一次，末尾报实得数。
 set -uo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -9,16 +11,18 @@ GUARD="$ROOT/scripts/check_undo_guards.sh"
 
 rm -rf "$WORK"
 fail=0
+teeth=0
 
 fresh() {
   local case_dir="$1"
   rm -rf "$case_dir"
   mkdir -p "$case_dir/MixCut/Views/Shared" "$case_dir/MixCut/Views/SegmentLibrary" \
-           "$case_dir/MixCut/App" "$case_dir/Sources/MixCutCore"
+           "$case_dir/MixCut/App" "$case_dir/MixCut/ViewModels" "$case_dir/Sources/MixCutCore"
   cp "$ROOT/MixCut/Views/Shared/Toast.swift" "$case_dir/MixCut/Views/Shared/"
   cp "$ROOT/MixCut/Views/Shared/PendingDeletionCenter.swift" "$case_dir/MixCut/Views/Shared/"
   cp "$ROOT/MixCut/Views/SegmentLibrary/SegmentLibraryView.swift" "$case_dir/MixCut/Views/SegmentLibrary/"
   cp "$ROOT/MixCut/App/MixCutApp.swift" "$case_dir/MixCut/App/"
+  cp "$ROOT/MixCut/ViewModels/ImportViewModel.swift" "$case_dir/MixCut/ViewModels/"
   cp "$ROOT/Sources/MixCutCore/UndoGraceMachine.swift" "$case_dir/Sources/MixCutCore/"
 }
 
@@ -59,6 +63,7 @@ check_case() {
   local rc
   rc="$(run_guard "$case_dir" "$log")"
   if [ "$rc" = "1" ] && grep -q "FAIL ${expect}" "$log"; then
+    teeth=$((teeth + 1))
     echo "PASS ${label} → ${expect} 变红"
   else
     echo "FAIL ${label} 未把 ${expect} 判红（rc=${rc}）"
@@ -126,10 +131,17 @@ mutate "$D/MixCut/Views/Shared/PendingDeletionCenter.swift" \
   'commit: @escaping () -> GraphChange' 'commit: @escaping () -> Void' \
   && check_case "M9 删除链不再交回被删 id 台账" "UG-G09" "$D" "$WORK/m9.log"
 
+D="$WORK/m10"; fresh "$D"
+# 批 2 最省事的那个写法：视频 id 也顺手记进台账。isPrunable 会因此整条降级 ⇒ 这条门必须先咬。
+mutate "$D/MixCut/ViewModels/ImportViewModel.swift" \
+  'change.noteDeleted(Set(segmentsToDelete.map(\.id)), of: .segment)' \
+  $'change.noteDeleted(Set(segmentsToDelete.map(\\.id)), of: .segment)\n        change.noteDeleted([video.id], of: .video)' \
+  && check_case "M10 台账里加回 .video（带 video 不带 project 的形状）" "UG-G13" "$D" "$WORK/m10.log"
+
 echo
 if [ "$fail" = "0" ]; then
-  echo "全部自证通过：9 条判言逐条可被对应违规变红"
+  echo "全部自证通过：实得 ${teeth} 条判言逐条可被对应违规变红（条数由自证自己数，不手写）"
 else
-  echo "有自证未通过 —— 那几条判据不算防线"
+  echo "有自证未通过（变红的只有 ${teeth} 条）—— 未变红的那几条判据不算防线"
 fi
 exit "$fail"

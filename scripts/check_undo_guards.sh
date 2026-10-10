@@ -81,6 +81,7 @@ def call_spans(code, head):
 
 toast = strip_comments(read(os.path.join(src, "Views", "Shared", "Toast.swift")))
 center = strip_comments(read(os.path.join(src, "Views", "Shared", "PendingDeletionCenter.swift")))
+import_vm = strip_comments(read(os.path.join(src, "ViewModels", "ImportViewModel.swift")))
 machine = os.path.join(core, "UndoGraceMachine.swift")
 
 # UG-G01：ToastCenter.show 的参数表里不许再有 actionTitle（撤销条不许走普通提示通道）
@@ -204,6 +205,21 @@ else:
         bad("UG-G09 空台账不发的规则被摘掉", "否则每条删除都会退化成无载荷全量重载（切页骨架闪烁回归）")
     else:
         ok("UG-G09 真删落地即由中心广播（2 点 1 post，空台账不发）")
+
+# UG-G13：视频删除咽喉的台账里不许出现 `.video`（方案 v3 批 2 预留的编号，G10/G11/G12 随各自批次落）
+#   依据不是注释而是实读的 `UndoGraceMachine.swift:191-195`：`isPrunable` 对「带 .video 却不带 .project」
+#   一律判不可剪枝 ⇒ 发布口按无载荷发 ⇒ 观察者走全量重载，而 `loadSegments` 首行是 `flushNow()`
+#   （它会执行待删事务并再次广播 ⇒ 同栈递归，前案 §10 健壮-1 记为 P0）。
+#   现状：`ImportViewModel.swift:824` 只 note `.segment`。**注释会被删，判据不会** —— 批 2 把咽喉数组化时
+#   最省事的写法就是"顺手把视频 id 也记进台账"，这条门要在那一刻先红，而不是等真机上炸出来。
+nd = call_spans(import_vm, "noteDeleted(")
+if not nd:
+    bad("UG-G13 取不出 noteDeleted 调用点", "判据失效：删除咽喉不再记台账，这条前提没人守")
+elif any(".video" in span for span in nd):
+    bad("UG-G13 台账里出现了 .video",
+        "带 video 不带 project ⇒ isPrunable=false ⇒ 降级无载荷全量重载 ⇒ loadSegments 首行 flushNow 同栈递归")
+else:
+    ok("UG-G13 台账只记非 .video 实体（剪枝资格不被自己降级）", f"{len(nd)} 处调用点")
 
 sys.exit(fail)
 PY
