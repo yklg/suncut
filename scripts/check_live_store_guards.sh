@@ -8,10 +8,17 @@
 # 而这条纪律当时只写在台账里，**没有任何会红的东西**。这与 SL-14 的立项理由自相矛盾
 # （"规矩只写在注释里就会被改掉，必须钉成判据"），同案不该两套标准。
 #
-# 口径（对每个 .sh 里引用 `*.store` 的 sqlite3 调用逐条判）：
+# 口径（对**指向活库**的 sqlite3 调用逐条判）：
 #   ① 必须带 `-readonly`；
 #   ② 同一文件里必须存在"活实例未运行"的前置（`pgrep -x SunCut`）—— 应用还开着时 WAL 边车最危险；
 #   ③ 调用行里出现写语句（UPDATE/INSERT/DELETE/DROP/VACUUM/journal_mode）直接红，不看别的。
+#
+# ⚠️ 触发条件是"**引用活库目录**"，不是"引用了某个 `*.store`"。
+#    第一版按 `.store` 触发，实测把合法夹具判红了：往 `mktemp -d` 里的副本库 `UPDATE` 造悬空边
+#    （正是 §6-1 验收格要做的事）也被这条判据拒掉 —— 纪律管的是用户的活库，不是所有叫 Suncut.store 的文件。
+#    判据只验"该红的会红"是不够的，**"该绿的不会乱红"要一起验**（台架 M10 钉这一格）。
+#    已知拦不住的形状：把活库路径拆成几段变量拼出来、或先 `cd` 进活库目录再开相对路径 ——
+#    那要真堵得靠运行时（App 侧或 OS 层），不靠文本扫描，别把这条读成全覆盖。
 # 今天全仓只有一处真调用（`verify_graph_broadcast.sh:200`），它三条都满足。
 # 这条不是为现状开的，是为"下一个想顺手读一眼库"的人开的。
 #
@@ -43,7 +50,8 @@ if not sh_files:
 
 # ⚠️ 判定按**文件级**触发，不按行级：`DB="$LIVE/Suncut.store"` 然后下一行 `sqlite3 "$DB" …`
 #    这种变量间接，行级正则会整个漏掉（写第一版时就是这么漏的）。
-#    所以只要文件里出现过 `.store`，该文件里每一颗非注释的 sqlite3 调用都要过这三关。
+#    触发面是"引用了活库目录"（不是"引用了某个 .store"）—— 见上面口径里那条实测教训。
+live_dir_re = re.compile(r"Library/Application Support/Suncut\b")
 call_re = re.compile(r"\bsqlite3\b")
 write_re = re.compile(r"\b(UPDATE|INSERT|DELETE|DROP|VACUUM)\b|journal_mode\s*=", re.I)
 pgrep_re = re.compile(r"pgrep[^#\n]*SunCut")
@@ -58,7 +66,7 @@ for path in sorted(sh_files):
     except OSError as exc:
         print(f"FAIL[判据失效] 读不到 {rel}（{exc}）")
         sys.exit(2)
-    if ".store" not in text:
+    if not live_dir_re.search(text):
         continue
     # 只认**真正的 shell 命令行**：注释行与 heredoc 内部（python 块）都不算调用。
     # 第一版没做这件事，结果守卫把自家 print("… sqlite3 … .store …") 抓成了违规 ——
@@ -93,12 +101,13 @@ for path in sorted(sh_files):
         elif not has_pgrep:
             hits.append((rel, i, "同文件没有『活实例未运行』前置（pgrep -x SunCut）", stripped[:90]))
 
-print(f"取样 .sh: {len(sh_files)} 个；引用 *.store 的 sqlite3 调用: {checked} 处")
+print(f"取样 .sh: {len(sh_files)} 个；指向活库的 sqlite3 调用: {checked} 处")
 
 if not checked:
     # 取样面非空却一颗调用都没有 ⇒ 唯一的真调用被删了，这条判据会静默变虚
-    print("FAIL[判据失效] 全仓没有任何对 *.store 的 sqlite3 调用 —— 要么纪律被整体删除，"
-          "要么调用点被改写成扫不到的形状；这条判据当场失去意义，请人工确认")
+    print("FAIL[判据失效] 全仓没有任何指向活库的 sqlite3 调用 —— 要么纪律被整体删除，"
+          "要么调用点被改写成扫不到的形状（拆变量拼路径、或先 cd 进活库再开相对路径）；"
+          "这条判据当场失去意义，请人工确认")
     sys.exit(2)
 
 if hits:
