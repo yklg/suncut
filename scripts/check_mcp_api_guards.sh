@@ -239,6 +239,9 @@ note "== 启动被测 App（假库根 ${FAKE_ROOT}）=="
 SUNCUT_LOG="${HOME}/Library/Caches/com.suncut.app/logs/suncut.log"
 LOG_OFFSET="$(wc -c < "$SUNCUT_LOG" 2>/dev/null | tr -d ' ')"
 [ -n "$LOG_OFFSET" ] || LOG_OFFSET=0
+# LLVM_PROFILE_FILE：不指走的话，被测 App 会按自己的 cwd（= 仓库根）掉一颗 0 字节
+# default.profraw 进 git status —— 每跑一次多一行未跟踪，"拿 git status 自证"就被污染。
+LLVM_PROFILE_FILE="$WORK/app-%p.profraw" \
 MIXCUT_DEBUG_APP_SUPPORT_ROOT="$FAKE_ROOT" MIXCUT_MCP_PORT="$PORT" "$APP_PATH/Contents/MacOS/"*SunCut > "$LOG" 2>&1 &
 APP_PID=$!
 APP_LAUNCHED=1

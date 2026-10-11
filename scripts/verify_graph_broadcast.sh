@@ -72,6 +72,7 @@ OUT="$WORKROOT/grid15"
 MIXCUT_SELFTEST_TOMBSTONE=1 MIXCUT_SELFTEST_TOMBSTONE_GRID=15 \
 MIXCUT_DEBUG_APP_SUPPORT_ROOT="$WORKROOT" \
 MIXCUT_SELFTEST_OUT="$OUT" \
+LLVM_PROFILE_FILE="$WORKROOT/app-%p.profraw" \
   "$APP/Contents/MacOS/SunCut" >/dev/null 2>&1 &
 APPPID=$!
 # 格 ⑮ 全跑约 1~2 秒；给到 20 秒余量，到点还没写完也照样读盘（自检是逐行 flush 的）
