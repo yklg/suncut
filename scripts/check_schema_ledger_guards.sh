@@ -197,22 +197,55 @@ elif keep[0] != "3":
 else:
     ok("SL-10 备份保留份数默认 3", "口径是「最近一次成功开库后 ≤3」，连续拒开库攒多份是故意的")
 
-# ---- SL-14 账本里的程序版本必须是 Optional，且真被写进去 ----------------------
-# 为什么这颗值得进发版门：`Ledger` 是 Codable，而 sidecar 在真实用户机器上早就存在、且没有这个键。
-# 一旦有人把它"清理"成非可选，JSONDecoder 对老 sidecar 直接解码失败 ⇒ `readLedger` 返回 nil
-# ⇒ 门读成 noPriorRecord 放行 ⇒ 这道防线在用户库上**静默**报废，没有任何一次启动会报错。
-# 只声明不写值同样不行：拒开库文案就分不开「跑的是旧产物」与「代码真删了字段」这两种相反处置。
-appver_opt = re.findall(r"var appVersion: *String\?", schema_gd)
-appver_non = re.findall(r"var appVersion: *String[^?]", schema_gd)
-if appver_non:
-    bad("SL-14 Ledger.appVersion 不再是 Optional",
-        f"命中「{appver_non[0].strip()}」—— 老 sidecar 会解码失败，门在真实用户库上静默报废")
-elif not appver_opt:
-    bad("SL-14 取不到 Ledger.appVersion 的声明", "字段被删或写法变了 ⇒ 判据无法成立（后果同上一条）")
-elif "ledger.appVersion = " not in schema_gd:
-    bad("SL-14 appVersion 声明了却没人写", "门永远读不到版本，拒开库文案分不开两种相反的处置")
+# ---- SL-14 启动账本里「老 sidecar 可能没有的键」必须是 Optional -------------------
+# 为什么这颗值得进发版门：`Ledger` 是 Codable，而盘上已有的 sidecar 是在字段变多**之前**写下的。
+# 一旦某个键在老 sidecar 里不存在又不可解码，`readLedger` 返回 nil ⇒ 门读成 noPriorRecord 放行
+# ⇒ 这道防线在真实用户库上**静默**报废，没有任何一次启动会报错。
+#
+# 判据口径来自实测（2026-10-11，Swift 6.1 合成解码器，见仓库台账 §9）：
+#   var tag: Int = 0   + 老 JSON 无 "tag"  ⇒ DecodingError.keyNotFound  ← **默认值不参与解码**
+#   var tag: Int?      + 老 JSON 无 "tag"  ⇒ 成功，得 nil
+# 所以"要么 Optional，要么带默认值"这种写法是**错的**，只有 Optional 这一条安全。
+#
+# 第一版只钉了 `appVersion` 一个名字，实测被第二颗同型成员绕过（往 Ledger 加 `var schemaTag: Int`
+# 全绿）⇒ 这里钉的是**整族**：每一颗存储属性，要么在"每份已发布 sidecar 都有"的名册里，
+# 要么必须是 Optional。名册之外且非 Optional ⇒ 红，带默认值也拦。
+LEDGER_ALWAYS_PRESENT = {"lines", "updatedAt", "doneSteps", "lastRunAt"}
+
+ledger_body = re.search(r"struct Ledger: *Codable, *Equatable \{(.*?)\n    \}", schema_gd, re.S)
+props = []
+if ledger_body:
+    for raw in ledger_body.group(1).splitlines():
+        m = re.match(r"var (\w+): *(.+)$", raw.strip())
+        if not m:
+            continue
+        type_token = m.group(2).split("=")[0].strip()
+        if "{" in type_token:          # 计算属性（如 fingerprint）不参与解码
+            continue
+        props.append((m.group(1), type_token))
+
+rostered = [n for n, _ in props if n in LEDGER_ALWAYS_PRESENT]
+optional = [n for n, t in props if n not in LEDGER_ALWAYS_PRESENT and t.endswith("?")]
+
+if not ledger_body:
+    bad("SL-14 切不到 Ledger 的结构体", "写法变了 ⇒ 判据无法成立（这道防线靠的就是这份结构）")
+elif not props:
+    bad("SL-14 Ledger 里取不到任何存储属性", "判据无法成立")
 else:
-    ok("SL-14 Ledger.appVersion 是 Optional 且写账本时落值", f"{len(appver_opt)} 处声明")
+    risky = [f"{n}:{t}" for n, t in props if n not in LEDGER_ALWAYS_PRESENT and not t.endswith("?")]
+    unrostered = sorted(LEDGER_ALWAYS_PRESENT - set(rostered))
+    if risky:
+        bad("SL-14 Ledger 有非 Optional 且老 sidecar 可能没有的键",
+            f"{risky} ⇒ 老 sidecar 解码失败 ⇒ 门静默报废（带默认值也救不了，已实测）")
+    elif unrostered:
+        bad("SL-14 名册里的键在结构体里找不到了", f"{unrostered} —— 改名/删除等于换了一份数据契约，名册要一起改并说明为什么老 sidecar 一定有它")
+    elif "appVersion" not in [n for n, _ in props]:
+        bad("SL-14 Ledger 里没有 appVersion 这颗属性",
+            "只查「有没有被写」不够（台架 M2 实测：改名掉声明仍全绿）⇒ 门读不到版本，拒开库文案分不开两种相反的处置")
+    elif "ledger.appVersion = " not in schema_gd:
+        bad("SL-14 appVersion 声明了却没人写", "拒开库文案分不开「跑的是旧产物」与「真删了字段」")
+    else:
+        ok("SL-14 Ledger 逐属性核对通过", f"名册 {len(rostered)} 颗 + Optional {len(optional)} 颗（{optional}）")
 
 # ---- SL-11 节流键必须按 double 读 ------------------------------------------
 throttle_write = re.search(r'\.set\(Date\(\)\.timeIntervalSince1970, forKey: key\)', app_sw)
