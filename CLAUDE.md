@@ -425,7 +425,12 @@ cp ~/Library/Application\ Support/Suncut/Suncut.store* .scratch/store-backup-${T
    `PRAGMA integrity_check` 自证 → 才建 `ModelContainer`。
 3. **只增行**（加可选字段、加实体）会被判成轻量兼容 ⇒ 备份后照常开库。
    **有行消失**（删字段、改类型、改属性名、改关系）判成不可自动迁移 ⇒ **拒绝开库**并给出备份路径。
-   这时不要绕门：补一个 `AppSchemaV2` + `MigrationStage.custom`，或明确接受"退回上一版"。
+   这时不要绕门：补一个 `AppSchemaV2` + `MigrationStage.custom`。
+   ⚠️ 别说"装回上一个版本就行"——这句 2026-10-11 被实测证伪：sidecar 里的 `lines` 是**单调棘轮**
+   （每次成功开库都覆盖成当时那个二进制的 schema），所以任何**更旧**的二进制在同一棵数据根上都会被这道门
+   一起拒掉。真正的退路是把 `.backup` 目录里的四件（`.store`/`-wal`/`-shm`/`.launch-ledger`）原样放回。
+   门现在把写下记录的版本号一起记进 `Ledger.appVersion`（**必须是 Optional**，否则老 sidecar 解码失败
+   ⇒ 读成"首次带门启动" ⇒ 这道防线被静默废掉），界面据此把"跑的是旧产物"与"代码真删了字段"分开说。
 4. 门的两处已知不完备，写在这而不是藏在代码里：
    - 新增**必需且无默认值**的字段会落在"只增"，轻量迁移不一定过得去 —— 那种失败会走内存降级，
      其文案已改成**不指引删库**；

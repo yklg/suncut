@@ -36,16 +36,67 @@ enum SchemaGuard {
         var updatedAt: Date
         var doneSteps: [String]
         var lastRunAt: [String: Date]
+        /// 写下这份记录的那个程序的版本。**必须是 Optional**：盘上已有的 sidecar 没有这个键，
+        /// 换成非可选会让整份 JSON 解码失败 ⇒ `readLedger` 返回 nil ⇒ 门把它读成"首次带门启动"
+        /// 直接放行 ⇒ 这道防线在真实用户库上被静默废掉（正是 `openStore` 里 0 行那条警告的事故）。
+        var appVersion: String?
 
         init(lines: [String] = [], updatedAt: Date = Date(),
-             doneSteps: [String] = [], lastRunAt: [String: Date] = [:]) {
+             doneSteps: [String] = [], lastRunAt: [String: Date] = [:],
+             appVersion: String? = nil) {
             self.lines = lines
             self.updatedAt = updatedAt
             self.doneSteps = doneSteps
             self.lastRunAt = lastRunAt
+            self.appVersion = appVersion
         }
 
         var fingerprint: SchemaFingerprint { SchemaFingerprint(descriptorLines: lines) }
+    }
+
+    /// 写下这份记录的程序是谁。**只进诊断文案与日志，不参与任何判定** ——
+    /// 拿版本号去决定开不开库，等于把这道防线交给一个可能几年不动的 `CFBundleShortVersionString`。
+    /// 它存在的理由是：`lines` 是单调棘轮（每次成功开库都覆盖成当前二进制的 schema），
+    /// 所以"有行消失"这一个形状同时覆盖了两种处置完全相反的情形 ——
+    /// ①跑的是更旧的程序／旧构建产物（数据比程序新，不是数据危险）；
+    /// ②代码真的删改了字段（必须补自定义迁移）。光看描述行分不开，版本号才分得开。
+    static var currentAppVersion: String {
+        Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "未知版本"
+    }
+
+    /// 给人看的时间：本地时区。备份名里的时间戳刻意用 UTC（要排得开、跨机读得懂），
+    /// 而界面上的这些时间是拿来对照"我上次是什么时候用的"，用本地时间才对得上。
+    static func humanDateText(_ date: Date) -> String {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "zh_CN")
+        formatter.dateStyle = .medium
+        formatter.timeStyle = .short
+        return formatter.string(from: date)
+    }
+
+    /// 本次运行的程序是**什么时候产出的**（按产物文件时间推断）。
+    /// 光有版本号不够用：开发期 `CFBundleShortVersionString` 常年不动，实测相差 6 天的两个构建
+    /// 都是 0.11.0 —— 只有这个时间能把"跑的是旧产物"与"真删了字段"分开。
+    ///
+    /// 口径必须与工装的前置 U05 同源：取 `Contents/MacOS/` 下**最早**那颗。Xcode 16 的 Debug
+    /// 真身在 `*.debug.dylib`、主二进制只是 58K stub，只读主二进制会在半截构建时印出一个
+    /// 比真身更新的时间 —— 那等于给一条已经堵掉的洞重新开门。
+    /// 装包与拷贝可能改写文件时间，所以它**只进诊断文案，不参与任何判定**。
+    static var currentBuildDateText: String {
+        guard let exe = Bundle.main.executableURL else { return "取不到" }
+        let keys: Set<URLResourceKey> = [.contentModificationDateKey]
+        let siblings = (try? FileManager.default.contentsOfDirectory(
+            at: exe.deletingLastPathComponent(), includingPropertiesForKeys: Array(keys))) ?? []
+        var oldest: Date?
+        for url in (siblings.isEmpty ? [exe] : siblings) {
+            guard let mtime = (try? url.resourceValues(forKeys: keys))?.contentModificationDate else { continue }
+            if let current = oldest {
+                if mtime < current { oldest = mtime }
+            } else {
+                oldest = mtime
+            }
+        }
+        return oldest.map { humanDateText($0) } ?? "取不到"
     }
 
     // MARK: - 描述行
@@ -103,6 +154,7 @@ enum SchemaGuard {
         var ledger = previous ?? Ledger()
         ledger.lines = lines
         ledger.updatedAt = Date()
+        ledger.appVersion = currentAppVersion
         do {
             let encoder = JSONEncoder()
             encoder.outputFormatting = [.sortedKeys]
@@ -246,15 +298,31 @@ enum SchemaGuard {
 
             if case .destructive(let removed, let added) = kind {
                 let path = backupDirectory?.path ?? "（本次未能生成备份，请勿删除任何文件）"
-                MixLog.error("schema 门：检测到不可自动迁移的变更（消失 \(removed.count) 行 / 新增 \(added.count) 行），拒绝开库")
+                let recorder = ledger.map {
+                    "\($0.appVersion ?? "更早的版本（那份记录里没留版本号）") 于 \(Self.humanDateText($0.updatedAt))"
+                } ?? "上一次成功开库"
+                let running = "\(Self.currentAppVersion)，产出时间 \(Self.currentBuildDateText)"
+                MixLog.error("schema 门：检测到不可自动迁移的变更（消失 \(removed.count) 行 / 新增 \(added.count) 行），拒绝开库；"
+                    + "记录由 \(recorder) 写下，本次运行的程序是 \(running)")
                 return .refusedBySchemaGate(message: """
-                    这次升级改动了数据结构，且没有可用的自动迁移，已拒绝打开数据库（你的库文件没有被改动）。
+                    这次启动没有打开数据库（你的库文件没有被改动）。
 
+                    这份库的数据结构记录由 \(recorder) 写下；本次运行的程序是 \(running)。
                     消失的定义 \(removed.count) 项、新增 \(added.count) 项，例如：
                     \(removed.prefix(3).joined(separator: "\n"))
 
                     改前备份：\(path)
-                    回退办法：装回上一个版本即可继续使用；若确认要升级，需要为这次变更补一条自定义迁移。
+
+                    先分清是哪一种，两种处置完全相反：
+                    · 本次跑的是更旧的程序或旧的构建产物（自动化脚本、手动装回老版本）——
+                      判据就是上面两个时间：本次程序的产出时间早于那份记录写下的时间。
+                      换回写下那份记录的那个版本就能继续用，不需要补迁移。
+                      装回更老的其他版本同样打不开：这份记录只留最后一次成功开库的数据结构。
+                    · 本次跑的确实是新代码 —— 那是真删改过字段，
+                      需要补一条自定义迁移（AppSchemaV2 + MigrationStage.custom）才允许升级开库。
+
+                    要回到改动前的状态：把上面那份备份目录里的文件原样放回数据目录，
+                    代价是丢掉那之后新增的内容。任何情况下都不要删除库文件。
                     """)
             }
 

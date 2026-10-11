@@ -197,6 +197,23 @@ elif keep[0] != "3":
 else:
     ok("SL-10 备份保留份数默认 3", "口径是「最近一次成功开库后 ≤3」，连续拒开库攒多份是故意的")
 
+# ---- SL-14 账本里的程序版本必须是 Optional，且真被写进去 ----------------------
+# 为什么这颗值得进发版门：`Ledger` 是 Codable，而 sidecar 在真实用户机器上早就存在、且没有这个键。
+# 一旦有人把它"清理"成非可选，JSONDecoder 对老 sidecar 直接解码失败 ⇒ `readLedger` 返回 nil
+# ⇒ 门读成 noPriorRecord 放行 ⇒ 这道防线在用户库上**静默**报废，没有任何一次启动会报错。
+# 只声明不写值同样不行：拒开库文案就分不开「跑的是旧产物」与「代码真删了字段」这两种相反处置。
+appver_opt = re.findall(r"var appVersion: *String\?", schema_gd)
+appver_non = re.findall(r"var appVersion: *String[^?]", schema_gd)
+if appver_non:
+    bad("SL-14 Ledger.appVersion 不再是 Optional",
+        f"命中「{appver_non[0].strip()}」—— 老 sidecar 会解码失败，门在真实用户库上静默报废")
+elif not appver_opt:
+    bad("SL-14 取不到 Ledger.appVersion 的声明", "字段被删或写法变了 ⇒ 判据无法成立（后果同上一条）")
+elif "ledger.appVersion = " not in schema_gd:
+    bad("SL-14 appVersion 声明了却没人写", "门永远读不到版本，拒开库文案分不开两种相反的处置")
+else:
+    ok("SL-14 Ledger.appVersion 是 Optional 且写账本时落值", f"{len(appver_opt)} 处声明")
+
 # ---- SL-11 节流键必须按 double 读 ------------------------------------------
 throttle_write = re.search(r'\.set\(Date\(\)\.timeIntervalSince1970, forKey: key\)', app_sw)
 ledger_read = re.search(r'let stamp = defaults\.double\(forKey: key\)', launch_sw)
