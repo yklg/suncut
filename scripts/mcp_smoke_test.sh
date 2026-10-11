@@ -7,8 +7,9 @@
 #      数量与名单一起对账；取不出真源就报「判据失效」而非默默通过（照 check_schema_ledger_guards.sh 口径）。
 #   ② 旧版第 29 行无条件 create_project 且跑完不清理 ⇒ 名字叫"冒烟"，实际在写用户真库。
 #      现默认全程只读；要写必须显式 --allow-write，且那一档会自己把建出来的项目删回去。
-#      注意：本脚本无从判断对面那个实例用的是真库还是假库，所以 --allow-write 只应在
-#      由 check_mcp_api_guards.sh 自己拉起的假库实例上使用。
+#      2026-10-11 起这一条不再是"靠人核对"：--allow-write 会按端口取 LISTEN pid、用 lsof 实查
+#      那个进程真打开的 *.store 落在哪儿，命中活库目录当场拒写。原因：假根已从固定路径改成
+#      每轮 mktemp（check_mcp_api_guards.sh），原先"看它在不在 fake-appsupport"这个人眼锚点没了。
 #
 # 注意：刻意不开 set -e —— grep/curl 无命中时退出码为 1，会在断言打印之前静默中止脚本（本仓踩过）。
 set -uo pipefail
@@ -106,7 +107,31 @@ print("list_projects ✓")'
 [ $? -eq 0 ] || fail=1
 
 if [ "$ALLOW_WRITE" = "1" ]; then
-    echo "== --allow-write：建一个临时项目再删回去（确认对面是假库实例！） =="
+    # ---- 写档前置：按 pid 实查对面持有的是哪颗库 ----
+    # 判据要拦的是"把写打到用户的活库"，所以直接问 OS：应答这个端口的进程打开了哪颗 *.store。
+    # 两条都拦：①落在活库目录 ⇒ 拒；②一颗 .store 都没有（内存降级态）⇒ 无从判断写去哪，也拒。
+    # LIVE_STORE_DIR 只给 selftest 用（同 check_mcp_api_guards.sh 的口径）：指向一棵合成目录，
+    # 用来证明这颗判据真的会拒，而不是拿用户的真库去做扰动。
+    LIVE_DIR="${LIVE_STORE_DIR:-${HOME}/Library/Application Support/Suncut}"
+    LISTEN_PID="$(lsof -nP -iTCP:${PORT} -sTCP:LISTEN -t 2>/dev/null | head -1)"
+    if [ -z "$LISTEN_PID" ]; then
+        echo "FAIL[判据失效] ${PORT} 上没有监听进程 —— 无从判断对面是哪颗库，拒写" >&2
+        exit 2
+    fi
+    OPEN_STORES="$(lsof -p "$LISTEN_PID" -Fn 2>/dev/null | sed -n 's/^n//p' | grep -E '\.store$' | sort -u)"
+    if [ -z "$OPEN_STORES" ]; then
+        echo "FAIL[判据失效] pid ${LISTEN_PID} 没有打开任何 .store（多半是内存降级态）—— 无法证明写会落到哪，拒写" >&2
+        exit 2
+    fi
+    if printf '%s\n' "$OPEN_STORES" | grep -qF "${LIVE_DIR}/"; then
+        echo "FAIL 对面持有你的**活库**，拒写：" >&2
+        printf '%s\n' "$OPEN_STORES" | grep -F "${LIVE_DIR}/" | sed 's/^/       /' >&2
+        echo "       要测写路径：先由 scripts/check_mcp_api_guards.sh 拉起每轮临时假根实例，再指它的端口。" >&2
+        exit 1
+    fi
+    echo "== --allow-write：已实查 pid ${LISTEN_PID} 持有的是非活库，放行 =="
+    printf '%s\n' "$OPEN_STORES" | sed 's/^/     /'
+    echo "== 建一个临时项目再删回去 =="
     created=$(call '{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"create_project","arguments":{"name":"MCP冒烟临时项目"}}}')
     pid=$(echo "$created" | python3 -c '
 import json, sys
