@@ -436,10 +436,25 @@ cp ~/Library/Application\ Support/Suncut/Suncut.store* .scratch/store-backup-${T
      其文案已改成**不指引删库**；
    - `#Index` 变更**不进指纹**（`Entity.indices` 要 macOS 15+，本工程部署目标 14.0），
      所以"指纹没变"只能读成"除索引外没变"。
-5. 机械判据：`LC_ALL=en_US.UTF-8 ./scripts/check_schema_ledger_guards.sh`（SL-01~11）——
+5. 机械判据：`LC_ALL=en_US.UTF-8 ./scripts/check_schema_ledger_guards.sh`（SL-01~14）——
    `@Model` 与 `AppSchemaV1.models` 逐名对账、清单/动作条数相等、`did…_v1` 键与账本**双向**覆盖、
-   `orphanGC` 的 `requires` 必须含三颗、有真信号的步骤必须回报 `Bool`、防线文案不得叫用户删库。
-   启动顺序与前序约束的**唯一来源**是 `MixCut/App/LaunchSteps.swift` 的清单，别退回平铺调用。
+   `orphanGC` 的 `requires` 必须含三颗、有真信号的步骤必须回报 `Bool`、防线文案不得叫用户删库、
+   启动账本 `Ledger` 里老 sidecar 可能没有的键**必须是 Optional**（SL-14：带默认值也不行，
+   Swift 合成解码器不查默认值，实测 `keyNotFound`）。启动顺序与前序约束的**唯一来源**是
+   `MixCut/App/LaunchSteps.swift` 的清单，别退回平铺调用。
+
+### 不要由工具去打开用户的活库（这条原先只写在脚本注释里，2026-10-11 补上判据与出处）
+
+真库在 `~/Library/Application Support/Suncut/Suncut.store`，跑 **WAL** 模式。
+即使以只读方式打开，SQLite 也可能要创建/改写 `-shm` 边车 —— **那是写副作用**。
+所以：
+
+- 要读库里的东西，**把 SQL 打印给用户自己跑**（照 `scripts/verify_graph_broadcast.sh` 步骤 ③ 的写法），
+  或改走不碰库的路子：启动账本 `Suncut.store.launch-ledger` 是纯 JSON、产物二进制可 `strings`、文件可 `stat`。
+- 真要代跑，三个条件缺一不可：`sqlite3 -readonly` + 先 `pgrep -x SunCut` 确认应用已退出 + 用户显式同意。
+- 机械判据：`bash scripts/check_live_store_guards.sh` —— 扫全仓 `.sh`，任何对 `*.store` 的
+  `sqlite3` 调用少了 `-readonly` 或同文件没有"活实例未运行"前置就红；写语句直接红；
+  注释与 heredoc 内的例子不算调用（区分器由台架 M7/M8/M9 三格钉住，防它退化成"见啥都放过"）。
 
 ## 撤销浮条与延迟删除
 
