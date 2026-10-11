@@ -4,7 +4,7 @@
 # 这颗门自己管被测 App 的完整生命周期，因为实测发现外部 nohup / 后台任务拉起的 App
 # 会随调用结束被回收，判据跑到一半就没服务了。
 #
-# 五道前置（任一不过就不跑用例，直接红）：
+# 六道前置（任一不过就不跑用例，直接红）：
 #   U01 产物必须是 Debug —— 假库开关 MIXCUT_DEBUG_APP_SUPPORT_ROOT 在 #if DEBUG 内
 #       （MixCut/Utilities/FileHelper.swift:17-25，注释原文「Release 编译不进这一支」）。
 #       拿 Release 跑会**静默**写用户真库。注意 Xcode 16 的 Debug 用 dylib 注入，
@@ -20,6 +20,9 @@
 #   U04 活库未被触碰 —— 跑前存基线校验和，跑后逐颗比对。
 #       比对集含 launch-ledger：App 一启动就自己写它（台账 2026-10-04-mac2-ui-smoke-harness.md
 #       §9.3 的实测结论，那次 Release 探针就是靠它才被抓到）。
+#   U06 同一时刻只许一跑 —— 撞的不是端口而是 $WORK 下固定路径的共享文件（活库基线、偏好快照、
+#       app.log）。产品自 b43962c 支持换端口后，U03 已拦不住两跑并发；最坏后果是把用户真实偏好
+#       还原成假库项目 id（2026-10-04 真出过）。见下面 U06 那段完整理由。
 #   偏好保护 —— App 在 selectedProject 的 didSet 里会把 lastSelectedProjectID 写回标准域
 #       （ProjectViewModel.swift:18），而 Debug/Release 共用 bundle id ⇒ 会污染用户真实偏好。
 #       所以跑前快照、退出时还原（实测教训：2026-10-04 曾把用户的值覆盖成假库项目 id）。
@@ -87,6 +90,8 @@ mkdir -p "$WORK"
 
 PREFS_SNAPPED=0
 APP_LAUNCHED=0
+LOCK="$WORK/gate.lock"
+LOCK_HELD=0
 
 restore_prefs() {
     # 只在**本轮真存过快照**时还原：拿上一轮遗留的快照文件去 write，等于把旧值盖回用户偏好。
@@ -116,9 +121,33 @@ cleanup() {
         rm -rf "$FAKE_ROOT"
     fi
     restore_prefs
+    # 锁要**在偏好还原之后**才放：否则下一跑会在我们还留着污染值的时候去做快照，等于把
+    # 危险窗口从"并发"搬到了"交接"。且只放自己的锁（pid 对得上），不许误删别人正在持有的。
+    if [ "$LOCK_HELD" = "1" ] && [ "$(sed -n '1p' "$LOCK" 2>/dev/null)" = "$$" ]; then
+        rm -f "$LOCK"
+    fi
 }
 # 装得早一点：U01/U05 这类前置红掉时也要把临时假根收走，不在 /tmp 下留垃圾。
 trap cleanup EXIT
+
+# ---------- 前置 U06：同一时刻只许有一跑门禁 ----------
+# 撞的不是端口，是 $WORK 下那几颗**固定路径**的共享文件：活库基线 live_baseline.sha、
+# 偏好快照 prefs_snapshot.json、app.log。U03 只按端口串行，而产品自 b43962c 起支持
+# MIXCUT_MCP_PORT 覆盖 ⇒ 两跑换端口就能并发，U03 拦不住。
+# 最坏的一条后果不是测试数据脏，而是**改错用户偏好**：后一跑在前一跑的实例已经把
+# lastSelectedProjectID 写成假库项目 id 之后才做快照 ⇒ 它把污染值当"原值"存下，
+# 退出时还原回去 ⇒ 用户的真实值永久错掉。这正是本文件头部记着的 2026-10-04 事故。
+if [ -f "$LOCK" ]; then
+    holder="$(sed -n '1p' "$LOCK" 2>/dev/null)"
+    if [ -n "$holder" ] && kill -0 "$holder" 2>/dev/null; then
+        invalid "另一跑集成层门禁正在持有 ${LOCK}（pid ${holder}，端口 $(sed -n '2p' "$LOCK" 2>/dev/null)）⇒ 本轮拒跑。
+       两跑并发会互相覆盖 $WORK 下的活库基线与偏好快照，最坏会把用户真实偏好还原成假库项目 id。
+       换 MCP_PORT 绕不开这条 —— 撞的从来不是端口。要并发请给每跑另设一个独立的 WORK。"
+    fi
+    note "WARN 发现陈旧锁（pid ${holder:-空} 已不在）⇒ 本轮接管"
+fi
+printf '%s\n%s\n%s\n' "$$" "${PORT}" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$LOCK"
+LOCK_HELD=1
 
 # ---------- 前置 U01：产物必须是 Debug ----------
 [ -d "$APP_PATH" ] || die "找不到被测产物：${APP_PATH}（先 xcodebuild -configuration Debug 构建）"
@@ -148,6 +177,13 @@ note "前置 U01 ✓ 产物含 DEBUG 假库开关（命中 ${valve_hits} 处）"
 # 那种半截构建，拿最晚会比出"新于源码"而假绿（自证 9 钉这一格）。
 # 输入面**不按后缀筛**：包内二进制与资源换了同样算"测的不是当前代码"。
 # 全集实测 294 个文件 / 单次 find 0.002s（Resources 3.2G 但只有 19 个文件），所以扫得起。
+#
+# ⚠️ 这条是**时间启发式，不是证明**。它只看 mtime，所以任何把 mtime 推到当下的操作都能骗过它：
+#    `cp -R` 不带 `-p`、解压、rsync、Finder 拷贝（实测：把旧产物 touch 到 2099 年 ⇒ 判绿）。
+#    它的错误方向是"假阳偏多"（新建 worktree、checkout 都会要求重建），这是故意选的保守侧；
+#    但**不要把它读成"产物一定出自这份源码"**。要真证明那一点，唯一可靠的绑定是门禁自己构建
+#    （抄 verify_graph_broadcast.sh 的 xcodebuild + -showBuildSettings）—— 那在 Agent 沙盒里跑不动，
+#    是当初权衡后**已知未解**的口子，不是已经解决的判据。
 { [ -d "$ROOT/MixCut" ] && [ -d "$ROOT/Sources" ] && [ -f "$ROOT/Package.swift" ]; } \
     || invalid "前置 U05 取不到编译输入面（MixCut/ Sources/ Package.swift 缺一）—— 判据无法成立，不算通过"
 NEWER_SRC="$(find "$ROOT/MixCut" "$ROOT/Sources" "$ROOT/MixCut.xcodeproj" "$ROOT/Package.swift" \
@@ -264,8 +300,9 @@ else
     fail=1
 fi
 # 全新假根的首启必然走 noPriorRecord ⇒ 一道备份都不该产生。
-# 冒出 .backup 只有两种解释：这棵根不是新的（隔离漏了），或门被别的原因触发。
-# 2026-10-11 那 4 份反向备份正是前一种形状。
+# ⚠️ 说清这条的类别：FAKE_ROOT 由本脚本自己 mktemp，所以运行时它**不可能红**；
+#    红的唯一途径是有人把 FAKE_ROOT 改回持久共享路径 —— 那正是 2026-10-11 那 4 份反向备份的形状。
+#    所以它是"脚本被改回旧形状"的**陷阱**（与 SL 守卫同族），不是运行时防线，别当后者读。
 BACKUP_HITS="$(find "$FAKE_ROOT/Suncut" -maxdepth 1 -name '*.backup' 2>/dev/null | wc -l | tr -d ' ')"
 if [ "$BACKUP_HITS" != "0" ]; then
     note "FAIL[判据失效] 全新假根里出现 ${BACKUP_HITS} 份 .backup —— 首启不该产生备份"

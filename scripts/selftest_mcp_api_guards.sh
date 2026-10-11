@@ -178,6 +178,36 @@ touch -t 209901010000 "$STALE_APP/Contents/MacOS/SunCut" "$STALE_APP/Contents/Ma
 expect_red "U05 反向对照（够新就不该拦）" 1 "60 次探测内" \
     env SUNCUT_APP="$STALE_APP" ONLY=API-01 bash "$CHECK"
 
+# ---------- U06 单实例锁（放在最后：前面每条腿都要真抢真放这把锁）----------
+GATE_LOCK="$ROOT/.scratch/mcp-guards/gate.lock"
+mkdir -p "$ROOT/.scratch/mcp-guards"
+
+echo "== 自证 11：另一跑持有活锁 ⇒ U06 必须报「判据失效」(2)，且不许删别人的锁 =="
+sleep 20 & HOLDER=$!
+printf '%s\n8787\n2000-01-01T00:00:00Z\n' "$HOLDER" > "$GATE_LOCK"
+expect_red "U06 另一跑持有锁" 2 "另一跑集成层门禁" \
+    env bash "$CHECK" --preflight-only
+# 顺手验"只放自己的锁"：本轮 LOCK_HELD=0，cleanup 不许把伪造的这把摘掉
+if [ -f "$GATE_LOCK" ] && [ "$(sed -n '1p' "$GATE_LOCK")" = "$HOLDER" ]; then
+    echo "PASS U06 没有误删他人锁（伪造锁仍在，持有者 pid 未变）"
+else
+    echo "FAIL U06 把别人的锁摘了 —— 并发保护当场失效，且下一跑会以为自己是唯一在跑的"
+    fail=1
+fi
+kill "$HOLDER" 2>/dev/null; wait "$HOLDER" 2>/dev/null
+
+echo "== 自证 12：陈旧锁（持有者已死）⇒ 必须接管而不是拒跑 =="
+printf '%s\n8787\nx\n' 999999 > "$GATE_LOCK"
+out12="$(bash "$CHECK" --preflight-only 2>&1)"; rc12=$?
+printf '%s\n' "$out12" | grep -E "陈旧锁|前置全过" | sed 's/^/       /'
+if [ "$rc12" = "0" ] && printf '%s' "$out12" | grep -q "陈旧锁"; then
+    echo "PASS U06 陈旧锁接管（没被上一跑的尸体锁卡死）"
+else
+    echo "FAIL U06 陈旧锁：期望接管并跑通（退出码 0），实际 ${rc12}"
+    fail=1
+fi
+rm -f "$GATE_LOCK"
+
 pkill -x SunCut 2>/dev/null
 echo ""
 if [ "$fail" = "0" ]; then
