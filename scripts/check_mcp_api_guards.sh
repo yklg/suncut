@@ -103,12 +103,18 @@ restore_prefs() {
 stop_app() {
     # 残留核对必须在杀进程**之后**做，否则永远误报（第一版就栽在把检查放在 trap 之前）
     [ -n "${APP_PID:-}" ] || return 0
-    kill "$APP_PID" 2>/dev/null
-    for _ in $(seq 1 12); do
-        kill -0 "$APP_PID" 2>/dev/null || break
-        sleep 0.5
-    done
-    wait "$APP_PID" 2>/dev/null   # 收尸，避免 bash 在退出时打一行 Terminated 噪声
+    # 那一行 `line N: PID Terminated: 15 …` 是 **bash 自己**打到自己的 stderr 上的作业通知，
+    # 挂在 `wait` 那一行上的 `2>/dev/null` 管不着它（旧注释就是这么写的，实测一直是假承诺）——
+    # 所以把整段 kill/wait 括进一组重定向里，让通知落在被丢弃的 fd 上。
+    # 语义没动：等退出仍然靠下面那个轮询（不是靠 wait 的返回值），残留核对也仍在杀完之后。
+    {
+        kill "$APP_PID" 2>/dev/null
+        for _ in $(seq 1 12); do
+            kill -0 "$APP_PID" 2>/dev/null || break
+            sleep 0.5
+        done
+        wait "$APP_PID"
+    } 2>/dev/null
     APP_PID=""
 }
 
