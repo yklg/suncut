@@ -188,14 +188,29 @@ if noncomment:
 else:
     ok("SL-09 防线文案不含「请删除」（只在注释里描述旧行为）")
 
-# ---- SL-10 备份保留份数只有一个来源 ----------------------------------------
+# ---- SL-10 备份保留份数只有一个来源，且两个族都归它管 ------------------------
+# 族一：门的 `*.backup`；族二：修复的 `*.pre-dangling-*`（三份一组）。
+# 旧版只扫族一的前缀 ⇒ 族二永不裁（用户活库目录里攒了三组约 5MB 没人管），
+# 而"连续拒开也不裁"被写成"故意的" —— 那句在修库还跑在门之前时是真的，§6-1 之后就不成立了。
 keep = re.findall(r"func pruneBackups\(storeURL: *URL, *keeping: *Int = (\d+)\)", schema_gd)
+prune_body = re.search(r"static func pruneBackups\(storeURL: *URL, *keeping: *Int = *\d+\) \{(.*?)\n    \}", schema_gd, re.S)
+stamp_body = re.search(r"static func danglingStamp\(_ name: String, stem: String\) -> String\? \{(.*?)\n    \}", schema_gd, re.S)
 if len(keep) != 1:
     bad("SL-10 取不出唯一的备份份数默认值", f"命中 {keep}")
 elif keep[0] != "3":
     bad("SL-10 备份保留份数被改了", f"现值 {keep[0]}，计划 §3.3 定的是 3")
+elif not prune_body:
+    bad("SL-10 切不到 pruneBackups 的函数体", "写法变了 ⇒ 判据无法成立")
+elif not stamp_body:
+    bad("SL-10 切不到 danglingStamp（修复族的时间戳分组）", "族二的计数方式变了 ⇒ 判据无法成立")
+elif ".backup" not in prune_body.group(1):
+    bad("SL-10 不再裁门的 *.backup 族", "族一从保留策略里掉了")
+elif "danglingStamp(" not in prune_body.group(1) or ".pre-dangling-" not in stamp_body.group(1):
+    bad("SL-10 不再裁修复的 *.pre-dangling-* 族",
+        "族二是那次 UPDATE 唯一的退路，但它也必须进保留策略 —— §6-4 攒备份的事故就在这")
 else:
-    ok("SL-10 备份保留份数默认 3", "口径是「最近一次成功开库后 ≤3」，连续拒开库攒多份是故意的")
+    ok("SL-10 备份保留份数默认 3、两族共用一颗策略",
+       "两个族各留最近 3 份（族二按时间戳成组，不裁半组）；裁剪有两处调用但策略只有一处")
 
 # ---- SL-14 启动账本里「老 sidecar 可能没有的键」必须是 Optional -------------------
 # 为什么这颗值得进发版门：`Ledger` 是 Codable，而盘上已有的 sidecar 是在字段变多**之前**写下的。
@@ -246,6 +261,139 @@ else:
         bad("SL-14 appVersion 声明了却没人写", "拒开库文案分不开「跑的是旧产物」与「真删了字段」")
     else:
         ok("SL-14 Ledger 逐属性核对通过", f"名册 {len(rostered)} 颗 + Optional {len(optional)} 颗（{optional}）")
+
+# ---- SL-15 容器之前那一段：名册即顺序，且写盘必须有通行证 --------------------
+# 为什么值得进发版门：`DanglingEdgeRepair` 会 `UPDATE … SET col = NULL` 提交，而它原先站在门**之前**。
+# 于是面板那句「你的库文件没有被改动」只是偶尔为假 —— 那句话是用户决定"要不要拿备份去回退"的唯一依据。
+#
+# 两道拦法分工写清楚，别把名册当成全部：
+#   · **编译期**：`GatePermit.init` 是 fileprivate ⇒ 只有 `SchemaGuard.evaluate` 造得出通行证，
+#     "门之前调用修复"这件事编译不过。SL-15b 钉这颗牙还在（有人把 fileprivate 改成 internal 就当没发生过）。
+#   · **名册 + 判据**：钉"别人在拿到通行证之后、open 之前再插一步写盘"和"顺序漂了"这两格 ——
+#     这是通行证本身挡不住的（通行证只授权持者，不禁止别人新写一步）。
+WRITE_SQL_RE = re.compile(r"sqlite3_(open|open_v2|exec|prepare)|\bUPDATE\b|\bINSERT\s+INTO\b|\bDELETE\s+FROM\b|\bVACUUM\b")
+
+pc_block = re.search(r"enum PreContainerPlan \{(.*?)\n\}\n", launch_sw, re.S)
+pc_src   = pc_block.group(1) if pc_block else ""
+pc_decls = re.findall(r'Step\(id:\s*"([^"]+)"', pc_src)
+roster = []
+for m in re.finditer(r'Step\(id:\s*"([^"]+)",(.*?)marker:\s*"([^"]+)"\)', pc_src, re.S):
+    seg = m.group(2)
+    req_m = re.search(r"requires:\s*\[([^\]]*)\]", seg)
+    roster.append({"id": m.group(1),
+                   "requires": re.findall(r'"([^"]+)"', req_m.group(1)) if req_m else [],
+                   "writes": bool(re.search(r"writesIntoStore:\s*true", seg)),
+                   "marker": m.group(3)})
+
+def code_lines(text):
+    """剥掉注释行：写清楚"以前错在哪"的 /// 里就带着 `DanglingEdgeRepair.run(at:)`，
+    不剥注释会把'讲明白了'当成'还犯着'（SL-12 已经踩过一次）。"""
+    return [l for l in text.split("\n") if not l.lstrip().startswith(("//", "///", "/*", "*"))]
+
+if not pc_block or not roster:
+    bad("SL-15 取不到 PreContainerPlan 名册", "名册被删/写法变了 ⇒ 判据无法成立（容器之前的顺序从此没人管）")
+elif len(pc_decls) != len(roster):
+    bad("SL-15 名册颗数与解析条数不符", f"声明 {len(pc_decls)} / 解析成功 {len(roster)} —— 有一颗的写法切不出来，判据会漏掉它")
+else:
+    ids = [r["id"] for r in roster]
+    clines = code_lines(app_sw)
+    where = {r["id"]: [j for j, l in enumerate(clines) if r["marker"] in l] for r in roster}
+    markers = [r["marker"] for r in roster]
+    # 门那颗不靠名字认，靠 marker 里调的是不是 evaluate —— 名字改成 schemaGate 之外的也不影响判据。
+    gate_ids = [r["id"] for r in roster if "SchemaGuard.evaluate" in r["marker"]]
+
+    dup = sorted({i for i in ids if ids.count(i) > 1})
+    bad_markers = sorted(f"{i}={len(v)}" for i, v in where.items() if len(v) != 1)
+    ordered_ids = [k for k, v in sorted(where.items(), key=lambda kv: kv[1]) if v]
+    late_req = [f"{r['id']}←{d}" for r in roster for d in r["requires"]
+                if d in ids and ids.index(d) >= ids.index(r["id"])]
+    ghost_req = [f"{r['id']}←{d}" for r in roster for d in r["requires"] if d not in ids]
+    bad_writers = [r["id"] for r in roster if r["writes"] and (
+        not gate_ids or not any(g in r["requires"] and ids.index(g) < ids.index(r["id"]) for g in gate_ids))]
+    unrostered = [l.strip()[:70] for l in clines
+                  if re.search(r"DanglingEdgeRepair\.run\(", l) and l.strip() not in markers]
+    permitless = [l.strip()[:70] for l in clines
+                  if re.search(r"DanglingEdgeRepair\.run\(", l) and "permit:" not in l]
+
+    gate_at = next((j for j, l in enumerate(clines) if "SchemaGuard.evaluate(schema:" in l), None)
+    open_at = next((j for j, l in enumerate(clines) if "SchemaGuard.open(permit:" in l), None)
+    smuggled = []
+    if gate_at is not None and open_at is not None and open_at > gate_at:
+        smuggled = [l.strip()[:70] for l in clines[gate_at:open_at]
+                    if WRITE_SQL_RE.search(l) and "DanglingEdgeRepair.run(" not in l]
+
+    if dup:
+        bad("SL-15 名册 id 重复", f"{dup}")
+    elif not gate_ids:
+        bad("SL-15 名册里认不出门那颗", "没有任何一颗的 marker 调 SchemaGuard.evaluate ⇒ 写盘步骤没有可比的前序")
+    elif bad_markers:
+        bad("SL-15 名册 marker 在 MixCutApp.init 里不是唯一一颗", f"{bad_markers} —— 调用写法与名册已分叉，判据无法成立")
+    elif ordered_ids != ids:
+        bad("SL-15 容器之前的实际调用次序与名册不符", f"名册 {'→'.join(ids)} / 代码 {'→'.join(ordered_ids)}")
+    elif late_req:
+        bad("SL-15 名册的 requires 指向同颗或后面的颗", f"{late_req}")
+    elif ghost_req:
+        bad("SL-15 名册的 requires 指向不存在的前序", f"{ghost_req} —— 拼错的前序 id 会静默不生效，这条边等于没写")
+    elif bad_writers:
+        bad("SL-15 有写盘步骤没排在门之后", f"{bad_writers} —— 那句「你的库文件没有被改动」当场变假")
+    elif unrostered:
+        bad("SL-15 有写盘调用不在名册上", f"{unrostered} —— 名册不再是这一段唯一的真源")
+    elif permitless:
+        bad("SL-15 有修复调用没持通行证", f"{permitless}")
+    elif smuggled:
+        bad("SL-15 门之后、open 之前混进了 SQL 写形状", f"{smuggled} —— 这一段除持通行证的 repair 外不许写盘")
+    elif not re.search(r"struct GatePermit \{", schema_gd) or not re.search(r"fileprivate init\(storeURL:", schema_gd):
+        bad("SL-15 通行证可被伪造", "GatePermit 的 init 不再是 fileprivate ⇒ 门之外也能造通行证，编译期那道牙没了")
+    else:
+        ok("SL-15 容器之前名册即顺序、写盘必须持通行证",
+           f"{len(roster)} 颗：{'→'.join(ids)}；写盘 {len([r for r in roster if r['writes']])} 颗且逐颗带 permit")
+
+# ---- SL-16 启动账本"读不出来"绝不能与"没有文件"同形 --------------------------
+# 出处：§6-3，也是 `2026-10-01` 那份计划拍 D-1 时顺带查出来的原话 ——
+# 老写法两处 `try?`（读文件、解码）塌成同一个 `nil`，于是"文件不存在"（新库，正常）与
+# "文件在、但坏了 / 格式变了"在调用点上完全同形 ⇒ **sidecar 一坏，这道门就永久失明，
+# 且没有任何一行日志说它失明过**。
+# 已拍的口径（不许这一笔顺手改）：读不出来 ⇒ 留日志 + 先做一份自证过的改前备份，**判定仍是放行**；
+# "坏 JSON 就拒开库"会让一个坏文件变成打不开的应用，那是另一档风险，已单独拍掉。
+lr_enum = re.search(r"enum LedgerRead \{(.*?)\n    \}", schema_gd, re.S)
+read_fn = re.search(r"static func readLedger\(storeURL: *URL\) -> *LedgerRead \{(.*?)\n    \}", schema_gd, re.S)
+unread_blk = re.search(r"case \.unreadable\(let reason\)(.*?)\n        let decision", schema_gd, re.S)
+# 计数必须剥掉那颗**定义**本身：`verifiedBackup(storeURL:` 这个前缀定义与调用同形，
+# 不剥的话"定义 + 一处调用"也会凑够 2 —— 一条因自己数了自己而恒真的判据等于没有判据。
+backup_defs = len(re.findall(r"func verifiedBackup\(", schema_gd))
+backup_calls = len(re.findall(r"verifiedBackup\(storeURL:", schema_gd)) - backup_defs
+
+lr_cases = re.findall(r"case (\w+)", lr_enum.group(1)) if lr_enum else []
+
+if not lr_enum:
+    bad("SL-16 取不到 LedgerRead 三态", "写法变了 ⇒ 判据无法成立（"
+        "没有这个类型就说明两种 nil 又塌回成一个了）")
+elif set(lr_cases) != {"absent", "readable", "unreadable"}:
+    bad("SL-16 LedgerRead 的三态不完整", f"现有 {lr_cases}，要求 absent / readable / unreadable 三颗齐")
+elif not read_fn:
+    bad("SL-16 取不到 readLedger 的函数体", "签名或写法变了 ⇒ 判据无法成立")
+elif re.search(r"try\? *(Data\(contentsOf:|decoder\.decode)", read_fn.group(1)):
+    bad("SL-16 readLedger 又用 try? 把两种失败塌成一个",
+        "老形状回来了：坏 sidecar 会被读成『没有记录』⇒ 门静默失明")
+elif "fileExists" not in read_fn.group(1) or "catch" not in read_fn.group(1):
+    bad("SL-16 readLedger 不再区分『文件不存在』与『解不开』",
+        f"缺 {'fileExists' if 'fileExists' not in read_fn.group(1) else 'catch'}")
+elif not unread_blk:
+    bad("SL-16 evaluate 里没有 .unreadable 这一格", "读不出来时既不留日志也不备份 ⇒ 判据无法成立")
+elif "MixLog.error" not in unread_blk.group(1):
+    bad("SL-16 账本读不出来时没留日志", "这条要修的正是不许静默")
+elif "verifiedBackup" not in unread_blk.group(1):
+    bad("SL-16 账本读不出来时没先做改前备份",
+        "万一 schema 同时真变了，用户手里没有退路")
+elif "refused" in unread_blk.group(1):
+    bad("SL-16 把『读不出来』擅自改成拒开库",
+        "已拍的口径是留痕 + 备份后照常开库；要改成拒开必须先重拍 §6-3 那条决策并说明代价")
+elif backup_calls < 2:
+    bad("SL-16 改前备份没有两处共用", f"verifiedBackup 只有 {backup_calls} 处调用 —— "
+        "『.changed』与『读不出来』两格必须走同一颗，别退回各写一遍")
+else:
+    ok("SL-16 账本两种失败已分形、读不出来会留日志并先备份",
+       f"三态 {lr_cases}，verifiedBackup 共 {backup_calls} 处共用")
 
 # ---- SL-11 节流键必须按 double 读 ------------------------------------------
 throttle_write = re.search(r'\.set\(Date\(\)\.timeIntervalSince1970, forKey: key\)', app_sw)

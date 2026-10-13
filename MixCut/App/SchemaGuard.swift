@@ -37,8 +37,8 @@ enum SchemaGuard {
         var doneSteps: [String]
         var lastRunAt: [String: Date]
         /// 写下这份记录的那个程序的版本。**必须是 Optional**：盘上已有的 sidecar 没有这个键，
-        /// 换成非可选会让整份 JSON 解码失败 ⇒ `readLedger` 返回 nil ⇒ 门把它读成"首次带门启动"
-        /// 直接放行 ⇒ 这道防线在真实用户库上被静默废掉（正是 `openStore` 里 0 行那条警告的事故）。
+        /// 换成非可选会让整份 JSON 解码失败 ⇒ `readLedger` 读成 `.unreadable` ⇒ 这道门在这次启动帮不上忙
+        /// （自 §6-3 起不再是**静默**：会留一行日志加一份改前备份，但仍照常开库 —— 见 `LedgerRead` 的说明）。
         var appVersion: String?
 
         init(lines: [String] = [], updatedAt: Date = Date(),
@@ -141,11 +141,26 @@ enum SchemaGuard {
         storeURL.appendingPathExtension("launch-ledger")
     }
 
-    static func readLedger(storeURL: URL) -> Ledger? {
-        guard let data = try? Data(contentsOf: ledgerURL(storeURL: storeURL)) else { return nil }
-        let decoder = JSONDecoder()
-        decoder.dateDecodingStrategy = .iso8601
-        return try? decoder.decode(Ledger.self, from: data)
+    /// 读 sidecar 的三种结果。**"没有文件"与"有文件但读不出来"绝不能同形** ——
+    /// 两者都回 `nil` 时，一份写坏的记录会让这道门**永久失明**，而且没有任何一行日志说它失明过
+    /// （`2026-10-01` 那份计划拍 D-1 时查出来的原话）。分开的同时不改判定：
+    /// 读不出来仍按"无记录"开库 —— 让一个坏 JSON 变成打不开的应用是另一档风险，已单独拍掉（§6-3）。
+    enum LedgerRead {
+        case absent
+        case readable(Ledger)
+        case unreadable(reason: String)
+    }
+
+    static func readLedger(storeURL: URL) -> LedgerRead {
+        let url = ledgerURL(storeURL: storeURL)
+        guard FileManager.default.fileExists(atPath: url.path) else { return .absent }
+        do {
+            let decoder = JSONDecoder()
+            decoder.dateDecodingStrategy = .iso8601
+            return .readable(try decoder.decode(Ledger.self, from: Data(contentsOf: url)))
+        } catch {
+            return .unreadable(reason: error.localizedDescription)
+        }
     }
 
     /// 只在**开库成功后**调用。写失败不致命（下次启动会多备份一次），但必须留日志。
@@ -204,18 +219,68 @@ enum SchemaGuard {
         return runIntegrityCheck(on: copy)
     }
 
-    /// 只保留最近 `keeping` 份。命名里的时间戳是 UTC 定长格式，字典序即时间序。
+    /// 生成备份**并自证**，只把自证过的那份交回；自证不过就删掉它（留一份打不开的"退路"比没有更坏）。
+    /// 两处调用共用这一颗：`.changed` 那一格和"账本读不出来"那一格 —— 同一件事不写两遍。
+    private static func verifiedBackup(storeURL: URL, previous: SchemaFingerprint,
+                                       current: SchemaFingerprint) -> URL? {
+        do {
+            let made = try performBackup(storeURL: storeURL, previous: previous, current: current)
+            guard verifyBackup(directory: made, storeURL: storeURL) else {
+                try? FileManager.default.removeItem(at: made)
+                MixLog.error("schema 门：改前备份校验未通过，已删除该份备份")
+                return nil
+            }
+            // 刚做出来的这份必须立刻进保留策略：拒开那一格走不到 `open`，不在这里裁就没人裁了。
+            pruneBackups(storeURL: storeURL)
+            return made
+        } catch {
+            MixLog.error("schema 门：改前备份失败 \(error.localizedDescription)")
+            return nil
+        }
+    }
+
+    /// 备份族的保留策略：**每个族各留最近 `keeping` 份**，两个族各自数，不许互相冒充份额。
+    ///
+    /// · `*.backup` —— 门在"结构有变更"或"账本读不出来"时做的全族快照；
+    /// · `*.pre-dangling-*.bak{,-wal,-shm}` —— 悬空边修复自己那份退路。§6-1 之后它站在门后，
+    ///   但**必须留着**：普通启动（schema 未变）时门一份备份都不做，这一族是那次 UPDATE 唯一的退路。
+    ///   同一次修复产生的三件共享同一个时间戳 ⇒ 按时间戳**成组**计数，绝不把一组裁成半组。
+    ///
+    /// 为什么敢连"拒开"那一格也裁（v1.6 之前这儿的口径是"攒多份是故意的"）：§6-1 之后拒开那次
+    /// 根本没碰库，连续几次拒开做出来的备份内容逐字节相同，丢掉较老的那些不损失任何退路。
+    /// 读不出来的旧口径之所以成立，是因为那时修库跑在门之前 —— 每份备份装的确实是不同的盘上状态。
     static func pruneBackups(storeURL: URL, keeping: Int = 3) {
         let parent = storeURL.deletingLastPathComponent()
-        let prefix = storeURL.lastPathComponent + "."
         guard let entries = try? FileManager.default.contentsOfDirectory(
             at: parent, includingPropertiesForKeys: nil) else { return }
-        let backups = entries
-            .filter { $0.lastPathComponent.hasPrefix(prefix) && $0.lastPathComponent.hasSuffix(".backup") }
+        let stem = storeURL.lastPathComponent
+
+        let door = entries
+            .filter { $0.lastPathComponent.hasPrefix(stem + ".") && $0.lastPathComponent.hasSuffix(".backup") }
             .sorted { $0.lastPathComponent > $1.lastPathComponent }
-        for stale in backups.dropFirst(keeping) {
+        for stale in door.dropFirst(keeping) {
             try? FileManager.default.removeItem(at: stale)
         }
+
+        // 修复族：时间戳取不出来的一律不动（宁可少删，也不把一组三份删成半组）。
+        var stamps: Set<String> = []
+        for url in entries {
+            if let stamp = danglingStamp(url.lastPathComponent, stem: stem) { stamps.insert(stamp) }
+        }
+        for stale in stamps.sorted(by: >).dropFirst(keeping) {
+            for url in entries where danglingStamp(url.lastPathComponent, stem: stem) == stale {
+                try? FileManager.default.removeItem(at: url)
+            }
+        }
+    }
+
+    /// 从 `Suncut.store.pre-dangling-<stamp>.bak-wal` 这类名字里取出 `<stamp>`；取不出回 nil。
+    private static func danglingStamp(_ name: String, stem: String) -> String? {
+        guard name.hasPrefix(stem + ".pre-dangling-"),
+              let head = name.range(of: ".pre-dangling-"),
+              let tail = name.range(of: ".bak", range: head.upperBound..<name.endIndex) else { return nil }
+        let stamp = name[head.upperBound..<tail.lowerBound]
+        return stamp.allSatisfy(\.isNumber) ? String(stamp) : nil
     }
 
     private static func runIntegrityCheck(on fileURL: URL) -> Bool {
@@ -237,39 +302,75 @@ enum SchemaGuard {
         return String(cString: text) == "ok"
     }
 
-    // MARK: - 开库（门在这）
+    // MARK: - 门在这（判定 + 改前备份，与"真的开库"分家）
 
-    /// 门 + 备份 + 开库的完整一次尝试。**必须在建 `ModelContainer` 之前**走这里。
-    static func openStore(schema: Schema, storeURL: URL) -> StoreOpenOutcome {
+    /// 门发出的**通行证**：证明「这个 URL 已被 schema 门判过；若结构有变更，已生成一份自证通过的改前备份」。
+    ///
+    /// `init` 刻意是 `fileprivate` ⇒ 全仓只有本文件（也就是 `evaluate`）铸造得出它。这不是装饰：
+    /// 悬空边修复的写盘入口收一个 `GatePermit`，于是"门还没判就去改库"在**编译期**就不成立，
+    /// 不再靠 `MixCutApp.init` 里那句注释维持 —— 口径取自本仓自己的标准
+    /// （git log 的话：「把『先落盘再判空』变成构造不出来的形状」；顺序 lint 只挡得住记得跑它的人）。
+    ///
+    /// 通行证**绑定 URL**：拿 A 库的通行证去写 B 库会被 `allows(writingTo:)` 在运行期拒掉 ——
+    /// 否则门等于发一张通用许可证，"过了门"这件事和"改的是哪颗库"就脱钩了。
+    struct GatePermit {
+        let storeURL: URL
+        let lines: [String]
+        let previousLedger: Ledger?
+
+        fileprivate init(storeURL: URL, lines: [String], previousLedger: Ledger?) {
+            self.storeURL = storeURL
+            self.lines = lines
+            self.previousLedger = previousLedger
+        }
+
+        /// 这张通行证授权写的是不是 `url` 那颗库。
+        func allows(writingTo url: URL) -> Bool {
+            url.standardizedFileURL.path == storeURL.standardizedFileURL.path
+        }
+    }
+
+    /// `evaluate` 的产物。判定与开库分家的唯一理由：中间那一步写盘修复必须既能拿到通行证、
+    /// 又不能靠**再判一次**来拿 —— 同一个结论有两个来源，中间只要有任何东西碰过盘，两者就能分叉。
+    enum Verdict {
+        case proceed(GatePermit)
+        case refused(message: String)
+    }
+
+    /// 第一步：算指纹、比账本、分类变更，必要时生成**且校验**改前备份。**不建容器、不写账本。**
+    static func evaluate(schema: Schema, storeURL: URL) -> Verdict {
         let lines = descriptorLines(from: schema)
         let current = SchemaFingerprint(descriptorLines: lines)
-        let ledger = readLedger(storeURL: storeURL)
+        let read = readLedger(storeURL: storeURL)
+        var ledger: Ledger?
+        if case .readable(let recorded) = read { ledger = recorded }
+        if case .unreadable(let reason) = read {
+            // 判定仍是"无记录"，但不许**静默**：留一行日志 + 先做一份自证过的改前备份。
+            // 这一格只要"万一 schema 同时真变了，用户手里仍有退路"，不要"拦住启动"（坏 JSON 不该让应用打不开）。
+            MixLog.error("schema 门：启动账本读不出来 ⇒ 本次按无记录处理"
+                + "（\(ledgerURL(storeURL: storeURL).path)）：\(reason)")
+            _ = verifiedBackup(storeURL: storeURL,
+                               previous: SchemaFingerprint(descriptorLines: []), current: current)
+        }
         let decision = decideSchemaGate(recorded: ledger?.fingerprint, current: current)
 
-        func config() -> ModelConfiguration {
-            ModelConfiguration(schema: schema, url: storeURL)
+        func issued() -> Verdict {
+            .proceed(GatePermit(storeURL: storeURL, lines: lines, previousLedger: ledger))
         }
-        func openNormally() -> StoreOpenOutcome {
-            do {
-                let container = try ModelContainer(for: schema, configurations: [config()])
-                _ = writeLedger(storeURL: storeURL, lines: lines, previous: ledger)
-                pruneBackups(storeURL: storeURL)
-                return .opened(container)
-            } catch {
-                return degradeToMemory(schema: schema, cause: error)
-            }
+        func refused(_ message: String) -> Verdict {
+            .refused(message: message)
         }
 
         switch decision {
         case .unchanged, .noPriorRecord:
-            return openNormally()
+            return issued()
 
         case .untrustworthy(let recorded):
             // 描述行 0 条 = 模型没注册进 Schema。这是装配失误，不是"schema 没变"，
             // 也不能拿它去覆盖账本 —— 一旦写空，这道门就永久废掉了。
             let note = recorded == nil ? "本次未取到任何模型定义" : "上次记录与本次取值均不可信"
             MixLog.error("schema 门：不可信指纹（\(note)），拒绝开库")
-            return .refusedBySchemaGate(message: """
+            return refused("""
                 未能读取应用的数据结构定义（\(note)）。
 
                 这通常是程序自身的问题而不是数据坏了，因此这次启动没有改动你的库文件。
@@ -278,22 +379,11 @@ enum SchemaGuard {
 
         case .changed(let previousFP, let currentFP):
             let kind = classifySchemaChange(before: ledger?.lines ?? [], after: lines)
-            let backupDirectory: URL?
-            do {
-                let made = try performBackup(storeURL: storeURL, previous: previousFP, current: currentFP)
-                backupDirectory = verifyBackup(directory: made, storeURL: storeURL) ? made : nil
-                if backupDirectory == nil {
-                    try? FileManager.default.removeItem(at: made)
-                    MixLog.error("schema 门：改前备份校验未通过，已删除该份备份")
-                }
-            } catch {
-                backupDirectory = nil
-                MixLog.error("schema 门：改前备份失败 \(error.localizedDescription)")
-            }
+            let backupDirectory = verifiedBackup(storeURL: storeURL, previous: previousFP, current: currentFP)
 
-            if kind.isLightweightCompatible && backupDirectory != nil {
+            if kind.isLightweightCompatible, backupDirectory != nil {
                 MixLog.info("schema 只增行变更（+\(kind.addedCount) 项），已生成改前备份，照常开库")
-                return openNormally()
+                return issued()
             }
 
             if case .destructive(let removed, let added) = kind {
@@ -304,7 +394,7 @@ enum SchemaGuard {
                 let running = "\(Self.currentAppVersion)，产出时间 \(Self.currentBuildDateText)"
                 MixLog.error("schema 门：检测到不可自动迁移的变更（消失 \(removed.count) 行 / 新增 \(added.count) 行），拒绝开库；"
                     + "记录由 \(recorder) 写下，本次运行的程序是 \(running)")
-                return .refusedBySchemaGate(message: """
+                return refused("""
                     这次启动没有打开数据库（你的库文件没有被改动）。
 
                     这份库的数据结构记录由 \(recorder) 写下；本次运行的程序是 \(running)。
@@ -327,11 +417,32 @@ enum SchemaGuard {
             }
 
             // 兼容变更但备份没成 —— 此时不许"赌一把"开库：没有退路的变更正是清库事故的原场。
-            return .refusedBySchemaGate(message: """
+            return refused("""
                 数据结构有变更，但改前备份没能生成（磁盘满 / 权限 / 目录不可写），因此这次启动没有打开数据库。
 
                 请腾出空间或换到可写位置后重试；不要删除任何文件。
                 """)
+        }
+    }
+
+    /// 第二步：拿着通行证才真的开库、记账本、裁剪备份。
+    ///
+    /// **没有任何办法绕过门调用它** —— 唯一的入参 `GatePermit` 只有 `evaluate` 发得出。
+    /// 拿到通行证之后、这里之前允许写盘的那一步（悬空边修复）就在 `MixCutApp.init` 里，
+    /// 位置由 `PreContainerPlan` 名册 + `check_schema_ledger_guards.sh` SL-15 钉住。
+    static func open(permit: GatePermit, schema: Schema) -> StoreOpenOutcome {
+        do {
+            let container = try ModelContainer(
+                for: schema,
+                configurations: [ModelConfiguration(schema: schema, url: permit.storeURL)])
+            _ = writeLedger(storeURL: permit.storeURL, lines: permit.lines, previous: permit.previousLedger)
+            // 两个裁剪时刻共用同一颗 `pruneBackups`（策略只有一个出处）：
+            // `verifiedBackup` 里那次管"刚做了门备份"的场合（含拒开），这里这次管
+            // "普通启动里修库写了盘"的场合 —— 那一格门根本不做备份，`.pre-dangling` 族只能在这裁。
+            pruneBackups(storeURL: permit.storeURL)
+            return .opened(container)
+        } catch {
+            return degradeToMemory(schema: schema, cause: error)
         }
     }
 

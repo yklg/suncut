@@ -91,17 +91,34 @@ struct MixCutApp: App {
         // 仅当旧库确实是本 app 的数据时才搬迁 —— 必须赶在开库之前。
         Self.migrateDefaultStoreToDedicated()
 
+        // 门先判、先把改前备份做掉，**通行证到手之前**任何写盘都不许碰库。
+        // `DanglingEdgeRepair.run` 收一颗只有 `SchemaGuard.evaluate` 铸造得出的 `GatePermit`
+        // （`init` 是 fileprivate），所以"修复跑在门之前"从注释里的约定升级成**编译错误**；
+        // 这一段（容器之前）的名册是 `PreContainerPlan`，容器之后才是 `LaunchPlan.steps`，
+        // 分界与判据见 `check_schema_ledger_guards.sh` SL-15。
+        let permit: SchemaGuard.GatePermit
+        switch SchemaGuard.evaluate(schema: schema, storeURL: storeURL) {
+        case .refused(let message):
+            // 被门拦住：内存占位容器只为把错误面板画出来。下面所有步骤一律不跑 ——
+            // 这是面板那句「你的库文件没有被改动」为真的前提（悬空边修复也没跑）。
+            initError = message
+            modelContainer = SchemaGuard.placeholderContainer(schema: schema)
+            return
+        case .proceed(let issued):
+            permit = issued
+        }
+
         // 容器打开前修复盘上悬空 to-one 边（此刻无任何容器连接；失败只记日志，不阻断开库）。
         // 库文件尚不存在（全新安装）⇒ 无悬空可修；不预先创建空文件，保持开库流程原状。
         if FileManager.default.fileExists(atPath: storeURL.path) {
-            DanglingEdgeRepair.run(at: storeURL)
+            DanglingEdgeRepair.run(at: storeURL, permit: permit)
         }
 
-        // 开库必须走 SchemaGuard：门（指纹比对 + 变更分类）→ 改前备份 → 才建 ModelContainer。
+        // 开库必须走 SchemaGuard：门（指纹比对 + 变更分类）→ 改前备份 → 持通行证才建 ModelContainer。
         // 三种结果分开处理，尤其**不**把"门拦住"与"库坏了"合并回同一条 catch —— 既有 catch 的文案
         // 会叫用户删库，被这道防线拦下的那次启动若复用它，等于教用户删掉它正保护的库。
         let openedContainer: ModelContainer
-        switch SchemaGuard.openStore(schema: schema, storeURL: storeURL) {
+        switch SchemaGuard.open(permit: permit, schema: schema) {
         case .opened(let onDisk):
             openedContainer = onDisk
             initError = nil
@@ -111,8 +128,8 @@ struct MixCutApp: App {
             modelContainer = inMemory
             return
         case .refusedBySchemaGate(let message):
-            // 被门拦住：内存占位容器只为把错误面板画出来。下面所有步骤一律不跑 ——
-            // 这是"你的数据没有被动过"这句话为真的前提。
+            // 分裂后这条路只剩一种可能：库真打不开、连内存模式也起不来（schema 门拦不住这里，
+            // 通行证已经在上面拿到了）。仍只画面板、不跑任何后续步骤。
             initError = message
             modelContainer = SchemaGuard.placeholderContainer(schema: schema)
             return
@@ -1428,6 +1445,11 @@ struct DanglingToOneEdge: Hashable {
 /// 为什么只能在容器打开前用 SQL：fault 复活的失效空壳 backing 已无效，
 /// SwiftData 内对其置 `relationship = nil` 会抛错（外部实测）。
 /// 失败隔离：任何步骤出错只记日志并返回 —— 修复绝不阻断开库。
+///
+/// ⚠️ 它会 `UPDATE … SET col = NULL` 提交，是**写盘**操作 ⇒ 必须持 `SchemaGuard.GatePermit`，
+/// 也就是只能站在 schema 门**之后**（`PreContainerPlan` 名册第 3 颗）。
+/// 在此之前它站在门之前，面板那句「你的库文件没有被改动」就是一句偶尔为假的承诺 ——
+/// 而那句承诺是用户决定"要不要拿备份去回退"的唯一依据。
 enum DanglingEdgeRepair {
     /// 读数（key = "\(ownerTable).\(column)"）；-1 = 该边扫描失败（不计入总数）。
     struct Report: Equatable {
@@ -1445,8 +1467,15 @@ enum DanglingEdgeRepair {
         String(cString: sqlite3_errmsg(db))
     }
 
-    static func run(at storeURL: URL) -> Report {
+    static func run(at storeURL: URL, permit: SchemaGuard.GatePermit) -> Report {
         var report = Report()
+        // 编译期已经挡掉"没有通行证就调用"，这里核的是运行期那一格：
+        // 拿 A 库的通行证去写 B 库必须被拒，否则"过了门"和"改的是哪颗库"就脱钩了。
+        guard permit.allows(writingTo: storeURL) else {
+            MixLog.error("[DanglingEdgeRepair] 通行证绑定的不是这颗库，拒绝写盘：\(storeURL.path)")
+            report.aborted = true
+            return report
+        }
         var db: OpaquePointer?
         guard sqlite3_open(storeURL.path, &db) == SQLITE_OK else {
             MixLog.error("[DanglingEdgeRepair] 打不开库，本次跳过：\(storeURL.path)")

@@ -194,3 +194,47 @@ enum LaunchPlan {
         return LedgerState(doneKeys: done, lastRunAt: lastRun)
     }
 }
+
+/// 容器**之前**那一段的名册。与 `LaunchPlan.steps` 分列的唯一理由是签名：这一段还拿不到
+/// `ModelContainer`（`LaunchPlan.run(container:)` 要求已有容器），结构上进不去那张清单。
+///
+/// **分界**（同时写进 `CLAUDE.md`，免得"两个真源"变成"两处各说一套"）：
+/// · 容器**之后**的启动顺序，真源只有 `LaunchPlan.steps`；
+/// · 容器**之前**的启动顺序，真源只有下面这张 `PreContainerPlan.steps`。
+///
+/// 顺序**即 `MixCutApp.init` 里的实际调用次序**，由 `check_schema_ledger_guards.sh` SL-15 逐颗
+/// 按 `marker` 定位核对：漏一颗、换次序、或往"门之后 open 之前"塞一步 SQL 写盘，都会变红。
+///
+/// 这里刻意**不配 executor**（与 `LaunchPlan` 不同）：这一段每颗的失败处置都不一样 —— 门拦住要画面板
+/// 并 `return`、修复失败只记日志继续、开库失败要降级内存，压成一种驱动语义反而把差别抹平。
+/// 真正拦住了"修库跑在门之前"的也不是这张名册，而是类型：**`GatePermit` 只有
+/// `SchemaGuard.evaluate` 造得出（`init` 是 fileprivate）**，所以那一格是编译错误。
+/// 名册管的是另一格 —— 别的步骤别在这段偷偷写盘。
+enum PreContainerPlan {
+
+    /// `marker` 是 `MixCutApp.init` 里那一颗的**逐字**调用式。改调用写法必须同时改这里，
+    /// 判据当场红是对的：那正是"两处各写一遍"要防的漂移。
+    struct Step {
+        let id: String
+        let requires: [String]
+        /// 会不会往库里写（SQL 级）。`true` ⇒ 必须排在 `schemaGate` 之后、且只能持 `GatePermit` 调用。
+        /// 整档 copy 不算写库（不改已有内容），所以搬迁那颗是 `false`。
+        let writesIntoStore: Bool
+        let marker: String
+    }
+
+    static let steps: [Step] = [
+        // 旧共享库 → 专属库的一次性搬迁：专属库已存在就直接跳过，从不改动已存在的库。
+        Step(id: "migrateDefaultStore", requires: [], writesIntoStore: false,
+             marker: "Self.migrateDefaultStoreToDedicated()"),
+        // 门：算指纹、比账本、分类变更，必要时生成**且校验**改前备份；发通行证，但不建容器。
+        Step(id: "schemaGate", requires: ["migrateDefaultStore"], writesIntoStore: false,
+             marker: "SchemaGuard.evaluate(schema: schema, storeURL: storeURL)"),
+        // 全段唯一被授权写库的一颗，必须持门发的通行证（详见 `DanglingEdgeRepair` 的说明）。
+        Step(id: "danglingEdgeRepair", requires: ["schemaGate"], writesIntoStore: true,
+             marker: "DanglingEdgeRepair.run(at: storeURL, permit: permit)"),
+        // 真的建容器、写账本、裁剪备份。
+        Step(id: "openStore", requires: ["schemaGate", "danglingEdgeRepair"], writesIntoStore: false,
+             marker: "SchemaGuard.open(permit: permit, schema: schema)"),
+    ]
+}

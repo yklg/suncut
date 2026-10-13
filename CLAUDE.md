@@ -423,6 +423,10 @@ cp ~/Library/Application\ Support/Suncut/Suncut.store* .scratch/store-backup-${T
 2. 模型清单与版本锚点在 `MixCut/Models/SchemaVersions.swift`（`AppSchemaV1` = 当前 10 个 `@Model`）。
    开库走 `MixCut/App/SchemaGuard.swift`：算描述行 → 指纹比对 → 变更分类 → 需要时备份三件套 →
    `PRAGMA integrity_check` 自证 → 才建 `ModelContainer`。
+   2026-10-13 起这条路分成两步：`evaluate`（判定 + 改前备份，发一张 `GatePermit`）与 `open(permit:schema:)`（真的建容器）。
+   中间只允许一步写盘 —— 悬空边修复 `DanglingEdgeRepair`，而它的入参收 `GatePermit`
+   （`init` 是 `fileprivate`，全仓只有 `evaluate` 造得出）。于是"修复抢在门之前 UPDATE"从
+   注释里的约定变成**编译不过**，面板那句「你的库文件没有被改动」不再依赖"这次恰好无悬空"。
 3. **只增行**（加可选字段、加实体）会被判成轻量兼容 ⇒ 备份后照常开库。
    **有行消失**（删字段、改类型、改属性名、改关系）判成不可自动迁移 ⇒ **拒绝开库**并给出备份路径。
    这时不要绕门：补一个 `AppSchemaV2` + `MigrationStage.custom`。
@@ -430,18 +434,32 @@ cp ~/Library/Application\ Support/Suncut/Suncut.store* .scratch/store-backup-${T
    （每次成功开库都覆盖成当时那个二进制的 schema），所以任何**更旧**的二进制在同一棵数据根上都会被这道门
    一起拒掉。真正的退路是把 `.backup` 目录里的四件（`.store`/`-wal`/`-shm`/`.launch-ledger`）原样放回。
    门现在把写下记录的版本号一起记进 `Ledger.appVersion`（**必须是 Optional**，否则老 sidecar 解码失败
-   ⇒ 读成"首次带门启动" ⇒ 这道防线被静默废掉），界面据此把"跑的是旧产物"与"代码真删了字段"分开说。
+   ⇒ 这份记录读不出来 ⇒ 这道防线在那次启动帮不上忙），界面据此把"跑的是旧产物"与"代码真删了字段"分开说。
+   ⚠️ 顺带两条已经改过的口径，别照旧说法办事（都是 2026-10-13 实测落地的）：
+   - **sidecar 坏了不等于"没带门跑过"**。读不出来时判定仍是放行（一个坏 JSON 不该让应用打不开，
+     这是 `2026-10-01` 那份计划单独拍过的口径），但不再静默：留一行 `MixLog.error` + **先做一份自证过的改前备份**
+     再开库。想把它改成"读不出来就拒开"之前，先重拍那条决策 —— 判据（SL-16）会当场把这种改动咬红。
+   - **备份保留是两个族**：门的 `*.backup` 与修复的 `*.pre-dangling-*`（按时间戳成组，一组三份不裁半组），
+     各留最近 3 份。原先那句"连续拒开会攒多份，是故意的"随之作废 —— 拒开现在不碰库，那些备份逐字节相同。
 4. 门的两处已知不完备，写在这而不是藏在代码里：
    - 新增**必需且无默认值**的字段会落在"只增"，轻量迁移不一定过得去 —— 那种失败会走内存降级，
      其文案已改成**不指引删库**；
    - `#Index` 变更**不进指纹**（`Entity.indices` 要 macOS 15+，本工程部署目标 14.0），
      所以"指纹没变"只能读成"除索引外没变"。
-5. 机械判据：`LC_ALL=en_US.UTF-8 ./scripts/check_schema_ledger_guards.sh`（SL-01~14）——
+5. 机械判据：`LC_ALL=en_US.UTF-8 bash scripts/check_schema_ledger_guards.sh`（SL-01~16；
+   这脚本没有 `+x`，写 `./scripts/…` 只会拿到 `permission denied`，2026-10-13 实测两种写法后定下来用 `bash`）——
    `@Model` 与 `AppSchemaV1.models` 逐名对账、清单/动作条数相等、`did…_v1` 键与账本**双向**覆盖、
    `orphanGC` 的 `requires` 必须含三颗、有真信号的步骤必须回报 `Bool`、防线文案不得叫用户删库、
    启动账本 `Ledger` 里老 sidecar 可能没有的键**必须是 Optional**（SL-14：带默认值也不行，
-   Swift 合成解码器不查默认值，实测 `keyNotFound`）。启动顺序与前序约束的**唯一来源**是
-   `MixCut/App/LaunchSteps.swift` 的清单，别退回平铺调用。
+   Swift 合成解码器不查默认值，实测 `keyNotFound`）、容器之前那一段的名册与调用次序逐颗对账（SL-15）、
+   账本"没有文件"与"读不出来"不许同形且那一格必须留日志+备份、不许擅自改成拒开（SL-16）。
+6. **启动顺序有两个真源，分界是"有没有容器"**，别把它们读成一张清单：
+   - 容器**之后**：`MixCut/App/LaunchSteps.swift` 的 `LaunchPlan.steps`（19→20 颗 fixup，带 executor、账本、失败传播）；
+   - 容器**之前**：同文件的 `PreContainerPlan.steps`（搬迁 → 门 → 持通行证的悬空边修复 → 开库）。
+     这一段进不去 `LaunchPlan` 是因为它的动作签名里没有 `ModelContainer` 可拿。
+     为什么这里不配 executor：每颗的失败处置都不同（门拦住画面板并 `return`、修复失败只记日志、
+     开库失败要降级内存），压成一种驱动反而把差别抹平。
+   别退回平铺调用，也别往"门之后、开库之前"塞一步写盘 —— SL-15 会把这两件事都咬红。
 
 ### 不要由工具去打开用户的活库（这条原先只写在脚本注释里，2026-10-11 补上判据与出处）
 

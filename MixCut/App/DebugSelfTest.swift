@@ -1267,6 +1267,15 @@ enum DebugSelfTest {
         return scene.ctx.safeSave()
     }
 
+    /// 合成库也要走真门：`SchemaGuard.evaluate` 对任何 URL 一视同仁，工装没有第二条路能拿到通行证。
+    /// 于是"修复只在门后"这件事在自检里同样是**跑出来的**，不是靠注释要求的。
+    /// （造现场用的 `sqlExec` 直接写合成库不算破坏这条 —— 那颗文件此刻还不属于任何启动流程。）
+    private static func permit(for url: URL) -> SchemaGuard.GatePermit? {
+        let schema = Schema(versionedSchema: AppSchemaV1.self)
+        guard case .proceed(let issued) = SchemaGuard.evaluate(schema: schema, storeURL: url) else { return nil }
+        return issued
+    }
+
     /// 悬空现场：先造满现场，再用 SQL 直接删 A 行（模拟漏边的生产删除；
     /// ZVIDEO.ZOWNERPROJECT 保持指向被删行 = 永久悬空）。
     @MainActor
@@ -1402,6 +1411,7 @@ enum DebugSelfTest {
         let probe = MatrixProbe(path: out)
         probe.emit("# ⑯d 修复→重开端到端")
         guard let url = makeDanglingOwnerEdge(dir) else { probe.emit("- FAIL：造现场失败"); return }
+        guard let permit = permit(for: url) else { probe.emit("- FAIL：门未放行合成库"); return }
 
         let danglingSQL = """
             SELECT COUNT(*) FROM ZVIDEO
@@ -1409,7 +1419,7 @@ enum DebugSelfTest {
               AND ZOWNERPROJECT NOT IN (SELECT Z_PK FROM ZPROJECT)
             """
         let before = sqlInt(at: url, danglingSQL)
-        let report = DanglingEdgeRepair.run(at: url)
+        let report = DanglingEdgeRepair.run(at: url, permit: permit)
         let after = sqlInt(at: url, danglingSQL)
         let firstKey = "ZVIDEO.ZOWNERPROJECT"
         let firstChanges = report.repaired[firstKey] ?? 0
@@ -1417,9 +1427,24 @@ enum DebugSelfTest {
         probe.emit("- 备份路径：\(report.backupPath ?? "无")")
 
         // 二次修复：幂等
-        let second = DanglingEdgeRepair.run(at: url)
+        let second = DanglingEdgeRepair.run(at: url, permit: permit)
         let secondTotal = second.repaired.values.reduce(Int32(0), +)
         probe.emit("- 二次修复：changes 合计=\(secondTotal)（应 0）")
+
+        // 通行证绑错库：另造一棵带悬空边的库，拿**第一棵**的通行证去修 ⇒ 必须拒写、那棵原样不动。
+        // 这一腿是 `GatePermit.allows(writingTo:)` 的唯一真机读数：没有它，通行证就只是一张通用许可证。
+        var boundOK = false
+        let boundDir = dir.appendingPathComponent("bound", isDirectory: true)
+        try? FileManager.default.createDirectory(at: boundDir, withIntermediateDirectories: true)
+        if let other = makeDanglingOwnerEdge(boundDir) {
+            let beforeOther = sqlInt(at: other, danglingSQL)
+            let wrong = DanglingEdgeRepair.run(at: other, permit: permit)
+            let afterOther = sqlInt(at: other, danglingSQL)
+            boundOK = wrong.aborted && beforeOther == 1 && afterOther == 1
+            probe.emit("- 通行证绑错库：aborted=\(wrong.aborted)；悬空 \(beforeOther ?? -1) → \(afterOther ?? -1)（应拒写且保持 1）")
+        } else {
+            probe.emit("- FAIL：造不出第二棵现场，绑错库这一腿没跑成")
+        }
 
         // 重开容器，索引/快照全程不 trap；B 侧活边仍可正向解析
         var reopenOK = false
@@ -1447,7 +1472,7 @@ enum DebugSelfTest {
             probe.emit("- FAIL：重开容器失败：\(error)")
         }
         let pass = before == 1 && firstChanges >= 1 && after == 0
-            && secondTotal == 0 && reopenOK && !report.aborted
+            && secondTotal == 0 && reopenOK && boundOK && !report.aborted
         probe.emit(pass ? "PASS" : "FAIL")
     }
 
@@ -1489,7 +1514,11 @@ enum DebugSelfTest {
                   AND \(edge.column) NOT IN (SELECT Z_PK FROM \(edge.destinationTable))
                 """
             let before = sqlInt(at: url, countSQL)
-            let rep = DanglingEdgeRepair.run(at: url)
+            guard let permit = permit(for: url) else {
+                probe.emit("- 边 \(i) \(edge.ownerTable).\(edge.column)：FAIL 门未放行合成库")
+                allPass = false; continue
+            }
+            let rep = DanglingEdgeRepair.run(at: url, permit: permit)
             let after = sqlInt(at: url, countSQL)
             let key = "\(edge.ownerTable).\(edge.column)"
             let changes = rep.repaired[key] ?? 0
@@ -1508,7 +1537,13 @@ enum DebugSelfTest {
         let probe = MatrixProbe(path: out)
         probe.emit("# ⑯f 修复失败隔离")
         let badURL = URL(fileURLWithPath: "/nonexistent-dir-\(UUID().uuidString)/x.store")
-        let rep = DanglingEdgeRepair.run(at: badURL)
+        // 门未放行时压根不该调用修复；读数按"没修成且未阻断"记（aborted 初值即此义）。
+        var rep = DanglingEdgeRepair.Report(aborted: true)
+        if let permit = permit(for: badURL) {
+            rep = DanglingEdgeRepair.run(at: badURL, permit: permit)
+        } else {
+            probe.emit("- 门先拦住了这颗路径，修复未被调用")
+        }
         // sqlite 可能延迟到 prepare 才报错：aborted 或全部计数 -1 都算「没修成且未阻断」。
         let isolated = rep.aborted || rep.counts.values.allSatisfy { $0 == -1 }
         probe.emit("- 不可打开路径：aborted=\(rep.aborted)；isolated=\(isolated)")
