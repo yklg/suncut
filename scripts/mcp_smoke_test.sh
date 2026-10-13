@@ -8,8 +8,11 @@
 #   ② 旧版第 29 行无条件 create_project 且跑完不清理 ⇒ 名字叫"冒烟"，实际在写用户真库。
 #      现默认全程只读；要写必须显式 --allow-write，且那一档会自己把建出来的项目删回去。
 #      2026-10-11 起这一条不再是"靠人核对"：--allow-write 会按端口取 LISTEN pid、用 lsof 实查
-#      那个进程真打开的 *.store 落在哪儿，命中活库目录当场拒写。原因：假根已从固定路径改成
+#      那个进程真打开的 *.store 落在哪儿。原因：假根已从固定路径改成
 #      每轮 mktemp（check_mcp_api_guards.sh），原先"看它在不在 fake-appsupport"这个人眼锚点没了。
+#      2026-10-13 方向翻成**白名单**（§6-9）：对面每颗 .store 都必须落在本机临时目录或本仓 .scratch
+#      里，谁都不认识的路径一律拒写 —— 原先"命中活库即拒、其余打印后放行"是黑名单，
+#      而它静默的那一半（未知路径被写坏）正是这条阀要防的。
 #
 # 注意：刻意不开 set -e —— grep/curl 无命中时退出码为 1，会在断言打印之前静默中止脚本（本仓踩过）。
 set -uo pipefail
@@ -107,11 +110,17 @@ print("list_projects ✓")'
 [ $? -eq 0 ] || fail=1
 
 if [ "$ALLOW_WRITE" = "1" ]; then
-    # ---- 写档前置：按 pid 实查对面持有的是哪颗库 ----
-    # 判据要拦的是"把写打到用户的活库"，所以直接问 OS：应答这个端口的进程打开了哪颗 *.store。
-    # 两条都拦：①落在活库目录 ⇒ 拒；②一颗 .store 都没有（内存降级态）⇒ 无从判断写去哪，也拒。
-    # LIVE_STORE_DIR 只给 selftest 用（同 check_mcp_api_guards.sh 的口径）：指向一棵合成目录，
-    # 用来证明这颗判据真的会拒，而不是拿用户的真库去做扰动。
+    # ---- 写档前置：按 pid 实查对面持有的是哪颗库，且**只认白名单** ----
+    # 判据要拦的是"把写打到用户的数据"。方向从黑名单（命中活库目录即拒）翻成白名单（§6-9）：
+    # 对面打开的每一颗 *.store 都必须落在**工装自己造的地盘**里，否则拒写。
+    # 为什么白名单而不是"未知即放行 + 打印出来看一眼"：那条安全阀的失效形态恰好是静默的 ——
+    # 一颗谁都不认识的库（挂载卷上的副本、别的用户目录、手拷出去的一份）被写坏了没人会知道，
+    # 而"打印出来"要求每次都真有人去读那行输出，这在本仓已经被证伪过（假库锚点丢掉的正是这一眼）。
+    # 白名单两条地盘，各自的来源写清楚，加第三条时必须同时指出是谁造的：
+    #   · 本机临时目录 —— check_mcp_api_guards.sh 每轮 `mktemp -d …/suncut-mcp-guards.XXXXXX`、
+    #     verify_graph_broadcast.sh 的 `WORKROOT=$(mktemp -d)`、以及 Agent/人手工起的合成根；
+    #   · 本仓 .scratch —— 2026-10-04 起的持久假根 `mcp-guards/fake-appsupport`（UI 自动化也指它）。
+    # 拦下时仍分两种措辞（同一条判据、两种解释，不是两套实现）：落在活库目录就明说"那是你的活库"。
     LIVE_DIR="${LIVE_STORE_DIR:-${HOME}/Library/Application Support/Suncut}"
     LISTEN_PID="$(lsof -nP -iTCP:${PORT} -sTCP:LISTEN -t 2>/dev/null | head -1)"
     if [ -z "$LISTEN_PID" ]; then
@@ -123,13 +132,31 @@ if [ "$ALLOW_WRITE" = "1" ]; then
         echo "FAIL[判据失效] pid ${LISTEN_PID} 没有打开任何 .store（多半是内存降级态）—— 无法证明写会落到哪，拒写" >&2
         exit 2
     fi
-    if printf '%s\n' "$OPEN_STORES" | grep -qF "${LIVE_DIR}/"; then
-        echo "FAIL 对面持有你的**活库**，拒写：" >&2
-        printf '%s\n' "$OPEN_STORES" | grep -F "${LIVE_DIR}/" | sed 's/^/       /' >&2
+    # 两边都取 realpath：/tmp 在 macOS 是 /private/tmp 的软链，直接比字符串会误拒自己的合法夹具。
+    norm() { python3 -c 'import os,sys;print(os.path.realpath(sys.argv[1]))' "$1"; }
+    OK_TMP="$(norm "${TMPDIR:-/tmp}")"
+    OK_TMP2="$(norm /tmp)"
+    OK_SCRATCH="$(norm "$ROOT/.scratch")"
+    refused=""
+    while IFS= read -r one_store; do
+        [ -z "$one_store" ] && continue
+        n="$(norm "$one_store")"
+        case "$n" in
+            "$OK_TMP"/*|"$OK_TMP2"/*|"$OK_SCRATCH"/*) ;;
+            *) refused="${refused}${one_store}"$'\n' ;;
+        esac
+    done <<< "$OPEN_STORES"
+    if [ -n "$refused" ]; then
+        if printf '%s\n' "$refused" | grep -qF "${LIVE_DIR}/"; then
+            echo "FAIL 对面持有你的**活库**，拒写：" >&2
+        else
+            echo "FAIL 对面的库不在工装白名单（本机临时目录 / 本仓 .scratch）里，拒写：" >&2
+        fi
+        printf '%s\n' "$refused" | sed '/^$/d;s/^/       /' >&2
         echo "       要测写路径：先由 scripts/check_mcp_api_guards.sh 拉起每轮临时假根实例，再指它的端口。" >&2
         exit 1
     fi
-    echo "== --allow-write：已实查 pid ${LISTEN_PID} 持有的是非活库，放行 =="
+    echo "== --allow-write：已实查 pid ${LISTEN_PID}，它打开的库全在工装白名单内，放行 =="
     printf '%s\n' "$OPEN_STORES" | sed 's/^/     /'
     echo "== 建一个临时项目再删回去 =="
     created=$(call '{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"create_project","arguments":{"name":"MCP冒烟临时项目"}}}')
