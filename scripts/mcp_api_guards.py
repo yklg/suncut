@@ -409,13 +409,24 @@ def main():
         if want and cid not in want:
             continue
         if tier == DISPATCH and not (args.allow_dispatch and args.i_understand_real_calls):
-            print("%-8s SKIP  %-52s 需要 --allow-dispatch --i-understand-real-calls 双开关" % (cid, title))
+            # 文案说的是"今天这条路整条不通"，不是"开了开关就能跑"——
+            # 派单档还缺一颗从未赋值的夹具（ctx["seed_project"]，见下面那条判据与台账 §6-7）。
+            print("%-8s SKIP  %-52s 需要 --allow-dispatch --i-understand-real-calls 双开关；"
+                  "且派单夹具 seed_project 从未赋值 ⇒ 真开了开关也会按『判据无法成立』退出"
+                  % (cid, title))
             skipped += 1
             _results.append({"id": cid, "title": title, "tier": tier, "status": "skip"})
             continue
         if tier == DISPATCH and not (args.allow_dispatch or args.i_understand_real_calls):
             sys.stderr.write("FAIL 派单类要求两个开关同时给，缺一个即拒绝\n")
             return 3
+        if tier == DISPATCH and ctx["seed_project"] is None:
+            # 开关给了也跑不了：这条判据缺的是**夹具**，不是产品坏了。
+            # 报"判据无法成立"（退出码 2）而不是让它带着 None 去调用、再读成一条功能红。
+            sys.stderr.write("FAIL[判据无法成立] %s 需要 seed_project 这颗派单夹具，"
+                             "而本脚本从未给它赋值 ⇒ 派单档今天测不到（台账 §6-7 在册）。"
+                             "这不是产品失败，是覆盖缺失，别去改产品码。\n" % cid)
+            return 2
         try:
             detail = fn(c, ctx)
             print("%-8s PASS  %-52s %s" % (cid, title, detail))
