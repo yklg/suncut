@@ -153,7 +153,7 @@ struct ExportInput: Sendable {
                   let video = segment.video else { continue }
             // 走"当前生效画面"（替换版=合成片整段；原版=源视频帧区间）
             let ep = segment.effectivePicture
-            guard !ep.videoPath.isEmpty, FileManager.default.fileExists(atPath: ep.videoPath) else { continue }
+            guard !ep.videoPath.isEmpty, FileHelper.isMaterialFilePresent(path: ep.videoPath) else { continue }
             segments.append((path: ep.videoPath, start: ep.startTime, end: ep.endTime))
             maxWidth = max(maxWidth, video.width)
             maxHeight = max(maxHeight, video.height)

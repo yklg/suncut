@@ -59,8 +59,15 @@ struct RangeVideoPlayer: View {
     }
 
     private func startPlayback() {
-        guard player == nil,
-              !videoPath.isEmpty, FileManager.default.fileExists(atPath: videoPath) else { return }
+        guard player == nil, !videoPath.isEmpty else { return }
+        // 与 `InlineVideoPlayer` 同一颗判定、同一句人话（方案批 5 的族修：这里此前是
+        // `fileExists` + 静默 `return` ⇒ 用户对着一张死卡点了没反应，还以为按钮坏了）。
+        guard FileHelper.isMaterialFilePresent(path: videoPath) else {
+            ToastCenter.shared.show(
+                MissingMaterialCopy.fullMessage(fileName: URL(fileURLWithPath: videoPath).lastPathComponent),
+                icon: "exclamationmark.triangle.fill", style: .warning)
+            return
+        }
         let item = AVPlayerItem(url: URL(fileURLWithPath: videoPath))
         let halfFrame = fps > 0 ? 0.5 / fps : 0.01
         item.forwardPlaybackEndTime = CMTime(seconds: max(0, endTime - halfFrame), preferredTimescale: 600)

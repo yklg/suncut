@@ -45,7 +45,9 @@ enum FFmpegError: LocalizedError {
             return "没有文件读写权限。请检查导出目录的访问权限，或换一个目录重试。"
         }
         if s.contains("no such file") || s.contains("does not exist") {
-            return "找不到源视频文件，它可能已被移动或删除。请重新导入该素材。"
+            // 短标签取自唯一真源，但**结论保留自己那份**（这里要的是重新导入，不是放回原处）——
+            // 方案批 5 明令"只统一措辞骨架，不把两种不同结论强行说成一种"。
+            return MissingMaterialCopy.needsReimport
         }
         if s.contains("invalid data found") || s.contains("moov atom not found") || s.contains("could not find codec") {
             return "视频文件已损坏或格式不受支持，无法处理。建议用其他工具转成 MP4(H.264) 后重新导入。"

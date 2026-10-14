@@ -14,11 +14,17 @@ struct ImportView: View {
     @Bindable var importVM: ImportViewModel
     @Environment(\.modelContext) private var modelContext
     @State private var isDragTargeted = false
+    /// 批量删除的二次确认（只在多选模式下由工具栏的「删除」唤起）
+    @State private var showBatchDeleteConfirm = false
     @State private var showingFilePicker = false
     /// 导入任务句柄，用于「停止导入」取消
     @State private var importTask: Task<Void, Never>?
     /// 本批导入新视频的默认素材来源（与「上传自建分镜」入口分别记忆，互不污染）
     @AppStorage("importDefaultSourceRaw") private var batchSourceRaw: String = SegmentSource.curated.rawValue
+    /// 「显示丢失素材」开关：打开后源文件已不存在的卡回到网格里，但不可播放 ——
+    /// 显示占位 + 完整路径 + 「重新检查」，因为找回文件需要的是路径，而播放只会失败。
+    /// 与上面那颗同族同位置：这是**界面偏好**，不落库。
+    @AppStorage("importShowsMissingVideos") private var showsMissingVideos = false
 
     /// 本页视频播放设备的唯一协调器：所有成片卡片共享，同一时刻只允许一个播放。
     @State private var playbackCoordinator = PlaybackCoordinator()
@@ -30,11 +36,63 @@ struct ImportView: View {
         // 原先的 SkeletonView 唯一的副作用就是每次换模块白闪一帧。
         mainContent
             .task(id: project.id) {
+                // 跨项目串选的门：importVM 挂在 ContentView 上**跨页长活**，选择集是全局 video id。
+                // 不换掉的话，在 A 项目勾 3 条再切到 B 项目点「删除」会删到 A 的素材上。
+                // 判据 UG-G12 钉住这一句（它在 .task body 内必须在，摘掉必红）。
+                importVM.setVideoSelectionMode(false)
                 let t0 = Date()
                 let thumbPaths = project.videos.compactMap(\.thumbnailPath)
                 ThumbnailCache.shared.prewarm(paths: thumbPaths, for: project.id)
+                // 磁盘对账搭在**同一颗** .task 上：不新开任务、不做 LaunchStep（启动期算出的
+                // 集合没有承接者，而加一颗 step 要同步的门单已排到十六条）。节流在 store 里，
+                // 分镜库那边的同一颗 `.task(id:)` 再调一次也不会重扫。
+                await MaterialAvailabilityStore.shared.refresh(for: project)
                 MixLog.info("[Perf] Import: \(Int(Date().timeIntervalSince(t0) * 1000))ms / videos=\(project.videos.count)")
             }
+            .confirmationDialog(
+                "删除选中的 \(importVM.selectedVideoIDs.count) 个视频？",
+                isPresented: $showBatchDeleteConfirm,
+                titleVisibility: .visible
+            ) {
+                Button("删除 \(importVM.selectedVideoIDs.count) 个", role: .destructive) {
+                    importVM.deleteSelectedVideos(in: project,
+                                                  visibleOrder: numberedVideos.map(\.video))
+                }
+                Button("取消", role: .cancel) { }
+            } message: {
+                // 数字与两档引用数都来自 VM 的实数函数；这句里的「编号会整体前移」不是客套，
+                // video_no 是 Agent 的寻址契约（ProjectVideoDedup.swift:53-59 自述）。
+                Text(batchDeleteConfirmMessage)
+            }
+            .background(
+                // 隐藏快捷键：ESC 退出多选；⌘A 全选；⌘D 反选；⌘0 清空。
+                // 逐字对齐 `SegmentLibraryView.swift:221-246` 那套透明 Button 写法（仓里不留第三套）。
+                // 关键在**只在多选态存在**：非多选时这四颗按键根本不在响应链里，
+                // 所以页内文本框的 ⌘A「全选文本」不会被抢 —— 凭印象常挂快捷键会撞掉它。
+                Group {
+                    if importVM.isVideoSelectionMode {
+                        Button("") {
+                            withAnimation(DesignTokens.Motion.hover) {
+                                importVM.setVideoSelectionMode(false)
+                            }
+                        }
+                        .keyboardShortcut(.cancelAction)
+                        .opacity(0)
+
+                        Button("") { importVM.selectAllVisibleVideos(numberedVideos.map(\.video)) }
+                            .keyboardShortcut("a", modifiers: .command)
+                            .opacity(0)
+
+                        Button("") { importVM.invertVisibleVideoSelection(numberedVideos.map(\.video)) }
+                            .keyboardShortcut("d", modifiers: .command)
+                            .opacity(0)
+
+                        Button("") { importVM.clearVideoSelection() }
+                            .keyboardShortcut("0", modifiers: .command)
+                            .opacity(0)
+                    }
+                }
+            )
     }
 
     private var mainContent: some View {
@@ -198,6 +256,9 @@ struct ImportView: View {
         }
     }
 
+    /// 素材可用性结果：全链路只有 `MaterialAvailabilityStore.shared` 一个持有者，视图**只读不回写**。
+    private var availability: MaterialAvailabilityStore { MaterialAvailabilityStore.shared }
+
     /// 视频编号：与素材库卡片 #、Agent（MCP）的 video_no 同一套规则。
     /// 规则真源在 `Project.videoNoByVideoID` / `Project.associatedVideos`，此处只做展示过滤。
     private var numberedVideos: [(no: Int, video: Video)] {
@@ -209,6 +270,10 @@ struct ImportView: View {
                 return (no: no, video: video)
             }
             .sorted { $0.no < $1.no }
+            // 丢失项的过滤**只加在链尾**：编号在过滤之前就已按真源算完，藏掉几张卡不会让
+            // 剩下的卡改号（video_no 是 Agent 的寻址契约，见 `ProjectVideoDedup.swift:53-59`）。
+            // 若把过滤加到 `associatedVideos` 那一层，重排出来的号就与库里的那套分家了。
+            .filter { showsMissingVideos || !availability.missingVideoIDs.contains($0.video.id) }
     }
 
     // MARK: - 已导入视频列表（网格并排）
@@ -219,9 +284,30 @@ struct ImportView: View {
                 Text("已导入视频")
                     .font(DesignTokens.Typography.bodyEmphasis)
                 Spacer()
-                Text("\(videos.count) 个视频")
+                Text("显示 \(videos.count) 个视频")
                     .font(DesignTokens.Typography.caption)
                     .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .fixedSize()
+                // 藏起来的丢失项必须在这一行就出声：只写「显示 N 个」而不说另外 M 个没显示，
+                // 用户会以为素材被删了 —— 而这恰恰是我们**没有**删它的那种状态。
+                if hiddenMissingCount > 0 {
+                    Text("另有 \(hiddenMissingCount) 个素材文件已丢失")
+                        .font(DesignTokens.Typography.caption)
+                        .foregroundStyle(.orange)
+                        .lineLimit(1)
+                        .fixedSize()
+                }
+                Button(importVM.isVideoSelectionMode ? "退出多选" : "多选") {
+                    importVM.setVideoSelectionMode(!importVM.isVideoSelectionMode)
+                }
+                .buttonStyle(.plain)
+                .font(DesignTokens.Typography.caption)
+                .foregroundStyle(importVM.isVideoSelectionMode ? .primary : .secondary)
+            }
+            missingMaterialControls
+            if importVM.isVideoSelectionMode {
+                videoBatchActionBar(videos: videos)
             }
 
             // 每张卡片固定宽度约 400px (190*2 + 分隔线 + padding)，可并排
@@ -244,7 +330,26 @@ struct ImportView: View {
                         Task { await importVM.reidentifyWholeVideo(video, context: modelContext) }
                     }, isReidentifying: importVM.reidentifyingVideoIDs.contains(video.id),
                        reidentifyProgress: importVM.reidentifyProgress[video.id].map { "\($0.done + 1)/\($0.total)" },
-                       playbackCoordinator: playbackCoordinator)
+                       playbackCoordinator: playbackCoordinator,
+                       isSelectionMode: importVM.isVideoSelectionMode,
+                       isChecked: importVM.selectedVideoIDs.contains(video.id),
+                       isMissing: availability.missingVideoIDs.contains(video.id),
+                       onRecheckMissing: {
+                           Task { await availability.refresh(for: project, force: true) }
+                       })
+                    .contentShape(Rectangle())
+                    .onTapGesture {
+                        // 只在多选模式接管点击：否则会把"点卡片播放"抢掉（那是零行为变更的红线）
+                        guard importVM.isVideoSelectionMode else { return }
+                        // ⇧+点击做范围连选，锚点与顺序都按"界面上看到的这份"取（Finder 同款手感）。
+                        // 读 NSApp.currentEvent 而不是再造一套手势：SwiftUI 的 onTapGesture 不给事件对象，
+                        // 而 macOS 上这就是点击当下修饰键的权威来源。
+                        if NSApp.currentEvent?.modifierFlags.contains(.shift) == true {
+                            importVM.extendVideoSelection(to: video, visibleOrder: numberedVideos.map(\.video))
+                        } else {
+                            importVM.toggleVideoSelection(video)
+                        }
+                    }
                     .overlay(alignment: .topLeading) {
                         // 视频编号徽章：与 Agent 指令里的 video_no 同一套编号（「1 号视频」即此号）
                         Text("\(item.no) 号")
@@ -259,6 +364,111 @@ struct ImportView: View {
                 }
             }
         }
+    }
+
+    // MARK: - 丢失素材：出声与找回路径
+    //
+    // 三档状态各说一句人话，一句都不许省：**有丢失**（可以藏、可以显示、可以真删记录）、
+    // **查不了**（degraded，"我查不了"必须显示成"查不了"，不许伪装成"没丢"也不许伪装成"丢了"）、
+    // **有记录未参与判定**（路径不在当前素材目录内，多半是品牌迁移没走完）。
+
+    /// 当前被藏起来的丢失项条数（开关打开后就没有"藏起来"这一说了）。
+    private var hiddenMissingCount: Int { showsMissingVideos ? 0 : availability.missingVideoIDs.count }
+
+    /// 界面上看得见的丢失卡，按渲染顺序。「全选丢失项」的定义域 —— 只在这份里选，
+    /// 与 Core 作用域判定的"可见集合"同口径，越界那道门才不会反过来拒掉自己。
+    private var missingVisibleVideos: [Video] {
+        numberedVideos.filter { availability.missingVideoIDs.contains($0.video.id) }.map(\.video)
+    }
+
+    @ViewBuilder
+    private var missingMaterialControls: some View {
+        if let warning = availability.warning {
+            InlineBanner(style: .warning, message: warning,
+                         onRetry: { Task { await availability.refresh(for: project, force: true) } })
+        }
+        if !availability.missingVideoIDs.isEmpty || availability.excludedRecords > 0 {
+            HStack(spacing: DesignTokens.Spacing.normal) {
+                if !availability.missingVideoIDs.isEmpty {
+                    Toggle("显示丢失的 \(availability.missingVideoIDs.count) 个（不可播放）",
+                           isOn: $showsMissingVideos)
+                        .font(DesignTokens.Typography.caption)
+                        .lineLimit(1)
+                        .fixedSize()
+                    Button("重新检查") {
+                        Task { await availability.refresh(for: project, force: true) }
+                    }
+                    .buttonStyle(.plain)
+                    .font(DesignTokens.Typography.caption)
+                    .foregroundStyle(.secondary)
+                    if showsMissingVideos {
+                        // 找回路径的终点：确认文件真的救不回来了，就把记录一起清掉。
+                        // 走的是批 2/3 那条唯一咽喉 ⇒ 天然带二次确认与 5 秒撤销。
+                        Button("全选丢失项") { importVM.selectMissingVideos(missingVisibleVideos) }
+                            .buttonStyle(.plain)
+                            .font(DesignTokens.Typography.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                if availability.excludedRecords > 0 {
+                    Text("\(availability.excludedRecords) 条记录的路径不在当前素材目录内，未参与判定")
+                        .font(DesignTokens.Typography.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .fixedSize()
+                }
+                Spacer()
+            }
+        }
+    }
+
+    // MARK: - 批量删除（多选工具栏 + 二次确认）
+    //
+    // 结构、文案与控件顺序对齐分镜侧那份（`SegmentLibraryView` 的 batchActionBar）——
+    // 仓里已有两份批量范式就是债，第三份只会让"哪套是对的"变成每次都要重问的问题。
+
+    /// 多选工具栏：数字全部来自 VM 的实数函数，不在这里自己数一遍（两套计数必然分家）。
+    private func videoBatchActionBar(videos: [(no: Int, video: Video)]) -> some View {
+        let order = videos.map(\.video)
+        let chosen = importVM.selectedVideoIDs.count
+        return HStack(spacing: DesignTokens.Spacing.comfortable) {
+            Text("已选 \(chosen) 个 · 总时长 \(Int(importVM.selectedVideoTotalDuration(in: project))) 秒")
+                .font(DesignTokens.Typography.caption)
+                .foregroundStyle(.secondary)
+                // 分镜侧那条血注释照抄：中文长行不换行也不截断，否则工具栏会把数字吃进第二行
+                .lineLimit(1)
+                .fixedSize()
+            Spacer()
+            Button("全选") { importVM.selectAllVisibleVideos(order) }
+            Button("反选") { importVM.invertVisibleVideoSelection(order) }
+            Button("清空") { importVM.clearVideoSelection() }
+            Button("删除 \(chosen) 个", role: .destructive) { showBatchDeleteConfirm = true }
+                .disabled(chosen == 0)
+        }
+        // 刻意用 .plain：默认按钮样式会把禁用项减淡，分镜侧记着这条 —— 减淡会让人以为
+        // "没有删除这个入口"，而它只是暂时不可点。
+        .buttonStyle(.plain)
+    }
+
+    /// 二次确认的正文：两档引用数 + 「编号会整体前移」+「文件仍在，24 小时后才回收」，一句都不能少。
+    ///
+    /// ⚠️ 「显示丢失素材 → 全选丢失项 → 删除」是本方案里**唯一**合法的"真删记录"入口，
+    /// 所以这句必须把不可逆的两件事说全：记录与分镜会一起删、老 video_no 会被后面的素材顶上来。
+    private var batchDeleteConfirmMessage: String {
+        let totals = importVM.videoDeletionTotals(in: project, visibleOrder: numberedVideos.map(\.video))
+        var lines: [String] = []
+        if totals.localOnlyCount > 0 {
+            lines.append("仅本项目使用 \(totals.localOnlyCount) 个：连记录与 \(totals.segmentsDeleted) 个分镜一起删（5 秒内可撤销）")
+        }
+        if totals.stillReferencedCount > 0 {
+            lines.append("还被其它项目引用 \(totals.stillReferencedCount) 个：只解除本项目关联，记录与分镜都保留")
+        }
+        if totals.unresolvableCount > 0 {
+            // 计数诚实：取不到关联的那几条既删不了也不该被算进上面任何一档 ⇒ 必须点名，不许静默少掉
+            lines.append("另有 \(totals.unresolvableCount) 个取不到本项目关联行，本次不会处理")
+        }
+        lines.append("删除后**后续视频编号会整体前移**；磁盘文件不会被删，24 小时后才由回收站处理")
+        return lines.joined(separator: "；")
     }
 
     private func isVideoFile(_ url: URL) -> Bool {
@@ -291,6 +501,15 @@ struct ImportedVideoCard: View {
     var reidentifyProgress: String? = nil
     /// 播放设备协调器（所有卡片共享同一实例以实现唯一播放）
     var playbackCoordinator: PlaybackCoordinator? = nil
+    /// 批量删除的多选态。⚠️ 必须走 props：直接读 `importVM.selectedVideoIDs` 会让任意一次
+    /// 勾选把整页卡片重绘一遍（分镜侧同条裁定）。
+    var isSelectionMode: Bool = false
+    var isChecked: Bool = false
+    /// 源文件已不存在（对账结果由视图传入，同上两条的 props 裁定）。
+    /// true 时**不实例化 `InlineVideoPlayer`**：播一个不在的文件只会换来一条事后归因的失败，
+    /// 而这一栏此刻该给的是**完整路径** —— 那是用户把文件放回原处唯一需要的东西。
+    var isMissing: Bool = false
+    var onRecheckMissing: (() -> Void)? = nil
 
     private let panelWidth: CGFloat = 190
 
@@ -419,6 +638,16 @@ struct ImportedVideoCard: View {
             Color.clear.frame(width: 0, height: 0)
         } else {
             cardBody
+                .overlay(alignment: .topTrailing) {
+                    if isSelectionMode {
+                        Image(systemName: isChecked ? "checkmark.circle.fill" : "circle")
+                            .font(.system(size: 18, weight: .semibold))
+                            .foregroundStyle(isChecked ? Color.accentColor : Color.secondary)
+                            .background(.thinMaterial, in: Circle())
+                            .padding(8)
+                            .allowsHitTesting(false)   // 点卡片的活交给父层的手势，圈只做显示
+                    }
+                }
         }
     }
 
@@ -466,13 +695,19 @@ struct ImportedVideoCard: View {
             }
 
             Button {
+                // 先问可用性：对一个已经不在的文件"在 Finder 中显示"是一条静默失败
+                //（系统什么都不做，也不报错），用户只会以为按钮坏了。
+                guard FileHelper.isMaterialFilePresent(path: video.localPath) else {
+                    ToastCenter.shared.show(
+                        MissingMaterialCopy.fullMessage(fileName: video.name),
+                        icon: "exclamationmark.triangle.fill", style: .warning)
+                    return
+                }
                 let url = URL(fileURLWithPath: video.localPath)
                 NSWorkspace.shared.activateFileViewerSelecting([url])
             } label: {
                 Label("在 Finder 中显示", systemImage: "folder")
             }
-
-            Divider()
 
             Divider()
 
@@ -504,11 +739,39 @@ struct ImportedVideoCard: View {
     }
 
     // MARK: - 左侧面板
+
+    /// 丢失素材的左栏：不实例化播放器，把**完整路径**摊在屏上（可选中复制），
+    /// 再给一个「重新检查」—— 用户把文件放回原处之后，这一颗就是唯一的自愈通道。
+    private var missingMaterialPanel: some View {
+        VStack(spacing: DesignTokens.Spacing.compact) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .font(.system(size: 26))
+                .foregroundStyle(.orange)
+            Text(MissingMaterialCopy.fullMessage(fileName: video.name))
+                .font(DesignTokens.Typography.caption)
+                .multilineTextAlignment(.center)
+                .lineLimit(3)
+            Text(video.localPath)
+                .font(DesignTokens.Typography.caption)
+                .foregroundStyle(.secondary)
+                .textSelection(.enabled)
+                .lineLimit(2)
+                .truncationMode(.middle)
+            Button("重新检查") { onRecheckMissing?() }
+                .controlSize(.small)
+        }
+        .padding(DesignTokens.Spacing.normal)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(Color.primary.opacity(0.05))
+    }
+
     private var leftPanel: some View {
         VStack(alignment: .leading, spacing: DesignTokens.Spacing.compact) {
             // 视频播放器
             ZStack {
-                if !isProcessing && video.status != .failed {
+                if isMissing {
+                    missingMaterialPanel
+                } else if !isProcessing && video.status != .failed {
                     InlineVideoPlayer(
                         videoPath: video.localPath,
                         thumbnailPath: video.thumbnailPath,

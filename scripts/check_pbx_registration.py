@@ -30,7 +30,10 @@ EXPECTED = ["RawAudioCacheStore.swift", "RawAudioCache.swift", "SegmentCommitter
              "AIModelPricing.swift", "NarrativeContinuity.swift", "SegmentSplitRule.swift",
              # 方案 kindled-cloud-robin.md 批 1（2026-10-10 登记）：漏登记的典型症状最阴 ——
              # 沙盒 typecheck 按文件系统扫，看不出漏登记；只有 xcodebuild 会报**别的文件** cannot find type。
-             "MissingMaterialFinder.swift"]
+             "MissingMaterialFinder.swift", "VideoDeletionScopeResolver.swift",
+             # 批 4（2026-10-14）：App 侧那个文件在 MixCut/Infrastructure/ 子目录里 ——
+             # register_pbx_file.py 早先只查 MixCut 顶层，子目录里的真文件会被判成"拼写错了"。
+             "MissingMaterialCopy.swift", "MaterialAvailabilityStore.swift"]
 
 
 def main() -> int:

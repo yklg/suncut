@@ -771,79 +771,370 @@ final class ImportViewModel {
 
     // MARK: - 视频删除（解除关联 vs 真删除）
 
-    /// 从项目中移除视频（解除关联）
-    /// 仅当视频不被任何项目引用时，才真正删除 Video + Segment + 磁盘文件
-    /// 删除视频（延迟删除 + 撤销浮条）
-    func deleteVideo(_ video: Video, from project: Project) {
-        guard modelContext != nil else { return }
-        let videoID = video.id
-        // 立即取消该视频的后台处理（删除意图）
-        cancelledVideoIDs.insert(videoID)
+    /// 一次视频删除的单位。
+    ///
+    /// `referenceCountBefore` **必须在摘关联之前算好并塞进值类型**：`Video.referenceCount` 读的就是
+    /// `projectVideos`，而下一步动的正是它 —— 事后再问只会得到已经被摘掉的数（批 3 的二次确认文案
+    /// 「仅本项目使用 A 个 / 还被其它项目引用 C 个」吃的就是这两颗数）。
+    private struct VideoDeletionUnit {
+        let video: Video
+        let pendingPVs: [ProjectVideo]
+        let referenceCountBefore: Int
+    }
 
-        // 界面隐藏：从 project.projectVideos 摘除该视频的关联（ImportView 读 project.videos）。
-        // pv 对象此刻不删，到 commit 时再真删。
-        let pvsToHide = project.projectVideos.filter { $0.video?.id == videoID }
-        let pvIDs = Set(pvsToHide.map(\.id))
-        project.projectVideos.removeAll { pvIDs.contains($0.id) }
+    /// 视频删除的**唯一咽喉**：一批一次登记，宽限期共用一枚 ticket。
+    ///
+    /// ⚠️ 全文件只准有这一处向中心登记（数量被判据钉死：`scripts/check_undo_guards.sh` 的 UG-G10
+    /// 恰好 1 处；这句说明里刻意不写出那颗调用的原文，否则按字面计数的探针会被注释本身绊倒）。
+    /// 为什么不是"循环调单条删除"：中心同一时刻只挂一枚 ticket，登记新的一枚前会把前一枚当场
+    /// `settle`，而 settle 对 deletion 类就是**即刻真删**（`PendingDeletionCenter.swift:79-95/134-138`）
+    /// ⇒ 循环 N 次等于前 N−1 条根本没有宽限期，界面上还只看得到最后一枚浮条。
+    /// Core 侧的机械证明见 `UndoGraceMachineTests` 的 TC-UG-15。
+    private func scheduleVideoDeletion(_ videos: [Video], in project: Project) {
+        guard modelContext != nil else { return }
+
+        var units: [VideoDeletionUnit] = []
+        for video in videos {
+            let videoID = video.id
+            cancelledVideoIDs.insert(videoID)                 // 立即取消该视频的后台处理（删除意图）
+            let pvsToHide = project.projectVideos.filter { $0.video?.id == videoID }
+            let referenceCountBefore = video.projectVideos.count   // 快照：必须早于下面那次 removeAll
+            // 界面隐藏：从 project.projectVideos 摘除该视频的关联（ImportView 读 project.videos）。
+            // pv 对象此刻不删，到 commit 时再真删。
+            let pvIDs = Set(pvsToHide.map(\.id))
+            project.projectVideos.removeAll { pvIDs.contains($0.id) }
+            units.append(VideoDeletionUnit(video: video, pendingPVs: pvsToHide,
+                                           referenceCountBefore: referenceCountBefore))
+        }
+        guard !units.isEmpty else { return }
 
         PendingDeletionCenter.shared.schedule(
-            message: "已删除视频",
+            message: units.count == 1 ? "已删除视频" : "已删除 \(units.count) 个视频",
             commit: { [weak self] in
                 guard let self else { return GraphChange() }
-                return self.commitDelete(video: video, pendingPVs: pvsToHide).change
+                return self.commitVideoDeletion(units).change
             },
             undo: { [weak self] in
                 guard let self else { return }
-                self.cancelledVideoIDs.remove(videoID)   // 恢复处理资格
-                // 回填关联：只放回当前还不在关系数组里的那些，否则撤销会在同一项目内
-                // 造出同一视频的两条关联（正是本次崩溃的脏数据形状）
+                // 逐颗撤取消标记：漏掉则撤销回来的素材**永久停在"已导入"**（方案 §撤销三件事 ②）
+                for unit in units { self.cancelledVideoIDs.remove(unit.video.id) }
+                // 回填关联必须带 present 去重 —— 不去重会在同一项目内造出同一视频的两条关联，
+                // 那正是本仓崩溃族的脏数据形状（方案 §撤销三件事 ①）
                 let present = Set(project.projectVideos.map(\.id))
-                project.projectVideos.append(contentsOf: pvsToHide.filter { !present.contains($0.id) })
+                for pv in units.flatMap({ $0.pendingPVs }) where !present.contains(pv.id) {
+                    project.projectVideos.append(pv)
+                }
             }
         )
     }
 
-    /// 真删除：删关联 pv；若视频已无任何项目引用，连分镜与视频记录一起删（磁盘文件交孤儿 GC）
-    /// - Returns: `globallyDeleted` = 视频全局记录是否已删；`change` = **在 delete 之前**取到的被删分镜 id
-    ///   （`PendingDeletionCenter` 据此广播；分镜库另有一份数组，不剪就是死投影）
-    private func commitDelete(video: Video, pendingPVs: [ProjectVideo])
-        -> (globallyDeleted: Bool, change: GraphChange) {
-        guard let context = modelContext else { return (false, GraphChange()) }
-        // 先真删关联 pv，再判断该视频是否还被其它项目引用
-        for pv in pendingPVs { context.delete(pv) }
-        context.safeSave()
-        guard video.projectVideos.isEmpty else {
-            MixLog.info(" 视频仍被其它项目引用，仅解除关联: \(video.name)")
-            return (false, GraphChange())
-        }
-        // 无任何项目引用，删除视频 + 分镜 + SchemeSegment「记录」；磁盘文件交孤儿 GC
-        let segmentsToDelete = Array(video.segments)
-        // id 必须在 delete 之前收齐：删完再从关系数组里读 `.id` 本身就是一次墓碑读（前案 §3 刀 2）。
-        // `ProjectVideo` / `SchemeSegment` 不记：界面里没有握着这两类数组的消费者（见台账 §25）。
-        var change = GraphChange()
-        change.noteDeleted(Set(segmentsToDelete.map(\.id)), of: .segment)
-        for segment in segmentsToDelete {
-            for ss in Array(segment.schemeSegments) { context.delete(ss) }
-            context.delete(segment)
-        }
-        context.delete(video)
-        context.safeSave()
-        MixLog.info(" 视频无引用，已删除记录: \(video.name)")
-        return (true, change)
+    /// 从项目中移除视频（解除关联）；仅当视频不被任何项目引用时，才真正删除 Video + Segment（磁盘文件交孤儿 GC）
+    ///
+    /// 签名不变（`ImportView.swift:232` 是唯一调用方）：批 2 只是把它接进批量咽喉的单元素调用。
+    func deleteVideo(_ video: Video, from project: Project) {
+        scheduleVideoDeletion([video], in: project)
     }
 
-    /// Agent 立即删除路径：与 deleteVideo 等价但立即生效、无撤销
+    /// 真删除（批量）：**逐条顺序一条都不许动** —— 删关联 pv → `safeSave()`（取返回值）→
+    /// `video.projectVideos.isEmpty` 才连分镜与视频记录一起删。
+    ///
+    /// 为什么中间那次 save 既不能合并到循环外、也不能不看结果：隐藏只改了 `project.projectVideos`
+    /// 那一侧，pv 的反向数组要等**落盘后**才被 cascade 摘掉；合并或不看 ⇒ `isEmpty` 恒 false ⇒
+    /// "无引用才连记录删"这条主判定永久失效，表现是"删了还在"。顺序判据见 UG-G11，
+    /// "返回值必须取"见 `VideoDeletionThroatGuardTests` 的 GT-01/GT-02。
+    ///
+    /// 部分失败语义（方案 P0-2）：某条 save 返回 false ⇒ **立刻停止本批**、把从这条起还没删成功的关联
+    /// **当场放回界面**，并如实报「已处理 k 条 / 未删 N−k 条」。
+    /// ⚠️ 这里比方案原文多做一步、少依赖一步：方案写的是"undo 只回填未删成功的那部分 pv"，
+    /// 但中心的 commit 与 undo **互斥**（`finish`/`settle` 之后闭包表已清，见
+    /// `PendingDeletionCenter.swift:122-138`），部分失败发生时 undo 那条路已经走不到了。
+    /// 所以在 commit 内当场放回，才是"界面与库不许分叉"这个意图在当前模型下的唯一可达实现。
+    private func commitVideoDeletion(_ units: [VideoDeletionUnit])
+        -> (fullyDeleted: [Video], change: GraphChange) {
+        guard let context = modelContext else { return ([], GraphChange()) }
+        var fullyDeleted: [Video] = []
+        var change = GraphChange()
+        var settled = 0                   // 已落盘处理完的条数（含"仅解除关联"那些）
+        var failedAtPVSave: Int? = nil    // 关联删除本身没落盘 ⇒ 这一条起都能放回界面
+        var failedAtRecordSave: Int? = nil // 关联已落盘、记录清理没落盘 ⇒ 放回不了，只能说人话
+
+        for (index, unit) in units.enumerated() {
+            let video = unit.video
+            // 先真删关联 pv：走 `delete(_:)` 这颗 —— 进函数即快照（ModelContextExtension.swift:71-81）。
+            // 刻意不用官方 `delete(model:where:)`：那是存储层批量删，不会动内存里已 materialize 的对象，
+            // 用在这里只会**制造更多**待读的死对象。
+            context.delete(unit.pendingPVs)
+            guard debugSaveHolds(stage: "pv"), context.safeSave() else {
+                failedAtPVSave = index
+                break
+            }
+            settled += 1
+            guard video.projectVideos.isEmpty else {
+                MixLog.info(" 视频仍被其它项目引用，仅解除关联: \(video.name)")
+                continue
+            }
+            // 无任何项目引用，删除视频 + 分镜 + SchemeSegment「记录」；磁盘文件交孤儿 GC
+            let segmentsToDelete = Array(video.segments)
+            // id 必须在 delete 之前收齐：删完再从关系数组里读 `.id` 本身就是一次墓碑读（前案 §3 刀 2）。
+            // `ProjectVideo` / `SchemeSegment` 不记：界面里没有握着这两类数组的消费者（见台账 §25）。
+            // ⚠️ 也不许 note `.video`：带 video 不带 project 的变更没人接得住（`isPrunable` 判不可剪枝 ⇒
+            // 降级无载荷全量重载 ⇒ `loadSegments` 首行 `flushNow()` 同栈递归），判据 UG-G13 钉着这件事。
+            change.noteDeleted(Set(segmentsToDelete.map(\.id)), of: .segment)
+            for segment in segmentsToDelete {
+                context.delete(segment.schemeSegments)
+                context.delete(segment)
+            }
+            context.delete(video)
+            guard debugSaveHolds(stage: "record"), context.safeSave() else {
+                failedAtRecordSave = index
+                break
+            }
+            MixLog.info(" 视频无引用，已删除记录: \(video.name)")
+            fullyDeleted.append(video)
+        }
+
+        if failedAtPVSave != nil {
+            // 关联删除没落盘 ⇒ 退回未落盘的改动：这批 pv 的删除、以及 `scheduleVideoDeletion` 里
+            // 那次把关联摘出 `project.projectVideos` 的隐藏，一起回到动手前的状态（界面与库不分叉）。
+            // 刻意不把 `unit.pendingPVs` 再 append 回 project.projectVideos：那些对象已经被
+            // `context.delete` 标记删除，塞回关系数组就是一次墓碑读（前案 §3 刀 2 那一族的形状）。
+            // ⚠️ 代价要摊开：`rollback()` 是**整个 context 范围**的退回（SwiftData 接口 :399），
+            //    此刻若有导入链的未落盘改动，也会被一起退掉。删除的 commit 只发生在宽限期到点 /
+            //    切项目 / 退出这三处，撞上导入在写的概率低但不为零 —— 这条留给真机失败注入格验（方案 E2E-02）。
+            context.rollback()
+            reportPartialDeletion(settled: settled, total: units.count, restored: true)
+        } else if failedAtRecordSave != nil {
+            // 关联已落盘、视频与分镜记录的清理没落盘。两个动作缺一不可：
+            // ① 同样 `rollback()`：退掉的是**这次失败的 save 之后**还挂在 context 里的改动（视频与分镜的
+            //    删除）。不退的话它们会一直悬着，被链上别处的 `saveOrWarn` 悄悄落盘 ⇒ 变成"没人申报却已生效"
+            //    的删除；已经保存成功的 pv 删除不受影响（rollback 只退上次 save 之后的部分）。
+            // ② 如实报状态：库此刻是"关联已解除、记录待清理"，不许假装"已删除 N 个视频"。
+            context.rollback()
+            reportPartialDeletion(settled: settled, total: units.count, restored: false)
+        }
+        return (fullyDeleted, change)
+    }
+
+    /// DEBUG-only 的落盘失败注入缝（方案 E2E-02 那格的读数点）。
+    ///
+    /// 为什么要有这颗：批量删除的"部分失败"是批 2 唯一还没被任何自动化覆盖的分支。真造 `safeSave`
+    /// 失败在 macOS 上只有占满卷或整根只读两条路，而那两条会顺带弄坏导入、缩略图、日志——测出来的红
+    /// 分不清是这条分支坏了还是环境坏了。缝开在咽喉**内部**、只影响本批删除这两次落盘，
+    /// 且**默认放行**：不设变量、设错值都照原样跑，注入永远不能变成默认态。
+    ///
+    /// 守法与 `FileHelper.swift:17-25` 那颗假库开关同族：`#if DEBUG` 包着，Release 编译不进这一支
+    /// （判据 GT-05 钉着"在 DEBUG 内"与"默认放行"两件事）。
+    ///
+    /// 用法：`MIXCUT_DEBUG_FAIL_SAVE=pv`（关联那次落盘必失败，验 `restored=true` 那句）／
+    /// `record`（记录清理那次必失败，验 `restored=false` 那句）／`all`（两次都失败）。
+    private func debugSaveHolds(stage: String) -> Bool {
+        #if DEBUG
+        guard let spec = ProcessInfo.processInfo.environment["MIXCUT_DEBUG_FAIL_SAVE"],
+              !spec.isEmpty else { return true }
+        return spec != "all" && spec != stage
+        #else
+        return true
+        #endif
+    }
+
+    /// 部分失败的如实告知（方案 P0-2）：单条时"没删掉"只是这一条，批量会放大成**界面与库分叉且没人说**。
+    /// 文案必须给实得数字，不许复用"已删除 N 个视频"那句成功提示。
+    private func reportPartialDeletion(settled: Int, total: Int, restored: Bool) {
+        let undone = total - settled
+        let tail = restored
+            ? "未删的 \(undone) 条已放回列表，可直接重试"
+            : "未删的 \(undone) 条已解除关联但记录未清理完（关联已落盘，放回不了），请重试或重启后再删"
+        ToastCenter.shared.show("视频删除未完成：已处理 \(settled) 条、未删 \(undone) 条；\(tail)",
+                                icon: "exclamationmark.triangle.fill", style: .warning, duration: 6)
+        MixLog.error("[视频删除] 部分失败：已处理 \(settled) 条 / 本批 \(total) 条，restored=\(restored)")
+    }
+
+    /// Agent 立即删除路径：与 `deleteVideo` **同一条咽喉**，只是立即生效、无撤销
+    /// （MCP `remove_video` 侧签名与语义都不动，`MCPToolHandlers.swift:494` 仍按 Bool 回 `deletedGlobally`）
     @discardableResult
     func removeVideoImmediately(_ video: Video, from project: Project) -> Bool {
         guard modelContext != nil else { return false }
         cancelledVideoIDs.insert(video.id)
         let pvsToRemove = project.projectVideos.filter { $0.video?.id == video.id }
+        let referenceCountBefore = video.projectVideos.count   // 同样必须在摘之前取快照
         let pvIDs = Set(pvsToRemove.map(\.id))
         project.projectVideos.removeAll { pvIDs.contains($0.id) }
-        let outcome = commitDelete(video: video, pendingPVs: pvsToRemove)
+        let unit = VideoDeletionUnit(video: video, pendingPVs: pvsToRemove,
+                                     referenceCountBefore: referenceCountBefore)
+        let outcome = commitVideoDeletion([unit])
         // Agent 链的调用方随后会走 `notifyUIReload()` 的**无载荷**广播（全量重载，比按 id 剪枝更保守），
         // 所以这里交回的台账不必再发一次 —— 但也不能当没发生：全量重载覆盖了同一批 id。
-        return outcome.globallyDeleted
+        return !outcome.fullyDeleted.isEmpty
+    }
+
+    // MARK: - 视频多选（批量删除的选择态与入口）
+    //
+    // 状态住在 VM 而不是视图的 @State，依据是仓内既有裁定 `ProjectDataReadiness.swift:5-11`：
+    // `ContentView.detailView` 是 `@ViewBuilder switch`，切模块会销毁重建视图实例 ⇒ @State 必丢。
+    // 形状逐条对称照抄 `SegmentLibraryViewModel` 的选择态（方案批 3 明令**不参照** ExportView 那套
+    // 独立写法 —— 仓里两份批量范式本身就是债，新代码必须先向既有那份对齐）。
+
+    /// 是否处于多选模式
+    var isVideoSelectionMode = false
+    /// 勾选的视频 id。⚠️ importVM 跨页长活 ⇒ 这是**全局**集合，换项目必须整批复位（判据 UG-G12）
+    var selectedVideoIDs: Set<UUID> = []
+    /// 勾选先后顺序（`Set` 无序，而 ⇧ 连选、二次确认与浮条文案都要确定性）
+    var videoSelectionOrder: [UUID] = []
+    /// 最后一次单独勾选的视频 —— ⇧+点击的范围锚点
+    private var lastToggledVideoID: UUID?
+
+    /// ⇧+点击的**视觉顺序**：由视图把它正在渲染的那份序列传进来。
+    ///
+    /// 为什么不是 VM 自己再算一遍编号：`ImportView.numberedVideos`（:203-212）那行
+    /// `return project.associatedVideos` 是 G08 名册在册的读取点，在 VM 里抄一份同样的过滤排序会
+    /// ① 造出第二份"同一套编号/同一套过滤"的真源（本仓刚为这类事定过判据），
+    /// ② 逼一次两张名册整体重生成。所见即所得的语义两种写法一样，但传参只碰一个文件。
+    func extendVideoSelection(to video: Video, visibleOrder: [Video]) {
+        let ids = visibleOrder.map(\.id)
+        guard let anchorID = lastToggledVideoID,
+              let anchorIdx = ids.firstIndex(of: anchorID),
+              let targetIdx = ids.firstIndex(of: video.id) else {
+            toggleVideoSelection(video)
+            return
+        }
+        let range = anchorIdx <= targetIdx ? anchorIdx...targetIdx : targetIdx...anchorIdx
+        for id in ids[range] where !selectedVideoIDs.contains(id) {
+            selectedVideoIDs.insert(id)
+            videoSelectionOrder.append(id)
+        }
+        // 锚点保持不动，便于反复 ⇧+点击调整范围（分镜侧同款手感）
+    }
+
+    func toggleVideoSelection(_ video: Video) {
+        if selectedVideoIDs.contains(video.id) {
+            selectedVideoIDs.remove(video.id)
+            videoSelectionOrder.removeAll { $0 == video.id }
+        } else {
+            selectedVideoIDs.insert(video.id)
+            videoSelectionOrder.append(video.id)
+        }
+        lastToggledVideoID = video.id
+    }
+
+    /// 全选当前**看得见**的卡（定义域由视图传入，理由同 `extendVideoSelection`）
+    func selectAllVisibleVideos(_ visibleOrder: [Video]) {
+        let ids = visibleOrder.map(\.id)
+        selectedVideoIDs = Set(ids)
+        videoSelectionOrder = ids
+    }
+
+    /// 「全选丢失项」：把选择集**换成**这批丢失的卡，并顺手进入多选模式。
+    ///
+    /// 这是「真删记录」唯一的批量入口（方案批 4）—— 走这一颗而不是先清空再逐颗 toggle：
+    /// 进入多选模式不是装饰，它让二次确认、5 秒撤销、以及「勾选必须在可见集合内」那道越界门
+    /// 全都还在这条链上。少了那道门，一键全选就会绕过 Core 的作用域判定。
+    func selectMissingVideos(_ missingVisibleOrder: [Video]) {
+        setVideoSelectionMode(true)
+        let ids = missingVisibleOrder.map(\.id)
+        selectedVideoIDs = Set(ids)
+        videoSelectionOrder = ids
+    }
+
+    func invertVisibleVideoSelection(_ visibleOrder: [Video]) {
+        let visible = Set(visibleOrder.map(\.id))
+        let next = visible.subtracting(selectedVideoIDs)
+        selectedVideoIDs = next
+        // 反选后"勾选先后"语义已不成立，按渲染顺序重建即可
+        videoSelectionOrder = visibleOrder.map(\.id).filter { next.contains($0) }
+    }
+
+    func clearVideoSelection() {
+        selectedVideoIDs.removeAll()
+        videoSelectionOrder.removeAll()
+    }
+
+    /// 进入/退出多选模式（退出时清空已选，与分镜侧一致）
+    func setVideoSelectionMode(_ enabled: Bool) {
+        isVideoSelectionMode = enabled
+        if !enabled {
+            selectedVideoIDs.removeAll()
+            videoSelectionOrder.removeAll()
+            lastToggledVideoID = nil
+        }
+    }
+
+    /// 已选视频的总时长（秒）。只求和不建数组 —— 多选工具栏常驻，任意重绘都会读它（分镜侧同条纪律）
+    func selectedVideoTotalDuration(in project: Project) -> Double {
+        project.associatedVideos.reduce(0.0) { acc, video in
+            selectedVideoIDs.contains(video.id) ? acc + video.duration : acc
+        }
+    }
+
+    /// 真删回来时同时剪选中集（对齐 `pruneDeletedSegments`）。
+    ///
+    /// ⚠️ 与分镜侧的差别要说清，免得后人以为这里漏了：分镜库自己持有一份 `segments` 数组可剪，
+    /// 而视频列表是**现读关系**（`project.associatedVideos`），没有数组可剪 —— 本函数只清 id 集合。
+    func pruneDeletedVideos(_ deletedVideoIDs: Set<UUID>) {
+        guard !deletedVideoIDs.isEmpty else { return }
+        selectedVideoIDs.subtract(deletedVideoIDs)
+        videoSelectionOrder.removeAll { deletedVideoIDs.contains($0) }
+    }
+
+    /// 批量删除当前勾选的视频。
+    ///
+    /// 三道闸门，缺一不可：
+    /// ① 作用域判定走 Core（`VideoDeletionScopeResolver`）—— 勾选中混进不属于"当前可见集合"的 id
+    ///    就**整条拒绝**并点名越界的那几个，不做"删我能删的那半"（否则「已删除 N 个视频」就是说谎）；
+    /// ② 二次确认在视图侧（要读实数总数，见 `videoDeletionTotals`）；
+    /// ③ 真正删除只有一条路：批 2 的咽喉 `scheduleVideoDeletion`（一批 = 一枚 ticket）。
+    func deleteSelectedVideos(in project: Project, visibleOrder: [Video]) {
+        let associations = associationsByVideo(in: project, for: selectedVideoIDs)
+        let scope = VideoDeletionScopeResolver.resolve(
+            selectedVideoIDs: selectedVideoIDs,
+            visibleVideoIDs: Set(visibleOrder.map(\.id)),
+            associationsByVideo: associations)
+        if scope.isRejected {
+            ToastCenter.shared.show(
+                "已拒绝批量删除：\(scope.foreignIDs.count) 个勾选不在当前可见列表里（可能来自另一个项目）。"
+                + "请重新勾选后再删。",
+                icon: "exclamationmark.triangle.fill", style: .warning, duration: 6)
+            return
+        }
+        let videos = scope.deletableUnits.compactMap { unit in
+            project.associatedVideos.first { $0.id == unit.videoID }
+        }
+        guard !videos.isEmpty else { return }
+        clearVideoSelection()                       // 撤销三件事之三：清空选择集
+        scheduleVideoDeletion(videos, in: project)
+    }
+
+    /// 二次确认与浮条要念的实数（两档文案 + 「本次将真删 B 个分镜记录」都说在前面）。
+    ///
+    /// 引用数**必须在调用删除咽喉之前**算：隐藏步骤摘的正是 `projectVideos`，事后再问必错。
+    func videoDeletionTotals(in project: Project, visibleOrder: [Video]) -> VideoDeletionTotals {
+        let visible = Set(visibleOrder.map(\.id))
+        var entries: [VideoDeletionTotals.Entry] = []
+        for video in project.associatedVideos where visible.contains(video.id)
+            && selectedVideoIDs.contains(video.id) {
+            entries.append(VideoDeletionTotals.Entry(
+                referenceCountBefore: video.projectVideos.count,
+                associationCountInProject: project.projectVideos.filter { $0.video?.id == video.id }.count,
+                segmentCount: video.segments.count))
+        }
+        let unresolvable = VideoDeletionScopeResolver.resolve(
+            selectedVideoIDs: selectedVideoIDs, visibleVideoIDs: visible,
+            associationsByVideo: associationsByVideo(in: project, for: selectedVideoIDs)
+        ).unresolvableIDs
+        let totals = VideoDeletionTotals.tally(entries)
+        return VideoDeletionTotals(localOnlyCount: totals.localOnlyCount,
+                                   stillReferencedCount: totals.stillReferencedCount,
+                                   segmentsDeleted: totals.segmentsDeleted,
+                                   unresolvableCount: unresolvable.count)
+    }
+
+    /// videoID → 该视频在本项目里的关联行 id（两条脏关联都要收，少一条就删不掉）
+    private func associationsByVideo(in project: Project, for videoIDs: Set<UUID>) -> [UUID: Set<UUID>] {
+        var result: [UUID: Set<UUID>] = [:]
+        for pv in project.projectVideos {
+            guard let videoID = pv.video?.id, videoIDs.contains(videoID) else { continue }
+            result[videoID, default: []].insert(pv.id)
+        }
+        return result
     }
 
     // MARK: - 全局视频查找
@@ -1009,14 +1300,17 @@ final class ImportViewModel {
     /// 不用整片 ASR 切片——实时流式 ASR 的整片绝对时间戳会漂移、导致台词错位；
     /// 单段短音频 ASR 永远准。每个分镜按自己时间范围切音频、各自识别、写回 segment.text。
     func reidentifyWholeVideo(_ video: Video, context: ModelContext) async {
-        guard !video.localPath.isEmpty, FileManager.default.fileExists(atPath: video.localPath) else {
-            ToastCenter.shared.show("找不到原视频文件", icon: "exclamationmark.triangle.fill", style: .warning); return
+        // 判定问唯一出口（批 5）：这颗此前是自写 `fileExists` + 自造文案，与导出/播放各问各的。
+        guard !video.localPath.isEmpty, FileHelper.isMaterialFilePresent(path: video.localPath) else {
+            ToastCenter.shared.show(MissingMaterialCopy.fullMessage(fileName: video.name),
+                                    icon: "exclamationmark.triangle.fill", style: .warning); return
         }
         guard !reidentifyingVideoIDs.contains(video.id) else { return }
         reidentifyingVideoIDs.insert(video.id)
         defer { reidentifyingVideoIDs.remove(video.id) }
 
-        let r = await reidentifySegmentTexts(video: video, context: context)
+        // 用户点名「逐段重听」⇒ 整条都听，不做沿用判断（那是自动链的省法，不是这里语义）
+        let r = await reidentifySegmentTexts(video: video, context: context, auto: false)
         let detail = r.reason.map { "：\($0)" } ?? ""
         if r.stoppedEarly || r.failed > 0 || r.refused > 0 || r.cancelled > 0 {
             // 只报"X 成功 / Y 失败"等于没报——用户既不知道为什么失败，也不知道该怎么办。
@@ -1036,7 +1330,7 @@ final class ImportViewModel {
     /// 自动链上的逐段重认：**不弹窗**（那时库里还没有"旧台词"可保护，这是红线 R8 的作用域区分），
     /// 但结果必须进日志 —— 两处调用点都忽略返回值，就等于"整批没配 Key、一段也没重认"这件事没人知道。
     private func autoReidentifySegments(_ video: Video, context: ModelContext) async {
-        let r = await reidentifySegmentTexts(video: video, context: context)
+        let r = await reidentifySegmentTexts(video: video, context: context, auto: true)
         if r.failed > 0 || r.refused > 0 || r.stoppedEarly {
             let detail = r.reason.map { "：\($0)" } ?? ""
             MixLog.error("[ASR] \(video.name) 自动逐段重认：\(r.gotText) 段拿到字、"
@@ -1050,8 +1344,13 @@ final class ImportViewModel {
     /// 而默认偏好是"强制本地"，两处会给出不同答案 —— 收敛到门面后只剩一个答案。
     /// 纪律：串行不并行、每段之间查取消、连续 K 段失败即止（K = `ASRPolicy.consecutiveFailureLimit`）、
     /// 进度可见、失败几段如实报。
+    ///
+    /// `auto` 必填、没有默认值：`true` = 导入/重跑那条**自动链**，只补该重听的段
+    /// （边界已按句子落点 ⇒ 整片切片本来就是完整句子，§AF）；`false` = 用户点名"逐段重听"，整条都听。
+    /// 这两件事的代价与语义都不同，写成同一个循环才会出事 —— 给默认值就等于让新调用点随手选一边。
     @discardableResult
-    func reidentifySegmentTexts(video: Video, context: ModelContext) async
+    func reidentifySegmentTexts(video: Video, context: ModelContext,
+                                auto: Bool) async
         -> (gotText: Int, failed: Int, refused: Int, cancelled: Int, stoppedEarly: Bool, reason: String?) {
         let fps = video.fps > 0 ? video.fps : 30
         let segs = video.segments.sorted { $0.startFrame < $1.startFrame }
@@ -1059,12 +1358,18 @@ final class ImportViewModel {
         var firstReason: String?
         var consecutiveFailures = 0
         var stoppedEarly = false
+        var carriedOver = 0
 
         for (index, seg) in segs.enumerated() {
             if cancelledVideoIDs.contains(video.id) {
                 outcomes.append(.cancelled)
                 stoppedEarly = true
                 break
+            }
+            if auto && !SegmentRetakeRule.shouldAutoRetake(
+                currentText: seg.text, currentSource: seg.textSource) {
+                carriedOver += 1
+                continue
             }
             reidentifyProgress[video.id] = (index, segs.count)
 
@@ -1096,6 +1401,11 @@ final class ImportViewModel {
             }
         }
         reidentifyProgress[video.id] = nil
+        if auto {
+            // 「省了多少」必须出声：这条腿曾是导入里最贵的一段（§Q-1/Q-4），
+            // 现在默认只补该补的段 —— 不说出来，谁也看不出这轮到底有没有跳过重听。
+            MixLog.info(" 逐段补认: video=\(video.name), 沿用整片切片 \(carriedOver) 段、实际重听 \(outcomes.count) 段")
+        }
         // 这一步覆盖整个视频所有分镜的台词，且可能是付费识别的结果，保存失败必须告知
         context.saveOrWarn("重识别的台词")
 

@@ -863,7 +863,7 @@ struct ExportView: View {
                     // 「失败」与「跳过」是两件事，分开说；具体是哪几条、什么原因见下方失败清单。
                     var parts: [String] = []
                     if failedCount > 0 { parts.append("\(failedCount) 个导出失败") }
-                    if skippedCount > 0 { parts.append("\(skippedCount) 个因素材缺失被跳过") }
+                    if skippedCount > 0 { parts.append(MissingMaterialCopy.batchSkipped(count: skippedCount)) }
                     errorMessage = parts.joined(separator: "，")
                     let succeeded = validTotal - failedCount
                     ToastCenter.shared.show("成功 \(succeeded) / 失败 \(totalFailed)", icon: "exclamationmark.triangle.fill", style: .warning)

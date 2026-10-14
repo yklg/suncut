@@ -512,7 +512,7 @@ enum DebugSelfTest {
         // 优先 XCT；否则取第一个有分镜的
         let video = videos.first(where: { $0.name.contains("XCT") && !$0.segments.isEmpty })
             ?? videos.first(where: { !$0.segments.isEmpty })
-        guard let video, !video.localPath.isEmpty, FileManager.default.fileExists(atPath: video.localPath) else {
+        guard let video, !video.localPath.isEmpty, FileHelper.isMaterialFilePresent(path: video.localPath) else {
             write(outPath, ["无可用视频"]); return
         }
         let fps = video.fps > 0 ? video.fps : 30
@@ -567,7 +567,7 @@ enum DebugSelfTest {
         let ctx = container.mainContext
         guard let videos = try? ctx.fetch(FetchDescriptor<Video>()) else { write(outPath, ["无视频"]); return }
         let infos: [(name: String, path: String, dur: Double)] = videos
-            .filter { !$0.segments.isEmpty && !$0.localPath.isEmpty && FileManager.default.fileExists(atPath: $0.localPath) }
+            .filter { !$0.segments.isEmpty && !$0.localPath.isEmpty && FileHelper.isMaterialFilePresent(path: $0.localPath) }
             .map { ($0.name, $0.localPath, $0.duration) }
         write(outPath, ["# SPIKE 整片 paraformer 句子粒度(全部视频)", "[运行中…]"])
         let ff = FFmpegRunner()
@@ -608,7 +608,7 @@ enum DebugSelfTest {
         let ctx = container.mainContext
         guard let videos = try? ctx.fetch(FetchDescriptor<Video>()),
               let video = videos.first(where: { !$0.segments.isEmpty && !$0.localPath.isEmpty
-                  && FileManager.default.fileExists(atPath: $0.localPath) }) else {
+                  && FileHelper.isMaterialFilePresent(path: $0.localPath) }) else {
             write(outPath, ["无带分镜的视频"]); return
         }
         let segs = video.segments.sorted { $0.segmentIndex < $1.segmentIndex }

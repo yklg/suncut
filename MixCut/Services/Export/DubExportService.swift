@@ -118,9 +118,11 @@ struct DubExportInput: Sendable {
             }
             // 走"当前生效画面"：替换版=合成片整段(0..frameCount)；原版=源视频帧区间。音频/字幕仍属分镜本身。
             let ep = segment.effectivePicture
-            guard !ep.videoPath.isEmpty, FileManager.default.fileExists(atPath: ep.videoPath) else {
+            guard !ep.videoPath.isEmpty, FileHelper.isMaterialFilePresent(path: ep.videoPath) else {
                 if dubOnly {
-                    blockers.append(.init(position: position, segmentLabel: segLabel, reason: "画面文件缺失"))
+                    // 措辞并入唯一真源（此前是第四套自造说法「画面文件缺失」）；通道不动，仍进 blockers 列表。
+                    blockers.append(.init(position: position, segmentLabel: segLabel,
+                                          reason: MissingMaterialCopy.shortLabel))
                 }
                 continue
             }

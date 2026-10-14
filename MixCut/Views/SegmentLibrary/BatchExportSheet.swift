@@ -150,7 +150,7 @@ struct BatchExportSheet: View {
                 HStack(alignment: .top, spacing: 6) {
                     Image(systemName: "exclamationmark.triangle.fill")
                         .foregroundStyle(DesignTokens.Palette.Status.warning)
-                    Text("分镜 \(skippedNumbers.map(String.init).joined(separator: "、")) 找不到源视频（可能已被删除），将被跳过，不会出现在导出结果里。")
+                    Text("分镜 \(skippedNumbers.map(String.init).joined(separator: "、")) \(MissingMaterialCopy.shortLabel)，将被跳过，不会出现在导出结果里。")
                         .fixedSize(horizontal: false, vertical: true)
                     Spacer(minLength: 0)
                 }

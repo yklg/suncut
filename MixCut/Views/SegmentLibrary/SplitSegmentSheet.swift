@@ -124,6 +124,14 @@ struct SplitSegmentSheet: View {
 
     private func setup() {
         guard let path = segment.video?.localPath else { return }
+        // 族修的最后一颗（批 5）：这里此前**完全不问**，直接建 AVPlayer ⇒ 源文件没了就是一块黑屏，
+        // 而拆分页正是要看清画面才能拖时间码的地方，"黑着"与"没素材"必须分得开。
+        guard FileHelper.isMaterialFilePresent(path: path) else {
+            ToastCenter.shared.show(
+                MissingMaterialCopy.fullMessage(fileName: URL(fileURLWithPath: path).lastPathComponent),
+                icon: "exclamationmark.triangle.fill", style: .warning)
+            return
+        }
         let p = AVPlayer(url: URL(fileURLWithPath: path))
         p.isMuted = true
         player = p

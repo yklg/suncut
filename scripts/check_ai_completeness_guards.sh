@@ -142,6 +142,33 @@ expect_zero "App 层裸构造 Segment 只允许出现在 SegmentCommitter 内部
   "$(( $(code_count_in_dir "$ROOT/MixCut" '= Segment(') - $(code_count_in_file "$COMMITTER" '= Segment(') ))"
 expect_min "SegmentCommitter 已被 App target 编译（漏挂 pbxproj 时引用方报 cannot find type）" \
   "$(grep -c 'SegmentCommitter.swift in Sources' "$PBXPROJ")" 1
+# 方案 kindled-cloud-robin.md 批 1（2026-10-10 登记）：登记当时它**零调用点**，
+# 所以只能数它在 Sources 构建段里出现几次，抓的失败是"四段登记被摘回去/只登记一半"。
+expect_min "MissingMaterialFinder 已被 App target 编译（Core 新增文件漏挂时沙盒 typecheck 看不出）" \
+  "$(grep -c 'MissingMaterialFinder.swift in Sources' "$PBXPROJ")" 1
+# 方案批 3 的越界判据（2026-10-13 登记）。
+expect_min "VideoDeletionScopeResolver 已被 App target 编译" \
+  "$(grep -c 'VideoDeletionScopeResolver.swift in Sources' "$PBXPROJ")" 1
+# 在册只是下限，被走才是这道门的意义（V4-3 那条债的同形检查）：Core 判据若没有调用点，
+# 单测再绿也不代表生产路径躲得开越界删除。
+IVM_Scope="$ROOT/MixCut/ViewModels/ImportViewModel.swift"
+expect_min "VideoDeletionScopeResolver 被删除咽喉的批量入口实际调用（只登记不调用 = 测试绿而线上没人走）" \
+  "$(grep -c 'VideoDeletionScopeResolver.resolve(' "$IVM_Scope")" 1
+
+# 批 4（2026-10-14）：台账 V4-3 那笔债在这里结 —— `safeMissingIDs` 的第一道兜底
+# （素材根目录不在 ⇒ 一个 id 都不给）从前只在测试里被走到。只证在册不证被走，
+# 就是又一格"测试绿而线上没人走"的死角，所以在册与有调用点**同批**钉。
+MAS="$ROOT/MixCut/Infrastructure/MaterialAvailabilityStore.swift"
+expect_min "MaterialAvailabilityStore 已被 App target 编译（App 侧子目录新文件漏挂同样只有 xcodebuild 报）" \
+  "$(grep -c 'MaterialAvailabilityStore.swift in Sources' "$PBXPROJ")" 1
+expect_min "MissingMaterialCopy 已被 App target 编译" \
+  "$(grep -c 'MissingMaterialCopy.swift in Sources' "$PBXPROJ")" 1
+expect_min "safeMissingIDs 被可用性持有者实际调用（V4-3：这道兜底不许只在测试里被走到）" \
+  "$(grep -c 'MissingMaterialFinder.safeMissingIDs(' "$MAS")" 1
+expect_min "可用性持有者被导入页的 .task 实际挂上（持有者没人问 = 界面永远读到空集）" \
+  "$(grep -c 'MaterialAvailabilityStore.shared.refresh(' "$ROOT/MixCut/Views/Import/ImportView.swift")" 1
+expect_min "丢失文案真源被界面实际引用（没人引用就是又一处死代码，批 5 改文案时无从下手）" \
+  "$(code_count_in_dir "$ROOT/MixCut" 'MissingMaterialCopy\.')" 2
 
 # 控制流也只许一份：W1 收了建段，W1.5 收「AI→落库→逐段重认→缩略图」这条链。
 # 这里数的是"某形状出现几次"而不是"有没有"——再拷出一条控制流时数量会变，当场就能认出来。
@@ -284,6 +311,25 @@ else
 fi
 
 echo
+echo "== 边界落点：句子优先（抓的失败：切点劈开一句话，再让逐段重听去补）=="
+ALIGN="$CORE/BoundaryAlignmentEngine.swift"
+sent_line=$(grep -n 'let nearEnds = sentences.map' "$ALIGN" | head -1 | cut -d: -f1)
+scene_line=$(grep -n 'let strongScenes = scenes.filter' "$ALIGN" | head -1 | cut -d: -f1)
+if [ -z "$sent_line" ] || [ -z "$scene_line" ]; then
+  report_fail "句子必须优先于强切镜（行号取不出 ⇒ 判据失效）" \
+    "句子=${sent_line:-取不出} 强切镜=${scene_line:-取不出}" "两处都在且 句子 < 强切镜"
+elif [ "$sent_line" -lt "$scene_line" ]; then
+  report_pass "先判句子($sent_line) 再判强切镜($scene_line)"
+else
+  report_fail "切点优先顺序倒了（回到旧顺序就等于回到「句子被劈开」）" \
+    "句子=$sent_line 强切镜=$scene_line" "句子 < 强切镜"
+fi
+expect_zero "吸附报告不许在调用点被丢给 _（看不见落点 = 改了也验不了）" \
+  "$(code_count_in_file "$COMMITTER" ', _) = boundaryOptimizer.optimize(')"
+expect_eq "落点分布必须落一行日志" \
+  "$(code_count_in_file "$COMMITTER" '边界吸附')" 1
+
+echo
 echo "== 单价与金额：价表只住 Core，App 不许自己算钱（抓的失败：两处各一套价/口径）=="
 expect_zero "App 层不许出现单价字段（价表只有一个出处）" \
   "$(code_count_in_dir "$ROOT/MixCut" 'inputPerMTokens')"
@@ -363,6 +409,19 @@ expect_eq "拆分的执行者只有一个（MCP 必须委托 VM，不许自己�
   "$(code_count_in_dir "$ROOT/MixCut" 'segmentCommitter\.commitSplitRemainder(')" 1
 expect_eq "MCP 的拆分腿真的委托给 UI 那条路径" \
   "$(code_count_in_file "$SEGMCP" 'importVM\.splitSegment(')" 1
+
+echo
+echo "== 逐段重听退化为「只补该补的段」（抓的失败：自动链又把整条重听一遍）=="
+expect_eq "要不要重听的判定住 Core 且被自动链真的问" \
+  "$(code_count_in_file "$IMPORTVM" 'SegmentRetakeRule\.shouldAutoRetake(')" 1
+expect_eq "两个调用点必须各自写明 auto（手动按钮与自动链语义不同）" \
+  "$(code_count_in_file "$IMPORTVM" 'reidentifySegmentTexts(video: video, context: context, auto:')" 2
+expect_eq "自动链那一处是 true" "$(code_count_in_file "$IMPORTVM" 'auto: true')" 1
+expect_eq "手动那一处是 false" "$(code_count_in_file "$IMPORTVM" 'auto: false')" 1
+expect_zero "auto 不许有默认值（有默认就会长出随手一填的调用点）" \
+  "$(code_count_in_file "$IMPORTVM" 'auto: Bool = ')"
+expect_eq "省了多少段必须出声（不说出来没人知道这轮跳过了重听）" \
+  "$(code_count_in_file "$IMPORTVM" '逐段补认')" 1
 
 if [ -f "$PBXPROJ" ]; then
   echo

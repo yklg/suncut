@@ -64,6 +64,9 @@ struct SegmentLibraryView: View {
             // 都要在主线程同步读盘+解码 → 滚动掉帧。
             let covers = videoCovers + viewModel.segments.compactMap(\.thumbnailPath)
             ThumbnailCache.shared.prewarm(paths: covers, for: project.id)
+            // 冷启动直接进本页时，导入页那颗 `.task` 从没跑过 ⇒ 不挂这一句，丢失标注一条都不出，
+            // "全链路统一提示"当场破功（方案批 5 第 3 条）。节流在 store 里，两页来回跳不会重扫。
+            await MaterialAvailabilityStore.shared.refresh(for: project)
             MixLog.info("[Perf] SegmentLibrary: \(Int(Date().timeIntervalSince(t0) * 1000))ms / segs=\(viewModel.segments.count)")
         }
         .confirmationDialog("这批自建分镜的素材来源是？",
@@ -792,6 +795,7 @@ struct SegmentLibraryView: View {
                             isSelectionMode: selectionMode,
                             isSelected: segment.id == selectedSegID,
                             sequenceNumber: numMap[segment.id] ?? 0,
+                            isSourceMissing: viewModel.isSourceMissing(for: segment),
                             viewModel: viewModel
                         )
                         .equatable()
@@ -808,6 +812,7 @@ struct SegmentLibraryView: View {
                 isSelectionMode: selectionMode,
                 isSelected: segment.id == selectedSegID,
                 sequenceNumber: numMap[segment.id] ?? 0,
+                isSourceMissing: viewModel.isSourceMissing(for: segment),
                 viewModel: viewModel
             )
             .equatable()
@@ -1030,6 +1035,9 @@ struct SegmentCard: View, Equatable {
     let isSelectionMode: Bool
     let isSelected: Bool
     let sequenceNumber: Int
+    /// 源视频文件当前不可用（判定与映射在 VM，见 `SegmentLibraryViewModel.isSourceMissing`）。
+    /// ⚠️ 加了 props 就必须同时加进下面的 `==` —— 漏了一处，这颗标注会因 EquatableView 跳过重绘而不刷新。
+    let isSourceMissing: Bool
     @Bindable var viewModel: SegmentLibraryViewModel
 
     @Environment(\.modelContext) private var modelContext
@@ -1057,6 +1065,8 @@ struct SegmentCard: View, Equatable {
             && lhs.isSelectionMode == rhs.isSelectionMode
             && lhs.isSelected == rhs.isSelected
             && lhs.sequenceNumber == rhs.sequenceNumber
+            // 丢失标注也是父级算好的值类型 prop：漏进比较 ⇒ 对账回来后这张卡不重绘，标注永远不上屏
+            && lhs.isSourceMissing == rhs.isSourceMissing
     }
 
     var body: some View {
@@ -1266,6 +1276,20 @@ struct SegmentCard: View, Equatable {
                                 .padding(.horizontal, 5)
                                 .padding(.vertical, 2)
                                 .background(Color.black.opacity(0.6))
+                                .clipShape(Capsule())
+                        }
+                        if isSourceMissing {
+                            // 源文件丢失标注（批 5 全链路统一：与导入页读同一颗对账结果）。
+                            // **只标注、不禁用** —— 重认台词/克隆原声/导出各自本来就会拒，拒时给的
+                            // 也是同一句话案；把按钮禁掉只会把"为什么按不动"变成一个新问题。
+                            Text(MissingMaterialCopy.shortLabel)
+                                .font(DesignTokens.Typography.microMetric)
+                                .foregroundStyle(.white)
+                                .lineLimit(1)
+                                .fixedSize()
+                                .padding(.horizontal, 5)
+                                .padding(.vertical, 2)
+                                .background(Color.orange.opacity(0.9))
                                 .clipShape(Capsule())
                         }
                     }
@@ -1789,7 +1813,16 @@ struct SegmentInlinePlayer: View {
         let startTime = ep.isReplaced ? ep.startTime : requestedStart
         let endTime = ep.isReplaced ? ep.endTime : requestedEnd
         let videoPath = ep.videoPath
-        guard !videoPath.isEmpty, FileManager.default.fileExists(atPath: videoPath) else { return }
+        // 族修（批 5）：与两个播放器同一颗判定。此前这里 `fileExists` + 静默 return，
+        // 画面文件没了就什么都不发生 —— 那是本方案最忌的"点了没反应"。
+        guard !videoPath.isEmpty, FileHelper.isMaterialFilePresent(path: videoPath) else {
+            if !videoPath.isEmpty {
+                ToastCenter.shared.show(
+                    MissingMaterialCopy.fullMessage(fileName: URL(fileURLWithPath: videoPath).lastPathComponent),
+                    icon: "exclamationmark.triangle.fill", style: .warning)
+            }
+            return
+        }
 
         let item = AVPlayerItem(url: URL(fileURLWithPath: videoPath))
 
@@ -1925,6 +1958,8 @@ struct SegmentRow: View, Equatable {
     let isSelectionMode: Bool
     let isSelected: Bool
     let sequenceNumber: Int
+    /// 同 `SegmentCard.isSourceMissing`：props 加了就必须进 `==`，否则标注不刷新。
+    let isSourceMissing: Bool
     @Bindable var viewModel: SegmentLibraryViewModel
     @Environment(\.modelContext) private var modelContext
     /// 即时 hover（底色）/ 延迟激活 hover（重子树），语义同 SegmentCard
@@ -1940,6 +1975,7 @@ struct SegmentRow: View, Equatable {
             && lhs.isSelectionMode == rhs.isSelectionMode
             && lhs.isSelected == rhs.isSelected
             && lhs.sequenceNumber == rhs.sequenceNumber
+            && lhs.isSourceMissing == rhs.isSourceMissing
     }
 
     var body: some View {
@@ -1959,16 +1995,30 @@ struct SegmentRow: View, Equatable {
                 .frame(width: 160, height: 160.0 * 16.0 / 9.0)
                 .subtitleMaskHandle(on: segment) { try? modelContext.save() }
                 .overlay(alignment: .topLeading) {
-                    if sequenceNumber > 0 {
-                        Text("#\(sequenceNumber)")
-                            .font(DesignTokens.Typography.microMetric)
-                            .foregroundStyle(.white)
-                            .padding(.horizontal, 5)
-                            .padding(.vertical, 2)
-                            .background(Color.black.opacity(0.6))
-                            .clipShape(Capsule())
-                            .padding(6)
+                    HStack(spacing: DesignTokens.Spacing.tight) {
+                        if sequenceNumber > 0 {
+                            Text("#\(sequenceNumber)")
+                                .font(DesignTokens.Typography.microMetric)
+                                .foregroundStyle(.white)
+                                .padding(.horizontal, 5)
+                                .padding(.vertical, 2)
+                                .background(Color.black.opacity(0.6))
+                                .clipShape(Capsule())
+                        }
+                        if isSourceMissing {
+                            // 同网格卡片那颗标注（列表模式也得有 —— 统一的是判定与措辞，不是某一种布局）
+                            Text(MissingMaterialCopy.shortLabel)
+                                .font(DesignTokens.Typography.microMetric)
+                                .foregroundStyle(.white)
+                                .lineLimit(1)
+                                .fixedSize()
+                                .padding(.horizontal, 5)
+                                .padding(.vertical, 2)
+                                .background(Color.orange.opacity(0.9))
+                                .clipShape(Capsule())
+                        }
                     }
+                    .padding(6)
                 }
 
             VStack(alignment: .leading, spacing: 6) {

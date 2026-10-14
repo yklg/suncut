@@ -16,12 +16,14 @@ import Testing
 // 关联放回界面 ⇒ 界面与库不一致、重启后一部分回来一部分永久没了，且没人说出来。
 // 方案拍板的语义是：false ⇒ 立刻停止本批、如实报「已删 k 条 / 未删 N−k 条」、undo 只回填未删成功的那部分。
 //
-// 现状（2026-10-10 实读）：咽喉里两次 safeSave 都是丢返回值的裸调用 ——
-//   commitDelete 内第一次：删完 pv 就落盘，好让 cascade 摘掉 video.projectVideos 反向数组
-//                          （这次不能合并到循环外，UG-G11 守的就是它的**位置**）
-//   commitDelete 内第二次：真删视频记录与分镜之后收尾
-// 所以这里先做**名册式冻结**（GT-01：一处都不许多），同时把理想态钉成红钉（GT-02：应为 0 处）。
-// 批 2 落地时 GT-02 自己变红 ⇒ 摘标并把期望改成 0，那一刻这条判据才算真正闭合。
+// 现状（2026-10-13 更新）：**批 2 已落地** —— 咽喉改成数组化的 `commitVideoDeletion(_:in:)`，
+// 两处落盘都走 `guard context.safeSave() else` ⇒ 名册数从 2 归 0。于是本文件的两条判据换班：
+//   · GT-01 从"红钉（理想态 0，等批 2 摘标）"变成**硬闸**：再多一处静默丢弃就红；
+//   · GT-02 新立**形状**判据：两次落盘都必须以 guard 形态存在（失败分支不许被摘光）。
+// 只验"没丢返回值"不够 —— 有人改成 `if safeSave() { … }` 也不算丢弃，但失败时再没人停本批、
+// 也没人说"未删几条"，那正是这里要挡住的第二种退化。
+// 历史上这两处是 `ImportViewModel.swift:814/830` 的裸 `context.safeSave()`（当时 UG-G11 只钉住了
+// 它们的**位置与次数**，看不出结果被丢弃 ⇒ 那条缺口就是本文件的由来）。
 // ============================================================================
 
 private let throatRepoRoot: URL = URL(fileURLWithPath: #filePath)
@@ -54,6 +56,16 @@ private func functionBody(code: String, head: String) -> String? {
     return nil
 }
 
+/// 以 `guard …safeSave() else` 形态存在的落盘次数 —— 只看"结果进了控制流"的那种写法。
+private func safeSaveGuardCount(_ body: String) -> Int {
+    var n = 0
+    for raw in body.components(separatedBy: "\n") {
+        let t = raw.trimmingCharacters(in: .whitespaces)
+        if t.hasPrefix("guard ") && t.contains("safeSave()") && t.contains(" else") { n += 1 }
+    }
+    return n
+}
+
 /// 返回被丢弃的 `safeSave()` 调用点数：只算"表达式语句"形态（`x.safeSave()` 独占一行）。
 /// 取了返回值的三种写法都不算：`let ok = `、`if `、`guard `，以及显式忽略 `_ = `
 /// —— 显式忽略至少是个可读的决定，静默丢弃才是问题。
@@ -69,17 +81,51 @@ private func discardedSaveCount(_ body: String) -> Int {
     return n
 }
 
+/// 注入缝的三条硬约束（返回问题清单，空 = 合规）。
+/// 为什么逐条查而不是"看着像就行"：这颗缝的唯一作用是"让真机能造出落盘失败"。
+/// 它一旦变成默认拒绝、或者漏进 Release，就从读数点变成生产缺陷 —— 那是本方案最坏的一种假绿。
+private func seamProblems(_ body: String) -> [String] {
+    var problems: [String] = []
+    if !body.contains("#if DEBUG") { problems.append("不在 #if DEBUG 内 ⇒ Release 也会注入") }
+    if !body.contains("else { return true }") { problems.append("变量没设或设成空时不是默认放行") }
+    if let r = body.range(of: "#else") {
+        let releaseTail = body[r.upperBound...].replacingOccurrences(of: "#endif", with: "")
+        if !releaseTail.contains("return true") { problems.append("Release 分支没恒真返回") }
+    } else {
+        problems.append("缺 #else ⇒ Release 侧根本没有兜底返回")
+    }
+    return problems
+}
+
 @Suite("视频删除咽喉 · safeSave 返回值不许被静默丢弃")
 struct VideoDeletionThroatGuardTests {
 
-    /// 读咽喉源码并定位 commit 函数体；取不到就 Issue.record（不许当成通过）。
-    private func throatBodyOrRecord() -> String? {
+    /// 读咽喉源码并剥注释；读不到、或剥完全空 ⇒ Issue.record（取样面为空时任何"0 命中"都长得像通过）。
+    private func readThroatCode() -> String? {
+        guard let raw = readThroatRaw() else { return nil }
+        let code = RelationshipReadScan.codeOnly(raw)
+        if code.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            Issue.record("\(throatFile) 剥注释后为空 ⇒ 取样面没命中，本条不算通过")
+            return nil
+        }
+        return code
+    }
+
+    /// 原始文本（不剥注释）。⚠️ 查**句子内容**必须走这颗：实测 `codeOnly` 连字符串字面量一起抹掉
+    /// （`environment["MIXCUT_DEBUG_FAIL_SAVE"]` 出来是 `environment[      ]`），
+    /// 拿它查句子必然 0 命中 —— 那是"判据在测空气"的一种隐蔽形态。
+    private func readThroatRaw() -> String? {
         let url = throatRepoRoot.appendingPathComponent(throatFile)
         guard let raw = try? String(contentsOf: url, encoding: .utf8) else {
             Issue.record("读不到 \(throatFile) ⇒ 判据无法成立，不算通过")
             return nil
         }
-        let code = RelationshipReadScan.codeOnly(raw)      // 复用仓里已有的那颗剥注释，不另写第二把尺子
+        return raw
+    }
+
+    /// 读咽喉源码并定位 commit 函数体；取不到就 Issue.record（不许当成通过）。
+    private func throatBodyOrRecord() -> String? {
+        guard let code = readThroatCode() else { return nil }
         for head in throatHeads {
             if let b = functionBody(code: code, head: head) { return b }
         }
@@ -88,24 +134,25 @@ struct VideoDeletionThroatGuardTests {
         return nil
     }
 
-    @Test("GT-01 名册式冻结：咽喉里丢弃返回值的 safeSave 必须恰好 2 处，一处都不许多")
-    func discardedSavesAreRostered() {
+    @Test("GT-01 咽喉里不许有任何一处静默丢弃 save 结果（批 2 已修，多一处裸调用即红）")
+    func noSaveResultMayBeDiscarded() {
         guard let body = throatBodyOrRecord() else { return }
         let n = discardedSaveCount(body)
-        // 期望值不是"函数返回几就算几"：这 2 处是实读数出来的（第一次为 cascade 落盘、第二次收尾），
-        // 想再加第 3 处必须先在这里登记理由 —— 新增静默丢弃正是 P0-2 要防的放大路径。
-        #expect(n == 2, "咽喉里丢弃返回值的 safeSave 实得 \(n) 处，名册登记 2 处（多一处＝新的静默丢弃）")
-        // 自证非空：函数体里确实有 safeSave，否则上面的 2 永远不可能成立，而 0 也会被当成"通过"
-        #expect(body.contains("safeSave()"), "函数体里没有 safeSave ⇒ 锚点搬错地方了")
+        // 历史上这里是 2 处裸 `context.safeSave()`（`@discardableResult` ⇒ 连警告都没有），
+        // 方案 P0-2 把它当"批量部分失败会静默分叉"的根因之一。批 2 落地后名册数归 0，
+        // 本条从"红钉"变成"硬闸"：再加一处静默丢弃就红，不必再靠人记得取返回值。
+        #expect(n == 0, "咽喉里有 \(n) 处静默丢弃 safeSave 的结果 ⇒ 批量时会放大成部分成功无人出声")
+        #expect(body.contains("safeSave()"), "函数体里一个 safeSave 都没有 ⇒ 锚点搬错地方了")
     }
 
-    @Test("GT-02 理想态：咽喉里不该有任何一处静默丢弃 save 结果（批 2 修好后本条会因不再有问题而红 ⇒ 摘标）")
-    func noSaveResultShouldBeDiscarded() {
+    @Test("GT-02 两次落盘都必须以 guard 形态存在：结果要进控制流，不许写成 if 后不管")
+    func bothSavesMustFeedTheControlFlow() {
         guard let body = throatBodyOrRecord() else { return }
-        let n = discardedSaveCount(body)
-        withKnownIssue("P0-2 未修：咽喉里 \(n) 处 safeSave() 都丢了 Bool（@discardableResult ⇒ 连警告都没有），失败只打日志；批量删除时会放大成部分失败无人出声——前 k 条落盘、第 k+1 条失败，而 undo 把全部 N 条放回界面。修法见方案批 2：false ⇒ 停止本批、报「已删 k / 未删 N−k」、undo 只回填未删成功的那部分") {
-            #expect(n == 0, "实得 \(n) 处静默丢弃")
-        }
+        let guards = safeSaveGuardCount(body)
+        // 2 = 中间那次（让 cascade 摘掉反向数组）+ 收尾那次（记录真删后落盘）。
+        // 只断言"没有裸调用"是不够的：有人改成 `if context.safeSave() { …成功分支… }` 也不算丢弃，
+        // 但失败分支被删掉后就再没人停本批、也没人说"未删几条" —— 形状必须一起钉。
+        #expect(guards == 2, "guard 形态的 safeSave 实得 \(guards) 处，期望 2 处（失败分支被摘光就是假修）")
     }
 
     @Test("GT-03 这条判据自己要有牙：结果有去处的写法一律不算丢弃，裸调用必须算")
@@ -139,6 +186,17 @@ struct VideoDeletionThroatGuardTests {
         }
         """
         #expect(discardedSaveCount(mixed) == 1, "同一函数体里两种形态并存时分类失效")
+
+        // GT-02 那颗形状判据自己的牙：guard 形态数得对上，且"裸调用"与"if 后不管"都不算
+        let shaped = """
+        {
+            guard context.safeSave() else { return 0 }
+            context.safeSave()
+            if context.safeSave() { doThing() }
+        }
+        """
+        #expect(safeSaveGuardCount(shaped) == 1, "guard 形态计数错 ⇒ GT-02 既会漏报也会误报")
+        #expect(discardedSaveCount(shaped) == 1, "裸调用没被算成丢弃 ⇒ GT-01 恒绿")
     }
 
     @Test("GT-04 锚点取不到时必须出声：两个名字都不在 ⇒ 返回 nil 让调用方报判据失效")
@@ -152,5 +210,65 @@ struct VideoDeletionThroatGuardTests {
         // 括号未闭合（函数体被截断）也不许给出一个"看着能用"的体
         #expect(functionBody(code: "private func commitDelete { context.safeSave()",
                              head: "private func commitDelete") == nil)
+    }
+
+    @Test("GT-05 落盘失败注入缝：只许挂在咽喉那两次落盘上，且必须 DEBUG-only、默认放行")
+    func saveFaultSeamIsDebugOnlyAndDefaultAllow() {
+        guard let raw = readThroatRaw() else { return }
+        // 调用点数走原文：`guard debugSaveHolds(stage: "pv")` 里的句子被 codeOnly 抹掉，
+        // 但 `guard debugSaveHolds(stage:` 这段是代码，原文里数得准（定义行不含 `guard ` 前缀）。
+        let calls = raw.components(separatedBy: "\n")
+            .filter { $0.contains("guard debugSaveHolds(stage:") }
+            .count
+        #expect(calls == 2, "注入缝调用点实得 \(calls) 处，期望 2 处 ⇒ 多一处就是有人把缝挪去了别的链上")
+        // 环境变量必须被**代码行**读到：文档注释里也写着这个名字，只查子串会分不清两者。
+        let envRead = raw.components(separatedBy: "\n")
+            .filter { $0.contains("ProcessInfo") && $0.contains("MIXCUT_DEBUG_FAIL_SAVE") }
+        #expect(envRead.count == 1, "读环境变量的代码行实得 \(envRead.count) 处，期望 1 处 ⇒ 注入缝是空壳或被复制过")
+        // 可分性正对照：这个名字除了那一行代码，只许出现在注释里（注释行没有 ProcessInfo）。
+        #expect(raw.components(separatedBy: "\n")
+                .contains { $0.contains("MIXCUT_DEBUG_FAIL_SAVE") && !$0.contains("ProcessInfo") },
+                "注释里没写用法 ⇒ 这条判据的正对照没内容可分，计数意义要重评")
+        guard let code = readThroatCode(),
+              let body = functionBody(code: code, head: "private func debugSaveHolds") else {
+            Issue.record("取不到 debugSaveHolds 的函数体 ⇒ 判据失效：缝被改名或拆散，GT-05 已在测空气")
+            return
+        }
+        let problems = seamProblems(body)
+        #expect(problems.isEmpty, "注入缝不合规矩：\(problems)")
+    }
+
+    @Test("GT-06 注入缝判据自己的牙：三种违规各报一条，合规写法不报")
+    func seamGateHasTeeth() {
+        let compliant = """
+        {
+            #if DEBUG
+            guard let spec = ProcessInfo.processInfo.environment["X"], !spec.isEmpty else { return true }
+            return spec != "all" && spec != stage
+            #else
+            return true
+            #endif
+        }
+        """
+        #expect(seamProblems(compliant).isEmpty, "合规写法被报问题 ⇒ GT-05 天天假红")
+
+        // ① 忘了 #if DEBUG：Release 也会注入（这是最贵的一种错）
+        let noGuard = compliant.replacingOccurrences(of: "#if DEBUG", with: "")
+        #expect(seamProblems(noGuard).contains { $0.contains("#if DEBUG") }, "漏了 DEBUG 闸却没报")
+        // ② 默认拒绝：变量没设就失败 —— 正常用户一删就"部分失败"
+        let defaultDeny = compliant.replacingOccurrences(of: "else { return true }", with: "else { return false }")
+        #expect(seamProblems(defaultDeny).contains { $0.contains("默认放行") }, "默认拒绝没被抓出来")
+        // ③ Release 分支留空：编不过之前判据就该先红（整份夹具现写，不用 replace ——
+        //    多行字符串会被 Swift 按 closing delimiter 的缩进剥掉前导空格，按空格数找子串必失配）
+        let emptyRelease = """
+        {
+            #if DEBUG
+            guard let spec = ProcessInfo.processInfo.environment["X"], !spec.isEmpty else { return true }
+            return spec != stage
+            #else
+            #endif
+        }
+        """
+        #expect(seamProblems(emptyRelease).contains { $0.contains("Release") }, "Release 分支空转却全绿")
     }
 }

@@ -14,7 +14,9 @@
 		0CEE8F380D03F11142B4AA65 /* CaptionLine.swift in Sources */ = {isa = PBXBuildFile; fileRef = AC9AEA63EB3F5902A10DAADE /* CaptionLine.swift */; };
 		0DCCDEE048CAFE8E53CB3269 /* ShotSegmentationEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = EC364E93C57786EA39A37BB2 /* ShotSegmentationEngine.swift */; };
 		0FA1B2C3D4E5F60718293A4B /* OrphanFileFinder.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0FA1B2C3D4E5F60718293A4C /* OrphanFileFinder.swift */; };
+		AF000000000000000000003C /* VideoDeletionScopeResolver.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF000000000000000000003D /* VideoDeletionScopeResolver.swift */; };
 		AF000000000000000000003A /* MissingMaterialFinder.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF000000000000000000003B /* MissingMaterialFinder.swift */; };
+		AF0000000000000000000039 /* MissingMaterialCopy.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF000000000000000000003E /* MissingMaterialCopy.swift */; };
 		1122334455667788AABBCC01 /* WhisperModelCatalog.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3C4D5E6F708192A3B4C5D6E7 /* WhisperModelCatalog.swift */; };
 		1A5F60C136724AEFB9C4CCF8 /* VocalSeparationService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 77F93B7C1DE045DA9A8F371B /* VocalSeparationService.swift */; };
 		1A613852B34EE99F8438AAA2 /* NarrativeModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = DC350939E30230D56399E112 /* NarrativeModels.swift */; };
@@ -215,6 +217,7 @@
 		B2C10E4D5A671829304B6002 /* PlaybackCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2C10E4D5A671829304B6001 /* PlaybackCoordinator.swift */; };
 		B6847040AD0E4C4E1CFC2D19 /* ConcurrencyPolicy.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5E38824D4DD571ED6A70E3AB /* ConcurrencyPolicy.swift */; };
 		AF000000000000000000002A /* LocalWhisperGate.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF000000000000000000002B /* LocalWhisperGate.swift */; };
+		AF0000000000000000000037 /* MaterialAvailabilityStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF0000000000000000000038 /* MaterialAvailabilityStore.swift */; };
 		B6D377C9EA1F522F8341954B /* FFmpegRunner.swift in Sources */ = {isa = PBXBuildFile; fileRef = C858F164A6EEC1BFF4AA2BE2 /* FFmpegRunner.swift */; };
 		BA2E27944B16BC55D66FE56D /* BrandResidueScanner.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7E8212A6A3C180B93AC5AD93 /* BrandResidueScanner.swift */; };
 		BA680C51E5D4F8253F34B6FD /* LaunchSteps.swift in Sources */ = {isa = PBXBuildFile; fileRef = 765BF3CFE1CA925FB95DD054 /* LaunchSteps.swift */; };
@@ -301,7 +304,9 @@
 		0E1A7D058E5D3BEA366EA579 /* ProjectVideo.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProjectVideo.swift; sourceTree = "<group>"; };
 		0E48A40ECEECC19FD7C8100A /* FrameCountAligner.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = FrameCountAligner.swift; path = Sources/MixCutCore/FrameCountAligner.swift; sourceTree = "<group>"; };
 		0FA1B2C3D4E5F60718293A4C /* OrphanFileFinder.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = OrphanFileFinder.swift; path = Sources/MixCutCore/OrphanFileFinder.swift; sourceTree = "<group>"; };
+		AF000000000000000000003D /* VideoDeletionScopeResolver.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = VideoDeletionScopeResolver.swift; path = Sources/MixCutCore/VideoDeletionScopeResolver.swift; sourceTree = "<group>"; };
 		AF000000000000000000003B /* MissingMaterialFinder.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = MissingMaterialFinder.swift; path = Sources/MixCutCore/MissingMaterialFinder.swift; sourceTree = "<group>"; };
+		AF000000000000000000003E /* MissingMaterialCopy.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = MissingMaterialCopy.swift; path = Sources/MixCutCore/MissingMaterialCopy.swift; sourceTree = "<group>"; };
 		10110DE8620848149D31030E /* CaptionLayout.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = CaptionLayout.swift; path = Sources/MixCutCore/CaptionLayout.swift; sourceTree = "<group>"; };
 		124522DE9ECA23C2BA58B156 /* SplitSegmentSheet.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = SplitSegmentSheet.swift; path = MixCut/Views/SegmentLibrary/SplitSegmentSheet.swift; sourceTree = "<group>"; };
 		1479513EB995B5318C68A3F7 /* ShotPartitionEditor.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = ShotPartitionEditor.swift; path = Sources/MixCutCore/ShotPartitionEditor.swift; sourceTree = "<group>"; };
@@ -352,6 +357,7 @@
 		5D595E4E7B57C7DF05BBB26E /* FlowLayout.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FlowLayout.swift; sourceTree = "<group>"; };
 		5E38824D4DD571ED6A70E3AB /* ConcurrencyPolicy.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConcurrencyPolicy.swift; sourceTree = "<group>"; };
 		AF000000000000000000002B /* LocalWhisperGate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalWhisperGate.swift; sourceTree = "<group>"; };
+		AF0000000000000000000038 /* MaterialAvailabilityStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MaterialAvailabilityStore.swift; sourceTree = "<group>"; };
 		60B558A50ABAFE691C14EF5D /* SegmentationCompleteness.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = SegmentationCompleteness.swift; path = Sources/MixCutCore/SegmentationCompleteness.swift; sourceTree = "<group>"; };
 		66877C6CCA03E25280D675CB /* BGMLibraryStore.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = BGMLibraryStore.swift; path = MixCut/Services/BGM/BGMLibraryStore.swift; sourceTree = "<group>"; };
 		668A584A73936DE0EF82FDDE /* PromptPresets.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = PromptPresets.swift; path = ../../../ShotEdit/PromptPresets.swift; sourceTree = "<group>"; };
@@ -771,7 +777,9 @@
 				A1C2E3D4F5061728394A5B6C /* BoundaryAlignmentEngine.swift */,
 				D2E3F4A5B6C70819203A4B5D /* FrameTime.swift */,
 				0FA1B2C3D4E5F60718293A4C /* OrphanFileFinder.swift */,
+				AF000000000000000000003D /* VideoDeletionScopeResolver.swift */,
 				AF000000000000000000003B /* MissingMaterialFinder.swift */,
+				AF000000000000000000003E /* MissingMaterialCopy.swift */,
 				BB22CC33DD44EE55FF6600AB /* SubtitleMaskRect.swift */,
 				CC00DD11EE22FF3344AA55BC /* CharBudget.swift */,
 				AC2BF0CF6ACC41738BAA8B7B /* SubtitleMaskMode.swift */,
@@ -906,6 +914,7 @@
 			children = (
 				5E38824D4DD571ED6A70E3AB /* ConcurrencyPolicy.swift */,
 				AF000000000000000000002B /* LocalWhisperGate.swift */,
+				AF0000000000000000000038 /* MaterialAvailabilityStore.swift */,
 				36131931CC8DA93B33B740F3 /* HardwareProfile.swift */,
 			);
 			path = Infrastructure;
@@ -1275,6 +1284,7 @@
 				BA680C51E5D4F8253F34B6FD /* LaunchSteps.swift in Sources */,
 				B6847040AD0E4C4E1CFC2D19 /* ConcurrencyPolicy.swift in Sources */,
 				AF000000000000000000002A /* LocalWhisperGate.swift in Sources */,
+				AF0000000000000000000037 /* MaterialAvailabilityStore.swift in Sources */,
 				CB0B2974E157D629430CCA8B /* HardwareProfile.swift in Sources */,
 				24D63DBCBE4432D272BA135F /* MixScheme.swift in Sources */,
 				A66CE2CC04E8F513B1DD6E13 /* MixStrategy.swift in Sources */,
@@ -1382,7 +1392,9 @@
 				B0D1A2E3C4F5061728394A5B /* BoundaryAlignmentEngine.swift in Sources */,
 				C1D2E3F4A5B60718293A4B5C /* FrameTime.swift in Sources */,
 				0FA1B2C3D4E5F60718293A4B /* OrphanFileFinder.swift in Sources */,
+				AF000000000000000000003C /* VideoDeletionScopeResolver.swift in Sources */,
 				AF000000000000000000003A /* MissingMaterialFinder.swift in Sources */,
+				AF0000000000000000000039 /* MissingMaterialCopy.swift in Sources */,
 				BB22CC33DD44EE55FF6600AA /* SubtitleMaskRect.swift in Sources */,
 				CC00DD11EE22FF3344AA55BB /* CharBudget.swift in Sources */,
 				2F2F29B4C38B4AE88BA13BB2 /* SubtitleMaskMode.swift in Sources */,

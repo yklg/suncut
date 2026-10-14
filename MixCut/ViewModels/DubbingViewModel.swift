@@ -459,8 +459,9 @@ final class DubbingViewModel {
 
         segment.clonedVoiceId = nil      // 走下方重克隆流程（能复用的已在上面 return）
         let path = video.localPath
-        guard !path.isEmpty, FileManager.default.fileExists(atPath: path) else {
-            errorState = .init(message: "找不到原视频文件，无法克隆原声", kind: .generic)
+        // 判定改问唯一出口；**通道不动** —— 配音这条驱动的是界面错误态，不是一闪而过的 Toast（方案批 5 明令）
+        guard !path.isEmpty, FileHelper.isMaterialFilePresent(path: path) else {
+            errorState = .init(message: MissingMaterialCopy.fullMessage(fileName: video.name), kind: .generic)
             return nil
         }
         MixLog.info("[Clone] 开始克隆原声: video=\(path) 窗口=\(window.startFrame)-\(window.endFrame)")

@@ -668,11 +668,29 @@ final class SegmentLibraryViewModel {
     /// 正在重认台词的分镜（控制按钮 loading / 禁用）
     var busyASRSegmentIDs: Set<UUID> = []
 
+    /// 这个分镜的源视频文件，当前判为不可用吗？
+    ///
+    /// ⚠️ 判定与映射**必须留在 VM**，视图只收 Bool props：视图里读 `segment.video` 是一次跨边裸读，
+    /// 会让 G08/G15 两张名册各多一条在册（方案批 5 第 3 条点名这件事）。传 props 语义一样，只碰一个文件。
+    /// 这里也不自己问磁盘 —— 读的是批 4 那颗对账结果，两页因此共用同一个答案（判定唯一出口的**读侧**）。
+    func isSourceMissing(for segment: Segment) -> Bool {
+        guard let videoID = segment.video?.id else { return false }
+        return MaterialAvailabilityStore.shared.missingVideoIDs.contains(videoID)
+    }
+
     /// 重认单个分镜的台词。**用哪台引擎由门面问决策表**（红线 R4/R6），这里不复写规则。
     func reextractTranscript(_ segment: Segment, context: ModelContext) async {
-        guard let video = segment.video, !video.localPath.isEmpty,
-              FileManager.default.fileExists(atPath: video.localPath) else {
-            ToastCenter.shared.show("找不到原视频文件", icon: "exclamationmark.triangle.fill", style: .warning)
+        // 判定与措辞都改问唯一出口（批 5）：逐段重听与整片重认、导出、播放从此共用同一个答案。
+        // ⚠️ 两颗 guard 分开写（合成一颗会让 `video` 在 else 里根本不在作用域内，xcodebuild 报
+        //    cannot find 'video' —— 本轮实测）。分开的另一层意思：**取不到所属视频**与
+        //    **文件不在**是两件事，从前合成一颗时前者也被报成"找不到原视频文件"，那是说谎。
+        guard let video = segment.video else {
+            MixLog.error("[重认台词] 分镜取不到所属视频（悬空关联），本次不处理")
+            return
+        }
+        guard !video.localPath.isEmpty, FileHelper.isMaterialFilePresent(path: video.localPath) else {
+            ToastCenter.shared.show(MissingMaterialCopy.fullMessage(fileName: video.name),
+                                    icon: "exclamationmark.triangle.fill", style: .warning)
             return
         }
         guard !busyASRSegmentIDs.contains(segment.id) else { return }

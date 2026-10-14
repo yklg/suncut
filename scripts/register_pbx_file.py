@@ -42,6 +42,19 @@ def main(argv):
             found = cand
             break
     if found is None:
+        # App 侧文件按功能分在 MixCut 的各级子目录里（Infrastructure/、Services/BGM/…），
+        # 只查顶层会把真实存在的文件判成"拼写错了"。递归找，且**唯一命中**才算数：
+        # 同名两份时登记哪一份是个真问题，不许默默挑一份。
+        hits = [os.path.join(dir_, new_name)
+                for dir_, _, files in os.walk(os.path.join(ROOT, "MixCut"))
+                if new_name in files]
+        if len(hits) == 1:
+            found = hits[0]
+        elif len(hits) > 1:
+            print("ERR %s 在 MixCut 下有 %d 份同名文件：%s ⇒ 先定哪一份是要编译的那个"
+                  % (new_name, len(hits), [os.path.relpath(h, ROOT) for h in hits]))
+            return 1
+    if found is None:
         print("ERR 源文件不存在，拒绝登记：%s（先在 Sources/MixCutCore 与 MixCut 下确认拼写）"
               % new_name)
         return 1

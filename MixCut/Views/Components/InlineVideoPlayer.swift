@@ -179,6 +179,17 @@ struct InlineVideoPlayer: View {
     // MARK: - 播放控制
 
     private func startPlayback() {
+        // 纵深防御（不是主修点）：主修在 `MaterialAvailabilityStore` 那条对账轴上 —— 界面对完过账
+        // 之后这张卡根本不会实例化播放器。这一颗兜的是"对账还没跑到 / 刚被移走"的窗口期：
+        // 播一个不在的文件只会得到一条事后归因的失败，而用户需要的是路径与恢复动作。
+        // ⚠️ 顺序硬约束：`isPlaying = true` 必须在这个检查**之后**（连 coordinator 也在之后，
+        //    否则拒绝播放一个死文件会把别的卡正在播的那路给挤掉）。
+        guard FileHelper.isMaterialFilePresent(path: videoPath) else {
+            ToastCenter.shared.show(
+                MissingMaterialCopy.fullMessage(fileName: URL(fileURLWithPath: videoPath).lastPathComponent),
+                icon: "exclamationmark.triangle.fill", style: .warning)
+            return
+        }
         // 抢占播放身份：协调器会让其它正在播放的卡片经 onChange 停止
         if let coordinator, !playbackID.isEmpty {
             coordinator.activate(playbackID)

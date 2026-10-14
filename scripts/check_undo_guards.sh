@@ -248,10 +248,12 @@ else:
 #   pv 的反向数组要等**落盘后**才被 cascade 摘掉；合并 save 会让 `video.projectVideos.isEmpty`
 #   恒 false ⇒ "无引用才连视频记录删"这条主判定永久失效，表现是"删了还在"（同 ModelContextExtension
 #   里 ⑭ 格实测的那一条）。所以判据是两条：① 体内 safeSave() ≥ 2；② isEmpty 判定必须在第一次之后。
-body = func_body(import_vm, "private func commitDelete")
+body = func_body(import_vm, "private func commitVideoDeletion")
 if body is None:
-    bad("UG-G11 取不出 commitDelete 函数体",
-        "判据失效：咽喉换了函数名/形状，落盘顺序这条前提没人守（批 2 改名时要同批把锚点搬过去）")
+    body = func_body(import_vm, "private func commitDelete")   # 批 2 落地前的旧名，留一个回退免得判据先红
+if body is None:
+    bad("UG-G11 取不出 commitVideoDeletion 函数体",
+        "判据失效：咽喉换了函数名/形状，落盘顺序这条前提没人守")
 else:
     n_save = body.count("safeSave()")
     p_guard = body.find("projectVideos.isEmpty")
@@ -266,6 +268,42 @@ else:
             "顺序错 = 判定读的是还没被 cascade 摘干净的反向数组，同「合并 save」一个后果")
     else:
         ok("UG-G11 先落盘再判空（2 次 save 且判定在第一次之后）", f"save={n_save}")
+
+import_view_path = os.path.join(src, "Views", "Import", "ImportView.swift")
+import_vm_view = strip_comments(read(import_view_path))
+
+# UG-G12：跨项目串选的门（方案 v3 批 3）
+#   importVM 挂在 ContentView 上**跨页长活**，选择集是全局 video id ⇒ 换项目不复位，
+#   在 A 项目勾几条、切到 B 项目点「删除」就会删到 A 的素材上（批量删除的越界形状）。
+#   复位那句必须待在 `.task(id: project.id)` 的 body 里 —— 那是本页唯一的重进入口；
+#   写在某个按钮的 action 里挡不住"换项目后直接点删除"。取不到锚点报判据失效，不当通过。
+task_at = import_vm_view.find(".task(id: project.id)")
+if task_at < 0:
+    bad("UG-G12 取不出 ImportView 的 .task(id: project.id)", "判据失效：重进入口被改名/挪走，这道门没在跑")
+else:
+    window = import_vm_view[task_at:task_at + 700]
+    if "setVideoSelectionMode(false)" not in window:
+        bad("UG-G12 换项目没有复位多选态", "跨项目串选会让 A 项目勾选的卡被 B 项目的删除按钮真删掉")
+    else:
+        ok("UG-G12 .task(id: project.id) 里复位多选态（跨项目串选被挡住）")
+
+# UG-G14：多选批量删除的四颗快捷键必须齐，且都包在多选分支里（方案 v3 批 3）
+#   形状逐字照 `SegmentLibraryView.swift:221-246`（仓里不留第三套批量范式）。这四颗是
+#   "勾了 30 个还要一个个点删除"的唯一缓解；而**作用域**比存在更要紧 —— 常挂 ⌘A 会把页内
+#   文本框的"全选文本"抢掉，那是拿回归换便利。只数数量抓不到这种挪法，所以两条一起判。
+shortcuts = [t.strip() for t in re.findall(r"\.keyboardShortcut\((.*?)\)", import_vm_view)]
+need = {".cancelAction", '"a", modifiers: .command', '"d", modifiers: .command', '"0", modifiers: .command'}
+missing = need - set(shortcuts)
+first = import_vm_view.find(".keyboardShortcut(")
+# 只看第一颗快捷键往前 400 字内有没有多选分支那道闸 —— 光验"文件里有这个 if"会被区块头
+# 那个无关的 if 满足（自证 M17 实测抓出过这个空档）。
+gated = first >= 0 and "if importVM.isVideoSelectionMode {" in import_vm_view[max(0, first - 400):first]
+if len(shortcuts) != 4 or missing:
+    bad("UG-G14 四颗快捷键不齐", f"实得 {len(shortcuts)} 颗，缺 {sorted(missing)}")
+elif not gated:
+    bad("UG-G14 快捷键没有包在多选分支里", "常挂会抢掉文本框的「全选文本」，四颗齐也没用")
+else:
+    ok("UG-G14 ESC / ⌘A / ⌘D / ⌘0 四颗齐且只在多选态生效")
 
 # UG-G13：视频删除咽喉的台账里不许出现 `.video`（方案 v3 批 2 预留的编号，G10/G11/G12 随各自批次落）
 #   依据不是注释而是实读的 `UndoGraceMachine.swift:191-195`：`isPrunable` 对「带 .video 却不带 .project」

@@ -941,7 +941,7 @@ struct MixCutApp: App {
 
         for segment in segments {
             guard let video = segment.video,
-                  FileManager.default.fileExists(atPath: video.localPath) else { continue }
+                  FileHelper.isMaterialFilePresent(path: video.localPath) else { continue }
             // 不在这里删旧图：输出名就是同一个 seg_<uuid>.jpg（`ImportViewModel.swift:1027` 也用这个名），
             // 而 `generateThumbnail` 自带 `-y`（`FFmpegRunner.swift:664`）会原地覆盖。
             // 以前先删后生，于是任何一次 ffmpeg 失败都把这个分镜的缩略图**删没了却补不上**，
@@ -1381,6 +1381,19 @@ struct MixCutApp: App {
             for v in videos {
                 referenced.insert(v.localPath)
                 if let t = v.thumbnailPath { referenced.insert(t) }
+            }
+            // 【只报不删】库盘分叉第一次在日志里可观测 —— 今天没有这一行，取证只能开 sqlite3 手查。
+            // 明令：这条判定在本函数里**不触发任何删除或隐藏动作**。隐藏是界面侧
+            // `MaterialAvailabilityStore` 的结果集，真删记录走视频删除咽喉，两者都由用户显式发起；
+            // 孤儿 GC 这条轴只管"磁盘有、库里无"，反过来的那条它一个字都不许动手。
+            let reading = MaterialAvailabilityStore.missingDivideReading(
+                records: videos.map { MaterialRecordPath(id: $0.id, path: $0.localPath) })
+            if reading.degraded {
+                MixLog.info("[OrphanGC] 库盘对账本轮查不了：\(reading.degradationReason ?? "")（不判缺失、不动任何文件）")
+            } else {
+                MixLog.info("[OrphanGC] 库里有 \(reading.missingIDs.count) 条素材记录的 localPath 在磁盘上不存在"
+                            + "（只报不删；另有 \(reading.excludedRecords) 条路径不在素材目录内、"
+                            + "\(reading.unreadableRecords) 条读不动）")
             }
         }
         if let segs = try? ctx.fetch(FetchDescriptor<Segment>()) {

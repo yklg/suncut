@@ -17,12 +17,14 @@ fresh() {
   local case_dir="$1"
   rm -rf "$case_dir"
   mkdir -p "$case_dir/MixCut/Views/Shared" "$case_dir/MixCut/Views/SegmentLibrary" \
-           "$case_dir/MixCut/App" "$case_dir/MixCut/ViewModels" "$case_dir/Sources/MixCutCore"
+           "$case_dir/MixCut/Views/Import" "$case_dir/MixCut/App" "$case_dir/MixCut/ViewModels" \
+           "$case_dir/Sources/MixCutCore"
   cp "$ROOT/MixCut/Views/Shared/Toast.swift" "$case_dir/MixCut/Views/Shared/"
   cp "$ROOT/MixCut/Views/Shared/PendingDeletionCenter.swift" "$case_dir/MixCut/Views/Shared/"
   cp "$ROOT/MixCut/Views/SegmentLibrary/SegmentLibraryView.swift" "$case_dir/MixCut/Views/SegmentLibrary/"
   cp "$ROOT/MixCut/App/MixCutApp.swift" "$case_dir/MixCut/App/"
   cp "$ROOT/MixCut/ViewModels/ImportViewModel.swift" "$case_dir/MixCut/ViewModels/"
+  cp "$ROOT/MixCut/Views/Import/ImportView.swift" "$case_dir/MixCut/Views/Import/"
   cp "$ROOT/Sources/MixCutCore/UndoGraceMachine.swift" "$case_dir/Sources/MixCutCore/"
 }
 
@@ -154,17 +156,44 @@ mutate "$D/MixCut/ViewModels/ImportViewModel.swift" \
 
 D="$WORK/m13"; fresh "$D"
 # 把中间那次落盘"优化"掉：合并 save 会让 projectVideos.isEmpty 恒 false ⇒ 视频记录删不掉
+# ⚠️ 锚点跟着批 4 的注入缝搬过一次：那两次落盘现在是 `guard debugSaveHolds(stage: "pv"), context.safeSave() else`
+#    （方案批 2 的搬锚清单预言的就是这件事 —— 改了咽喉的形状，自证的靶必须同批改，否则这条腿静默空转）。
 mutate "$D/MixCut/ViewModels/ImportViewModel.swift" \
-  $'for pv in pendingPVs { context.delete(pv) }\n        context.safeSave()' \
-  'for pv in pendingPVs { context.delete(pv) }' \
+  $'            context.delete(unit.pendingPVs)\n            guard debugSaveHolds(stage: "pv"), context.safeSave() else {\n                failedAtPVSave = index\n                break\n            }' \
+  '            context.delete(unit.pendingPVs)   // 探针：中间那次落盘被合并掉' \
   && check_case "M13 中间那次 safeSave 被合并掉" "UG-G11" "$D" "$WORK/m13.log"
 
 D="$WORK/m14"; fresh "$D"
 # 顺序刀：主判定挪到第一次落盘**之前** —— 次数还是 2，读到的却是还没被 cascade 摘干净的反向数组
 mutate "$D/MixCut/ViewModels/ImportViewModel.swift" \
-  $'for pv in pendingPVs { context.delete(pv) }\n        context.safeSave()' \
-  $'guard video.projectVideos.isEmpty else { return (false, GraphChange()) }\n        for pv in pendingPVs { context.delete(pv) }\n        context.safeSave()' \
+  $'            context.delete(unit.pendingPVs)\n            guard debugSaveHolds(stage: "pv"), context.safeSave() else {\n                failedAtPVSave = index\n                break\n            }' \
+  $'            guard unit.video.projectVideos.isEmpty else { continue }   // 探针：判定挪到落盘之前\n            context.delete(unit.pendingPVs)\n            guard debugSaveHolds(stage: "pv"), context.safeSave() else {\n                failedAtPVSave = index\n                break\n            }' \
   && check_case "M14 主判定排在第一次 safeSave 之前（次数没变、顺序变了）" "UG-G11" "$D" "$WORK/m14.log"
+
+D="$WORK/m15"; fresh "$D"
+# 换项目不复位多选态 ⇒ A 项目勾选的卡会被 B 项目的删除按钮真删掉（跨项目串选）
+# ⚠️ 锚点必须带行首换行：ESC 那颗里也有同一句、只是缩进更深（32 空格），
+#    裸的 16 空格串会作为它的子串命中 2 处 —— 而 16 空格那处才是 .task 里的复位。
+mutate "$D/MixCut/Views/Import/ImportView.swift" \
+  $'\n                importVM.setVideoSelectionMode(false)' \
+  $'\n                // 探针：复位被挪走' \
+  && check_case "M15 .task 里不再复位多选态" "UG-G12" "$D" "$WORK/m15.log"
+
+D="$WORK/m16"; fresh "$D"
+# 摘掉 ⌘D 那颗 ⇒ 四颗不齐必须红（少一颗就是"勾 30 个"退回半自动）
+# ⚠️ 三行一起摘：只摘 Button 那行的话 `.keyboardShortcut("d"…)` 还活着，
+#    计数仍是 4 ⇒ 判据绿，那把刀砍在空气上（M16 就这么假通过过一次）。
+mutate "$D/MixCut/Views/Import/ImportView.swift" \
+  $'                        Button("") { importVM.invertVisibleVideoSelection(numberedVideos.map(\\.video)) }\n                            .keyboardShortcut("d", modifiers: .command)\n                            .opacity(0)\n' \
+  '' \
+  && check_case "M16 摘掉 ⌘D 反选那颗" "UG-G14" "$D" "$WORK/m16.log"
+
+D="$WORK/m17"; fresh "$D"
+# 常挂（把多选分支拆掉）⇒ 必须红：四颗都在但抢掉了文本框的 ⌘A，那是回归不是便利
+mutate "$D/MixCut/Views/Import/ImportView.swift" \
+  '                    if importVM.isVideoSelectionMode {' \
+  '                    if true {' \
+  && check_case "M17 快捷键挪出多选分支变成常挂" "UG-G14" "$D" "$WORK/m17.log"
 
 echo
 if [ "$fail" = "0" ]; then

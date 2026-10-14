@@ -29,7 +29,7 @@ enum FileHelper {
 
     /// 应用沙盒中的项目数据目录
     static var appSupportDirectory: URL {
-        let url = appSupportBaseDirectory.appendingPathComponent(Brand.dataDirectoryName, isDirectory: true)
+        let url = appSupportDirectoryForReading
         ensureDirectory(at: url)
         return url
     }
@@ -58,9 +58,9 @@ enum FileHelper {
 
     // MARK: - 全局视频存储（按 hash 去重）
 
-    /// 全局视频存储目录
+    /// 全局视频存储目录（**写入侧**用这颗：它读一次就把目录建出来）
     static var globalVideoDirectory: URL {
-        let url = appSupportDirectory.appendingPathComponent("Videos", isDirectory: true)
+        let url = globalVideoDirectoryForReading
         ensureDirectory(at: url)
         return url
     }
@@ -441,5 +441,57 @@ enum FileHelper {
         } catch {
             MixLog.error("删除项目目录失败 \(projectID): \(error.localizedDescription)")
         }
+    }
+}
+
+// MARK: - 只读坐标（新增代码一律追加在文件末尾：本文件有外部按行号的引用，中间插行会把它们全部弄旧）
+
+extension FileHelper {
+
+    /// 素材根目录的目录名，只写这一次；写入侧与只读侧都从这里取。
+    static let videosDirectoryName = "Videos"
+
+    /// 数据目录的**坐标**：只算路径，绝不创建。
+    ///
+    /// 与 `legacyAppSupportDirectory` 同一条守法 —— 目录不存在就等于没东西可看。
+    /// 需要"顺手建目录"的调用方请用 `appSupportDirectory`。
+    static var appSupportDirectoryForReading: URL {
+        appSupportBaseDirectory.appendingPathComponent(Brand.dataDirectoryName, isDirectory: true)
+    }
+
+    /// 素材根目录的**坐标**：只算路径，绝不创建。
+    ///
+    /// ⚠️ 磁盘对账这条轴必须用这颗，**不能用 `globalVideoDirectory`**：后者读一次路径就把目录
+    /// 建了出来，于是"素材根目录本身不在（外置卷未挂载 / 数据目录被移走）"这道兜底
+    /// 在生产里永不可达 —— 那道门（`MissingMaterialFinder.safeMissingIDs` 的第一关）会退化成
+    /// 一句永远为真的话。只读侧要的是"它现在在不在"，不是"把它变出来"。
+    static var globalVideoDirectoryForReading: URL {
+        appSupportDirectoryForReading.appendingPathComponent(videosDirectoryName, isDirectory: true)
+    }
+
+    /// 问「这条路径现在能不能用」的**唯一出口**（三态）。
+    ///
+    /// 为什么只能有这一颗：这条问题此前散在 8 个文件里各问一遍（`reidentify`/`reextract`/克隆原声/
+    /// 导出/两个播放器/…），于是"到底算不算在"有 N 个答案 —— 同一份 0 字节文件，播放那边算"在"、
+    /// 导出那边算"没了"。批 4 的磁盘对账与批 5 的各条链现在都问这一颗。
+    ///
+    /// 三档不许压成两档：`fileExists` 对**0 字节**与**无读权限**文件都判「在」，而这两种文件播放与
+    /// ffmpeg 都会失败；把「读不动」并进「不存在」则会误藏一张还能救的卡（方向性代价见
+    /// `MissingMaterialFinder` 文件头：藏一张好卡比多显示一张死卡更错）。
+    static func materialProbe(_ path: String) -> MaterialProbeReading {
+        let fm = FileManager.default
+        guard !path.isEmpty else { return .absent }
+        guard fm.fileExists(atPath: path) else { return .absent }
+        guard fm.isReadableFile(atPath: path) else { return .unreadable }
+        let size = (try? fm.attributesOfItem(atPath: path))?[.size] as? Int
+        return size == 0 ? .unreadable : .present
+    }
+
+    /// 素材可用性判定的布尔便捷口（= `materialProbe` 的"能用"那一档）。
+    ///
+    /// ⚠️ 调用方**不许**再自己写 `FileManager.default.fileExists(atPath: 素材路径)`；
+    /// 判据 G-M03 盯着素材轴文件里的裸问法，长出一处就红。
+    static func isMaterialFilePresent(path: String) -> Bool {
+        materialProbe(path) == .present
     }
 }
