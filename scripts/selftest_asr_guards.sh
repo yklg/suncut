@@ -17,6 +17,11 @@ CORE_FILES=(ASRPolicy ASREngineDecision TextProvenance WhisperModelCatalog DubSt
 APP_FILES=(Services/ASR/ASRService.swift Services/ASR/ASRSettings.swift Services/ASR/QwenASRClient.swift
            Services/ASR/SegmentTranscriber.swift Infrastructure/LocalWhisperGate.swift
            Services/VideoProcessing/FFmpegRunner.swift
+           # VocalSeparationService 是 2026-10-10 补进来的：G14 在真树上假红（它的一句文档注释被
+           # 文件级 grep 读成第四处实现）而自证照样通过 —— 原因就是探针树的 APP_FILES 是手抄子集，
+           # 步骤①"干净树必须全绿"这条自证根本没机会看到那个文件。补进来之后，判据的文件清单与真树
+           # 差多少，步骤① 就会红多少，手抄子集这件事本身变成会红的事。
+           Services/TTS/VocalSeparationService.swift
            App/DebugSelfTest.swift ViewModels/ImportViewModel.swift
            Views/Settings/SettingsView.swift Views/Sidebar/SidebarView.swift
            Models/Segment.swift Models/SegmentDub.swift Models/Video.swift

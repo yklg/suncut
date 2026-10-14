@@ -17,6 +17,23 @@ FAILED=0
 fail() { echo "FAIL $1"; FAILED=$((FAILED + 1)); }
 pass() { echo "PASS $1"; }
 
+# 「某符号出现在哪些文件」这类判据必须只看代码行：文档注释里提一句符号名不是引用点。
+# 这条纪律本脚本早已立过 —— 见下面 G21 的取样约束③（2026-09-30 的恒红就是没滤注释 + BSD BRE
+# 写法造成的），但它只落在了 G21 一颗上。G14 的假红是同一族缺口的第二次发作：
+# `VocalSeparationService.swift:115` 一句「仓库内同款顺序见 `FFmpegRunner.extractSegmentPCM`」
+# 被 `grep -rl` 读成"第四处自己切逐段音频的实现"，而真实调用点其实只有豁免名单里那三处。
+# 所以这里收成一颗，六处同族判据一起参加，别再各抄一遍（抄一份就是漏一份）。
+# 滤法沿用 G21 已验证可用的那条 BRE，不另发明：行号后紧跟 //、/// 或 * 的行不算代码。
+swift_code_hits() {  # $1=pattern(BRE) $2..=搜索根
+  local pat="$1"; shift
+  grep -rn --include="*.swift" "$pat" "$@" 2>/dev/null \
+    | grep -v ':[0-9]*:[[:space:]]*\(//\|///\|\*\)' || true
+}
+
+code_files() {  # 同上，只回去重后的文件名
+  swift_code_hits "$@" | cut -d: -f1 | sort -u
+}
+
 # G1 规则层不得读写用户偏好存储（破一次，"下沉=可测"这条前提就废了）
 # 只匹配真实用法：文档注释里也会写这个词（例如本策略的说明），数注释会把守卫变成误报机器
 hits=$(grep -rn --include="*.swift" "UserDefaults\.standard" "$CORE" 2>/dev/null | wc -l | tr -d ' ')
@@ -96,7 +113,7 @@ done
 # ---------- 2c：逐段重听门面（R4/R5） ----------
 
 # G13 云端客户端只许门面构造（TC-83）。DebugSelfTest 是 #if DEBUG 探针，进允许清单
-bad=$(grep -rl --include="*.swift" 'QwenASRClient(' "$APP" 2>/dev/null | sed "s|$APP/||" \
+bad=$(code_files 'QwenASRClient(' "$APP" | sed "s|$APP/||" \
       | grep -v '^Services/ASR/SegmentTranscriber.swift$' | grep -v '^App/DebugSelfTest.swift$' | sort | tr '\n' ' ')
 if [[ -z "$bad" ]]; then
   pass "G13 云端 ASR 客户端只在门面里构造（VM 不再自己 new）"
@@ -105,7 +122,7 @@ else
 fi
 
 # G14 逐段切音频也只许门面做（格式由引擎定，R5）：VM 里再出现切段调用就是第四处实现
-bad=$(grep -rl --include="*.swift" 'extractSegmentPCM' "$APP" 2>/dev/null | sed "s|$APP/||" \
+bad=$(code_files 'extractSegmentPCM' "$APP" | sed "s|$APP/||" \
       | grep -v '^Services/ASR/SegmentTranscriber.swift$' \
       | grep -v '^Services/VideoProcessing/FFmpegRunner.swift$' \
       | grep -v '^App/DebugSelfTest.swift$' | sort | tr '\n' ' ')
@@ -194,7 +211,7 @@ else
 fi
 
 # G7 红线 R1：识别路径里不许有下载。downloadModelIfNeeded 只允许「1 处定义 + 设置页 1 处调用」
-callers=$(grep -rl --include="*.swift" 'downloadModelIfNeeded' "$APP" 2>/dev/null | sed "s|$APP/||" | sort | tr '\n' ' ')
+callers=$(code_files 'downloadModelIfNeeded' "$APP" | sed "s|$APP/||" | sort | tr '\n' ' ')
 expected="Services/ASR/ASRService.swift Views/Settings/SettingsView.swift "
 if [[ "$callers" == "$expected" ]]; then
   pass "G7a downloadModelIfNeeded 只有定义 + 设置页一个调用点"
@@ -267,7 +284,7 @@ if [[ "$hits" == "0" ]]; then
 else
   fail "G8b ASR 服务里直接读 UserDefaults（$hits 处）"
 fi
-hits=$(grep -rl --include="*.swift" 'asr\.enginePreference' "$ROOT/MixCut" "$ROOT/Sources" 2>/dev/null | wc -l | tr -d ' ')
+hits=$(code_files 'asr\.enginePreference' "$ROOT/MixCut" "$ROOT/Sources" | wc -l | tr -d ' ')
 if [[ "$hits" == "1" ]]; then
   pass "G8c 偏好 key 字面量全仓只出现 1 个文件（宿主唯一）"
 else
@@ -295,7 +312,7 @@ else
 fi
 
 # G22 风格锚字面量全仓只 1 处，且传给 --prompt 的实参不得是拼出来的
-anchor_files=$(grep -rl --include="*.swift" '下面是一段简体中文口语旁白' "$ROOT/Sources" "$ROOT/MixCut" 2>/dev/null | wc -l | tr -d ' ')
+anchor_files=$(code_files '下面是一段简体中文口语旁白' "$ROOT/Sources" "$ROOT/MixCut" | wc -l | tr -d ' ')
 prompt_line=$(grep -n -- '"--prompt"' "$ASR_DIR/ASRService.swift" 2>/dev/null | head -1)
 if [[ "$anchor_files" == "1" ]] && [[ -n "$prompt_line" ]] \
    && ! grep -q -- '--prompt.*[+]\|--prompt.*\\(' <<<"$prompt_line"; then
@@ -306,12 +323,25 @@ fi
 
 # G23 锚与回吐判据只能由门面问核心层，VM 不许自己决定带不带锚
 # （v8：这里原本数的是"算窗与裁回"，那套实现已随宽窗删除 ⇒ 判据对象换成锚这一族）
-facade_hits=$(grep -c 'SegmentRetakeRule\.' "$ASR_DIR/SegmentTranscriber.swift" 2>/dev/null || true)
-vm_hits=$(grep -rn --include="*.swift" 'SegmentRetakeRule\.' "$APP/ViewModels" 2>/dev/null | wc -l | tr -d ' ')
+# 勘误（§AF）：原来数的是整个 `SegmentRetakeRule.` 类型，比本判据**标题说的这件事**宽得多 ——
+# 那会把"任何 VM 问核心层任何规则"都算成违规。锚那一族的决定确实只能在门面里问；
+# 而"这一段值不值得重听"必须段对象在手才判得了（门面刻意不碰 SwiftData），读者是自动链。
+anchor_only='SegmentRetakeRule\.\(styleAnchor\|containsAnchorEcho\|capability\)'
+facade_hits=$(grep -c "$anchor_only" "$ASR_DIR/SegmentTranscriber.swift" 2>/dev/null || true)
+vm_hits=$(grep -rn --include="*.swift" "$anchor_only" "$APP/ViewModels" 2>/dev/null | wc -l | tr -d ' ')
 if [[ "$facade_hits" -ge 2 ]] && [[ "$vm_hits" == "0" ]]; then
   pass "G23 锚与回吐判据只在门面里问核心层（$facade_hits 处），VM 零处"
 else
   fail "G23 门面调用 $facade_hits 处、VM 出现 $vm_hits 处：调用方自己决定带不带锚就会与核心层分家"
+fi
+
+# G23b「要不要重听」的判定只许有一个读者（自动链那一处），别处再判就是第二套政策
+auto_readers=$(grep -rn --include="*.swift" 'SegmentRetakeRule\.shouldAutoRetake(' "$APP" 2>/dev/null | wc -l | tr -d ' ')
+if [[ "$auto_readers" == "1" ]] && [[ -f "$APP/ViewModels/ImportViewModel.swift" ]] \
+   && grep -q 'SegmentRetakeRule\.shouldAutoRetake(' "$APP/ViewModels/ImportViewModel.swift"; then
+  pass "G23b 自动链的跳过判定唯一（读核心层那一份，别处没第二套）"
+else
+  fail "G23b 跳过判定读者数应为 1（自动链），实际 $auto_readers 处：又多写一套「要不要重听」"
 fi
 
 # G26 锚回吐判据只有一份（单测与探针共用，否则两边口径会分家）
@@ -365,8 +395,8 @@ else
 fi
 
 # G31 "裸跑"入口只能被那两个带闸的包装调用，别处直接调就绕过了闸
-bare_calls=$(grep -rn --include="*.swift" 'Ungated(' "$APP" 2>/dev/null | grep -v 'func ' | wc -l | tr -d ' ')
-bare_files=$(grep -rln --include="*.swift" 'Ungated(' "$APP" 2>/dev/null | sed "s|^$APP/||" | tr '\n' ' ')
+bare_calls=$(swift_code_hits 'Ungated(' "$APP" | grep -v 'func ' | wc -l | tr -d ' ')
+bare_files=$(code_files 'Ungated(' "$APP" | sed "s|^$APP/||" | tr '\n' ' ')
 if [[ "$bare_calls" == "2" && "$bare_files" == "Services/ASR/ASRService.swift " ]]; then
   pass "G31 无闸入口只在 ASRService 内被调用 2 次（包装函数各一次）"
 else
