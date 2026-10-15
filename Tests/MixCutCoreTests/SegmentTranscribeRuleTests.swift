@@ -159,4 +159,99 @@ struct SegmentTranscribeRuleTests {
         #expect(t.cancelled == 1)
         #expect(t.gotText + t.failed + t.refused + t.cancelled == 7, "有档被漏计 = 批次总数对不上")
     }
+
+    @Test("TC-SB-03 自动链跳过的段不产生 outcome ⇒ tally 的分母只算真跑过的（§AF 的语义边界）")
+    func skippedSegmentsDoNotPolluteBatchTally() {
+        let sliced = "秋冬一到嘴就干，这果子咬一口全是水。"
+        // 判定本身：整片切片 + 非空 ⇒ 不必再听；空段 / 来源不是整片切片 ⇒ 必须听
+        #expect(!SegmentRetakeRule.shouldAutoRetake(currentText: sliced, currentSource: .fullVideoSlice))
+        #expect(SegmentRetakeRule.shouldAutoRetake(currentText: "", currentSource: .fullVideoSlice))
+        #expect(SegmentRetakeRule.shouldAutoRetake(currentText: sliced, currentSource: .unknownLegacy))
+
+        // 计数诚实：跳过的段一条 outcome 都不该有，否则"7 段全跳过"会被报成"7 段拿到字"
+        let seven = Array(repeating: sliced, count: 7)
+        var ranSliced: [SegmentTranscribeOutcome] = []
+        var ranLegacy: [SegmentTranscribeOutcome] = []
+        for text in seven {
+            if SegmentRetakeRule.shouldAutoRetake(currentText: text, currentSource: .fullVideoSlice) {
+                ranSliced.append(.replaced)
+            }
+            if SegmentRetakeRule.shouldAutoRetake(currentText: text, currentSource: .unknownLegacy) {
+                ranLegacy.append(.replaced)
+            }
+        }
+        #expect(ranSliced.isEmpty, "整片切片来源可信 ⇒ 自动链一段都不该跑")
+        #expect(SegmentBatchPolicy.tally(ranSliced).gotText == 0)
+        #expect(ranLegacy.count == 7, "来源在说谎的边缘（旧数据兜底）必须全跑，一条都不许省")
+        let t = SegmentBatchPolicy.tally(ranLegacy)
+        #expect(t.gotText == 7 && t.failed == 0 && t.refused == 0 && t.cancelled == 0)
+    }
+
+    // MARK: TC-SB-01 停止规则的边界档（TC-113 只测了 limit-1 / limit 两点）
+
+    @Test("TC-SB-01 上限的其余边界：取消永远优先于上限；limit ≤ 0 不许把批次锁死；停下时报实际失败数")
+    func stopRuleBoundaryGates() {
+        let limit = ASRPolicy.consecutiveFailureLimit
+        // 取消与已达上限同时成立 ⇒ 报 cancelled。「用户中止」和「质量崩了」是两句话，
+        // 先后顺序写反 = 把用户主动停止报成"N 段连续失败已中止"。
+        #expect(SegmentBatchPolicy.shouldStop(consecutiveFailures: limit, cancelled: true) == .cancelled)
+        #expect(SegmentBatchPolicy.shouldStop(consecutiveFailures: limit + 99, cancelled: true) == .cancelled)
+        // 配置退化成 0 或负数 ⇒ `limit > 0` 那半短路必须生效，否则第一段失败就停 = 整条功能锁死
+        #expect(SegmentBatchPolicy.shouldStop(consecutiveFailures: 0, cancelled: false, limit: 0) == .continueBatch)
+        #expect(SegmentBatchPolicy.shouldStop(consecutiveFailures: 999, cancelled: false, limit: 0) == .continueBatch)
+        #expect(SegmentBatchPolicy.shouldStop(consecutiveFailures: 999, cancelled: false, limit: -1) == .continueBatch)
+        // 调用方算出负数（不该发生）⇒ 也不能变成"停"
+        #expect(SegmentBatchPolicy.shouldStop(consecutiveFailures: -5, cancelled: false) == .continueBatch)
+        // 极端档 limit = 1：第一段失败即停，且带的是**实际**失败数而不是上限值
+        #expect(SegmentBatchPolicy.shouldStop(consecutiveFailures: 1, cancelled: false, limit: 1)
+                == .tooManyConsecutiveFailures(1))
+        #expect(SegmentBatchPolicy.shouldStop(consecutiveFailures: 7, cancelled: false, limit: 3)
+                == .tooManyConsecutiveFailures(7),
+                "文案要说「连续失败 7 段」，报成上限 3 = 谎报")
+        // 默认档自证：现网用的不是上面这些极端值
+        #expect(SegmentBatchPolicy.shouldStop(consecutiveFailures: limit - 1, cancelled: false) == .continueBatch)
+    }
+
+    // MARK: TC-SB-02 计数守恒（穷举七档 × 不均分布，期望值由输入算出）
+
+    @Test("TC-SB-02 tally 求和守恒：任意档任意条数，四桶之和恒等于条数；分桶口径与 gotText() 同源")
+    func tallyConservesCountAcrossAllOutcomes() {
+        // 空批：四个桶全 0（"0 段拿到字"与"没跑"不能混）
+        let empty = SegmentBatchPolicy.tally([])
+        #expect(empty.gotText == 0 && empty.failed == 0 && empty.refused == 0 && empty.cancelled == 0)
+
+        let all = SegmentTranscribeOutcome.allCases
+        // 穷举不变量走全表，不复制 SplitMix64（那是 ProjectVideoDedupTests 的 private 夹具，
+        // 复制 = 第二份真源；见 WhisperModelCatalogTests.swift:38 的同一条裁定）
+        #expect(all.count == 7, "档位表变了：本条的穷举覆盖要跟着补，tally 的 switch 也得跟着改")
+
+        // 每档单独一条：求和恒 1，且"算不算拿到字"必须与 gotText() 同一口径
+        for outcome in all {
+            let one = SegmentBatchPolicy.tally([outcome])
+            #expect(one.gotText + one.failed + one.refused + one.cancelled == 1, "\(outcome) 漏计或被双计")
+            #expect((one.gotText == 1) == SegmentTranscribeRule.gotText(outcome),
+                    "\(outcome)：tally 的分桶与 gotText() 分家 = 两套真源")
+            #expect((one.refused == 1) == (outcome == .refused),
+                    "\(outcome)：配置问题被并进识别失败 = 把没配 Key 报成质量差")
+            #expect((one.cancelled == 1) == (outcome == .cancelled))
+        }
+
+        // 不均分布：第 k 档出现 k+1 次 ⇒ 期望值由**输入自己分桶**算出，不看函数输出
+        // （分桶口径写在这里，是从各档的文档语义来的；tally 若把某档放错桶，两边就对不上）
+        var mixed: [SegmentTranscribeOutcome] = []
+        for (k, outcome) in all.enumerated() {
+            mixed.append(contentsOf: Array(repeating: outcome, count: k + 1))
+        }
+        let gotSet: Set<SegmentTranscribeOutcome> = [.replaced, .unchanged]
+        let failedSet: Set<SegmentTranscribeOutcome> = [.emptyAudio, .bothEnginesFailed, .engineFailed]
+        let t = SegmentBatchPolicy.tally(mixed)
+        #expect(t.gotText == mixed.filter { gotSet.contains($0) }.count)
+        #expect(t.failed == mixed.filter { failedSet.contains($0) }.count)
+        #expect(t.refused == mixed.filter { $0 == .refused }.count)
+        #expect(t.cancelled == mixed.filter { $0 == .cancelled }.count)
+        #expect(t.gotText + t.failed + t.refused + t.cancelled == mixed.count,
+                "有档被漏计 = 批次总数对不上（Toast 会说谎）")
+        // 夹具非空洞性：不均分布真的不均（每档条数各不相同），否则上面几条退化成"全都相等"
+        #expect(mixed.count == 28 && Set(mixed).count == all.count)
+    }
 }

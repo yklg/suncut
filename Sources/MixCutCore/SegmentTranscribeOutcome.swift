@@ -229,6 +229,21 @@ public enum SegmentRetakeRule {
         capability(for: engine).contextPrompt ? ASRPolicy.retakeStyleAnchor : nil
     }
 
+    /// 自动链（导入、重跑分析）里，这一段值不值得再让引擎听一遍。
+    ///
+    /// 默认答案是**不值得**：边界已经只落在句子收尾时刻（`BoundaryAlignmentEngine` 的优先级，
+    /// 计划 §AF），段台词就是从整片听写里切下来的完整句子；再听一遍是同一台模型拿**更少**的上下文
+    /// 把同一句话重新错一次 —— §Q-4 实测逐段比整片贵 2.9 倍、逐字一致只有 3/12。
+    /// 只有两种情形仍要补认，且都跟"整片那句话到底切到没切到"有关：
+    /// ① 一个字也没切到（空段）；② 台词不是整片切片来的（来源在说谎的边缘：旧数据、
+    ///    模型建议文本兜底、手改、重听过的），这时候整片口径帮不上忙，必须真听。
+    /// 手动那颗「逐段重听」按钮**不走这里** —— 用户点名要重听就整条都听。
+    public static func shouldAutoRetake(currentText: String,
+                                        currentSource: TranscriptSource) -> Bool {
+        if currentSource != .fullVideoSlice { return true }
+        return currentText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
     /// 锚与业务文本是否零交集：共享任一长度 ≥2 的连续汉字片段即判为**有**交集。
     /// 单字重合（"的""一"）太常见，按单字判会天天误报，所以取二字组。
     // known-dead: 只有测试调用者（TC-115 用它钉锚的性质）。将来加第二颗锚时应由门面在启动期自检调用。

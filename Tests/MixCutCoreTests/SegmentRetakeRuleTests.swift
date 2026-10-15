@@ -112,4 +112,25 @@ struct SegmentRetakeRuleTests {
                     "\(engine)：锚的决定与能力表分家")
         }
     }
+
+    @Test("TC-134 自动链只补「整片那边没给出完整句子」的段（判定只看来源档与空不空）")
+    func autoRetakeFillsOnlyWhatTheWholeVideoPassMissed() {
+        // 边界已按句子收尾落点 ⇒ 切片就是完整句子，同一台模型再听一遍只是把同一句话重新错一次
+        // （§Q-4：逐段比整片贵 2.9 倍、逐字一致仅 3/12）。
+        #expect(!SegmentRetakeRule.shouldAutoRetake(currentText: "秋冬一到嘴就干",
+                                                    currentSource: .fullVideoSlice))
+        // 空段 ⇒ 整片一个字也没切到，必须补
+        #expect(SegmentRetakeRule.shouldAutoRetake(currentText: "", currentSource: .fullVideoSlice))
+        #expect(SegmentRetakeRule.shouldAutoRetake(currentText: "  \u{3000}\n",
+                                                   currentSource: .fullVideoSlice),
+                "全角空格与换行也算没字：留着空白冒充「有台词」就等于永远不补")
+        // 来源不是整片切片 ⇒ 整片口径帮不上它，一律真听（旧数据、模型兜底文本、手改、重听过的…）
+        var checked = 0
+        for src in TranscriptSource.allCases where src != .fullVideoSlice {
+            #expect(SegmentRetakeRule.shouldAutoRetake(currentText: "有字", currentSource: src),
+                    "\(src.rawValue)：这一档的字不是整片切出来的，不许跳过")
+            checked += 1
+        }
+        #expect(checked >= 6, "取样面太窄说明 TranscriptSource 变了而这里没跟上：\(checked)")
+    }
 }
