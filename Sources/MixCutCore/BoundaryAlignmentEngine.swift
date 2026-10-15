@@ -84,8 +84,9 @@ public struct BoundaryDecision: Sendable, Equatable {
 ///
 /// 设计要点（取代旧的「四阶段串行覆盖」）：
 /// - **单次择优**：每个边界只决策一次，按优先级在候选点中选最优，避免后一阶段把前一阶段对齐好的结果又推走。
-/// - **强切镜优先**：只有画面变化强度达标（≥ sceneStrengthThreshold）的切换点才作为强吸附目标，
-///   且搜索窗较大。这实现了「边缘画面突变大 → 贴齐切镜；画面平缓 → 保留语义切点」的直觉。
+/// - **句子结束优先**（§AF 改的顺序）：切点不许劈开一句台词；只有那段附近没人收尾话时，
+///   才让达标的强画面切换（strength ≥ 阈值）决定落点。旧顺序是"强切镜优先"，代价是句子被切开之后
+///   只能靠逐段重听补，而那一条腿实测比整片识别贵 2.9 倍。
 /// - **按帧量化**：最终边界吸到帧栅格 round(t·fps)/fps，消除导出时 ±1 帧的浮点抖动。
 /// - **不做 I-frame 对齐**：导出走 trim 重新编码，任意帧可精确切，无需落在 I-frame 上
 ///   （旧实现的 I-frame 阶段反而把边界推离画面切换点，已移除）。
@@ -152,7 +153,13 @@ public enum BoundaryAlignmentEngine {
     // MARK: - 优先级择优
 
     /// 为单个边界选择吸附落点。
-    /// 优先级：强切镜 > 句子结束 > 静音停顿 > 原切点
+    /// 优先级：**句子结束 > 强切镜 > 静音停顿 > 原切点**
+    ///
+    /// 为什么句子排第一（2026-10-10 改的，计划 §AF）：边界落在句中就等于把一句话劈成两半，
+    /// 那天的补救是让每个分镜各自重听一遍 —— 代价实测是整片识别的 2.9 倍（§Q-4），
+    /// 而买回来的只是"这一句重新错一遍"。让切点只落在真说完整话的地方，问题不再发生，
+    /// 而不是发生后逐段去修。画面切换仍然参与，但只在**那段附近没人收尾话**时决定落点 ——
+    /// 纯空镜/B-roll 区间没有台词可保护，这时候听画面的。
     private static func chooseAnchor(
         for b: Double,
         scenes: [SceneCut],
@@ -161,18 +168,18 @@ public enum BoundaryAlignmentEngine {
         config: BoundaryAlignConfig
     ) -> (time: Double, anchor: BoundaryAnchor) {
 
-        // ① 强切镜：变化强度达标且在搜索窗内，取最近
+        // ① 句子结束：保证不在台词中间切，取窗内最近的 endTime
+        let nearEnds = sentences.map(\.end).filter { abs($0 - b) <= config.sentenceSnapMaxOffset }
+        if let e = nearEnds.min(by: { abs($0 - b) < abs($1 - b) }) {
+            return (e, .sentence)
+        }
+
+        // ② 强切镜：变化强度达标且在搜索窗内，取最近
         let strongScenes = scenes.filter {
             $0.strength >= config.sceneStrengthThreshold && abs($0.time - b) <= config.sceneSearchRange
         }
         if let s = strongScenes.min(by: { abs($0.time - b) < abs($1.time - b) }) {
             return (s.time, .scene)
-        }
-
-        // ② 句子结束：保证不在台词中间切，取窗内最近的 endTime
-        let nearEnds = sentences.map(\.end).filter { abs($0 - b) <= config.sentenceSnapMaxOffset }
-        if let e = nearEnds.min(by: { abs($0 - b) < abs($1 - b) }) {
-            return (e, .sentence)
         }
 
         // ③ 静音：落在静音段内→中点；否则附近最近静音段的中点

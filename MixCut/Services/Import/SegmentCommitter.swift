@@ -40,11 +40,14 @@ struct SegmentCommitter {
         planConfig: SegmentationPlanConfig = SegmentationPlanConfig()
     ) -> PartitionCommit {
         let boundaries = analysisResult.segments.map(\.endTime)
-        let (optimizedBoundaries, _) = boundaryOptimizer.optimize(
+        let (optimizedBoundaries, boundaryReport) = boundaryOptimizer.optimize(
             boundaries: boundaries,
             asrSentences: asr.sentences,
             localAnalysis: localAnalysis
         )
+        // 落点分布必须进日志：不然"切点到底吸到了什么上"只有开库或下断点才知道，
+        // 而 §AF 改的正是这条优先级（句子结束 > 强切镜）。
+        MixLog.info(" 边界吸附: video=\(video.name), \(boundaryReport.oneLine)")
 
         // 顺序不能反：先把每条 AI 分镜换算成「吸附后的区间」，再交给规划层决定要不要并。
         // 若先并再吸附，边界优化会把刚攒够的组又拆开。

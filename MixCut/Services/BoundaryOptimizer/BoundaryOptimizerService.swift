@@ -23,6 +23,15 @@ struct BoundaryOptimizationReport {
         return counts
     }
 
+    /// 一行可直接进日志的形状。留痕必须落在会被读的地方：这份报告以前在调用点被 `_` 丢掉，
+    /// 于是"切点到底吸到了什么上"没有任何一处能看见（与计划 §AD-4 同一族缺陷）。
+    var oneLine: String {
+        let c = anchorCounts
+        return String(format: "句子 %d / 强切镜 %d / 静音 %d / 原值 %d，平均移动 %.3fs",
+                      c[.sentence] ?? 0, c[.scene] ?? 0, c[.silence] ?? 0, c[.original] ?? 0,
+                      averageShift)
+    }
+
     var description: String {
         let c = anchorCounts
         return """
