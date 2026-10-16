@@ -229,7 +229,7 @@ PY
 # UTF-8 里必红，所以这类写法必须机械禁掉；`bash -n` 碰不到运行期展开，语法检查不算数。
 # 写法统一成：变量一律加花括号，全角标点只跟在 `}` 之后。
 python3 - "$ROOT" <<'PY'
-import os, re, sys
+import os, re, subprocess, sys
 
 root = sys.argv[1]
 found = []
@@ -260,6 +260,36 @@ if hits:
     print('   改法：把 $name 写成 ${name}（本仓踩实时 27 处，分布在 7 个文件）')
     sys.exit(1)
 print("PASS 全部 .sh 的 $变量后不紧跟非 ASCII（判据在用户 locale 下真跑得起来）")
+
+# ---- 权限位对账：全部**已入库**的 .sh 必须带可执行位（100755）---------------
+# 为什么值得钉：本仓 21 支 .sh 里曾有 3 支是 644（`check_schema_ledger_guards`、`check_live_store_guards`、
+# `check_association_guards`），而文档与台账里确实存在 `./scripts/x.sh` 这种写法 ⇒ 那条"指令"对它们
+# 必然 permission denied（2026-10-13 就为这个改过一次 CLAUDE.md 的口径）。2026-10-16 补齐权限位，
+# 这条判据防止再漂回去。
+# 取 git 索引里的 mode，不取本地 stat：**别人 clone 出来的那个形态才是契约** ——
+# 本机 chmod +x 但提交时丢了执行位，判据照样该红。
+# GIT_MODE_ROOT 只给台架用（指一棵合成 git 仓库），用来证明这一格真的会红，而不是恒绿。
+mode_root = os.environ.get("GIT_MODE_ROOT") or root
+try:
+    raw = subprocess.check_output(["git", "-C", mode_root, "ls-files", "-s", "--", "*.sh"],
+                                  text=True, stderr=subprocess.STDOUT)
+except (subprocess.CalledProcessError, OSError) as exc:
+    print(f"FAIL[判据失效] 取不到 {mode_root} 的 git 索引权限位（{str(exc)[:120]}）—— 无从对账")
+    sys.exit(1)
+modes = {}
+for line in raw.splitlines():
+    head, sep, path = line.partition("\t")
+    if sep and path and head.split():
+        modes[path] = head.split()[0]
+if not modes:
+    print(f"FAIL[判据失效] {mode_root} 里没有已入库的 .sh —— 这条判据没有对象，不算通过")
+    sys.exit(1)
+noexec = sorted(f"{p}={m}" for p, m in modes.items() if m != "100755")
+if noexec:
+    print(f"FAIL[权限位不齐] {len(noexec)} 支已入库的 .sh 没有可执行位：{noexec}")
+    print("   —— 两种收法只能选一种：全部 chmod +x，或者全仓文档统一改成 `bash scripts/…` 并一律摘掉 +x")
+    sys.exit(1)
+print(f"PASS .sh 权限位齐整：已入库的 {len(modes)} 支全部是 100755（clone 出来也能 ./scripts/… 直接跑）")
 PY
 
 if [ -z "${PBX_PATH:-}" ] && [ "${SKIP_XCODEBUILD:-0}" != "1" ]; then

@@ -447,7 +447,9 @@ cp ~/Library/Application\ Support/Suncut/Suncut.store* .scratch/store-backup-${T
    - `#Index` 变更**不进指纹**（`Entity.indices` 要 macOS 15+，本工程部署目标 14.0），
      所以"指纹没变"只能读成"除索引外没变"。
 5. 机械判据：`LC_ALL=en_US.UTF-8 bash scripts/check_schema_ledger_guards.sh`（SL-01~16；
-   这脚本没有 `+x`，写 `./scripts/…` 只会拿到 `permission denied`，2026-10-13 实测两种写法后定下来用 `bash`）——
+   一律写成 `bash scripts/…` 而不是 `./scripts/…` —— 2026-10-13 那天有三支守卫没有 `+x`，
+   用 `./` 会拿到 `permission denied`（实测过两种写法）；2026-10-16 已把全仓已入库的 `.sh` 补齐权限位，
+   并由 `check_project_integrity.sh` 的「权限位对账」钉住不再漂回去，但 `bash` 这种写法不依赖权限位、更稳）——
    `@Model` 与 `AppSchemaV1.models` 逐名对账、清单/动作条数相等、`did…_v1` 键与账本**双向**覆盖、
    `orphanGC` 的 `requires` 必须含三颗、有真信号的步骤必须回报 `Bool`、防线文案不得叫用户删库、
    启动账本 `Ledger` 里老 sidecar 可能没有的键**必须是 Optional**（SL-14：带默认值也不行，
