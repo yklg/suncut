@@ -209,6 +209,24 @@ def api07_same_product_reused(c, ctx):
     return "复用同一 product_id=%s…" % a["product_id"][:8]
 
 
+SEED_NAME = "MCP派单夹具"          # 与 DebugSelfTest.runSeedProject 的默认名同源
+
+
+def find_seed_project(c):
+    """找回派单档要的那颗夹具项目；取不到回 None（由调用方按「判据无法成立」处置）。
+
+    为什么连 `segment_count >= 1` 一起要：`generate_schemes` 的前置就是"项目有可用分镜"，
+    种了却没分镜的夹具等于没种 —— 宁可现在判"取不到"，也不要到那条腿里红成一个看不出根因的错。
+    """
+    is_err, listed, _text = c.call("list_projects")
+    if is_err:
+        return None
+    for row in (listed.get("projects") or []):
+        if row.get("name") == SEED_NAME and (row.get("segment_count") or 0) >= 1:
+            return row.get("id")
+    return None
+
+
 def api08_job_gate_serializes(c, ctx):
     """全局唯一作业闸门：第二路派单必须拿 JOB_ALREADY_RUNNING。"""
     first = c.call("generate_schemes", {"project_id": ctx["seed_project"], "target_count": 2}, timeout=30)
@@ -402,6 +420,13 @@ def main():
         return 2
 
     ctx = {"catalog": catalog, "all_codes": set(all_codes), "jobs": [], "seed_project": None}
+    # 派单档的夹具：由被测实例自己种（`MIXCUT_SELFTEST_SEED=1` → `DebugSelfTest.runSeedProject`，
+    # 门禁在 ALLOW_DISPATCH=1 时带上那颗环境变量）。这一步**只读**（list_projects），不派单、零计费。
+    if args.allow_dispatch and args.i_understand_real_calls:
+        ctx["seed_project"] = find_seed_project(c)
+        print("派单夹具：%s" % (
+            "已就位 project_id=%s" % ctx["seed_project"] if ctx["seed_project"]
+            else "没找到（下面那两条派单腿会按「判据无法成立」退出，不会伪装成功能失败）"))
     want = set(args.only.split(",")) if args.only else None
     passed = failed = skipped = 0
 
@@ -409,11 +434,10 @@ def main():
         if want and cid not in want:
             continue
         if tier == DISPATCH and not (args.allow_dispatch and args.i_understand_real_calls):
-            # 文案说的是"今天这条路整条不通"，不是"开了开关就能跑"——
-            # 派单档还缺一颗从未赋值的夹具（ctx["seed_project"]，见下面那条判据与台账 §6-7）。
+            # 文案说清两件事：要双开关（计费授权），且夹具由被测实例在开关给了之后自己种。
             print("%-8s SKIP  %-52s 需要 --allow-dispatch --i-understand-real-calls 双开关；"
-                  "且派单夹具 seed_project 从未赋值 ⇒ 真开了开关也会按『判据无法成立』退出"
-                  % (cid, title))
+                  "派单夹具由被测实例在开关给了之后种（MIXCUT_SELFTEST_SEED=1），"
+                  "没种上则按『判据无法成立』退出" % (cid, title))
             skipped += 1
             _results.append({"id": cid, "title": title, "tier": tier, "status": "skip"})
             continue
@@ -422,10 +446,10 @@ def main():
             return 3
         if tier == DISPATCH and ctx["seed_project"] is None:
             # 开关给了也跑不了：这条判据缺的是**夹具**，不是产品坏了。
-            # 报"判据无法成立"（退出码 2）而不是让它带着 None 去调用、再读成一条功能红。
-            sys.stderr.write("FAIL[判据无法成立] %s 需要 seed_project 这颗派单夹具，"
-                             "而本脚本从未给它赋值 ⇒ 派单档今天测不到（台账 §6-7 在册）。"
-                             "这不是产品失败，是覆盖缺失，别去改产品码。\n" % cid)
+            # 报"判据无法成立"（退出码 2）而不是拿 None 去调用、再被读成一条功能红。
+            sys.stderr.write("FAIL[判据无法成立] %s 找不到派单夹具项目（名字应为 %r 且 segment_count ≥ 1）"
+                             "—— 门禁在 ALLOW_DISPATCH=1 时须给被测实例带上 MIXCUT_SELFTEST_SEED=1，"
+                             "或种子进程没起来。这不是产品失败，是覆盖缺失，别去改产品码。\n" % (cid, SEED_NAME))
             return 2
         try:
             detail = fn(c, ctx)

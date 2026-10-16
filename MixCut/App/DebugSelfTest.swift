@@ -16,6 +16,7 @@ enum DebugSelfTest {
                                grid16: env["MIXCUT_SELFTEST_GRID16"])
             return
         }
+        if env["MIXCUT_SELFTEST_SEED"] == "1" { runSeedProject(container: container, env: env); return }
         if let s = env["MIXCUT_SELFTEST_SHORTREF"], let secs = Double(s) { runShortRef(container: container, refSecs: secs); return }
         if env["MIXCUT_SELFTEST_REGENDUB"] == "1" { runRegenDub(container: container); return }
         if env["MIXCUT_SELFTEST_TTSX"] == "1" { runTTSx(container: container); return }
@@ -1060,6 +1061,43 @@ enum DebugSelfTest {
 
     private static func write(_ path: String, _ lines: [String]) {
         try? lines.joined(separator: "\n").write(toFile: path, atomically: true, encoding: .utf8)
+    }
+
+    /// 派单档（API-08/09）的夹具：在当前容器里种一颗**有可用分镜**的项目。
+    ///
+    /// 为什么要这颗：`generate_schemes` 的前置是 `project.videos.flatMap(\.segments)` 非空
+    /// （`MCPToolHandlers` 里那句「项目没有可用分镜，请先导入并完成分析」），而门禁 python 层
+    /// 的 `ctx["seed_project"]` 原先恒为 `None` ⇒ 那两条腿**结构上就跑不了**（台账 §6-12）。
+    /// 这里补的是夹具，不是把前置绕过去。
+    ///
+    /// 现场一律走生产构造路径（`Project` / `Video` / `ProjectVideo.associate` /
+    /// `SegmentCommitter.commitBare`）—— 不开"直接塞字典"的后门：那样测到的是假现场，
+    /// `generate_schemes` 读到的形状与真实项目不同。
+    ///
+    /// ⚠️ 这一步本身**不派单、不调云端、零计费**；计费发生在被测方真去 `generate_schemes`
+    /// 的那一刻，那一档仍要 `--allow-dispatch --i-understand-real-calls` 双开关显式授权。
+    @MainActor
+    private static func runSeedProject(container: ModelContainer, env: [String: String]) {
+        let name = env["MIXCUT_SELFTEST_SEED_NAME"] ?? "MCP派单夹具"
+        let ctx = container.mainContext
+        let project = Project(name: name)
+        let video = Video(name: "\(name)-v1", localPath: "/tmp/\(name)-v1.mov")
+        ctx.insert(project)
+        ctx.insert(video)
+        video.ownerProject = project
+        _ = ProjectVideo.associate(project: project, video: video, in: ctx)
+        for i in 0..<3 {
+            _ = SegmentCommitter().commitBare(
+                segmentIndex: "SEED-\(i)", startTime: Double(i) * 2, endTime: Double(i) * 2 + 2,
+                text: "派单夹具分镜 \(i)", semanticTypes: [.transition],
+                positionType: .middle, video: video, context: ctx)
+        }
+        let saved = ctx.safeSave()
+        // 走 MixLog 而不是 stdout：被测 App 的 stdout 在从 .app 里直起时是空的（本仓实测，
+        // 门禁的归因也一律切共享日志），print 的那行没人能读到。
+        MixLog.info("派单夹具已种下：project=\(name) id=\(project.id.uuidString) "
+                    + "segments=\(video.segments.count) saved=\(saved)")
+        if !saved { MixLog.error("派单夹具落盘失败 ⇒ 门禁拿不到 seed_project（不许把它当成「夹具不需要」）") }
     }
 
     // MARK: 判据五格矩阵（本案 🔴 前置）

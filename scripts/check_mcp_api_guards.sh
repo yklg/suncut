@@ -247,8 +247,17 @@ LOG_OFFSET="$(wc -c < "$SUNCUT_LOG" 2>/dev/null | tr -d ' ')"
 [ -n "$LOG_OFFSET" ] || LOG_OFFSET=0
 # LLVM_PROFILE_FILE：不指走的话，被测 App 会按自己的 cwd（= 仓库根）掉一颗 0 字节
 # default.profraw 进 git status —— 每跑一次多一行未跟踪，"拿 git status 自证"就被污染。
-LLVM_PROFILE_FILE="$WORK/app-%p.profraw" \
-MIXCUT_DEBUG_APP_SUPPORT_ROOT="$FAKE_ROOT" MIXCUT_MCP_PORT="$PORT" "$APP_PATH/Contents/MacOS/"*SunCut > "$LOG" 2>&1 &
+# 派单档（只有 ALLOW_DISPATCH=1 时）要额外让被测实例自己种一颗夹具项目：
+# `MIXCUT_SELFTEST_SEED=1` → DebugSelfTest.runSeedProject 走生产构造路径建 项目+视频+3 颗分镜。
+# 种子本身**不调云端、零计费**；计费只可能发生在 API-08/09 真去 generate_schemes 那一刻，
+# 而那一档必须由双开关显式授权（见 mcp_api_guards.py 里的 find_seed_project 与 rc=2 那道判据）。
+# bash 3.2 + set -u 下空数组要用 ${arr[@]+"..."} 才不报 unbound。
+SEED_ENV=()
+[ "${ALLOW_DISPATCH:-0}" = "1" ] && SEED_ENV=(MIXCUT_SELFTEST_SEED=1)
+env ${SEED_ENV[@]+"${SEED_ENV[@]}"} \
+    LLVM_PROFILE_FILE="$WORK/app-%p.profraw" \
+    MIXCUT_DEBUG_APP_SUPPORT_ROOT="$FAKE_ROOT" MIXCUT_MCP_PORT="$PORT" \
+    "$APP_PATH/Contents/MacOS/"*SunCut > "$LOG" 2>&1 &
 APP_PID=$!
 APP_LAUNCHED=1
 ready=0
