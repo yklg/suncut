@@ -27,14 +27,35 @@ final class AgentGateway {
     static var isPortPinnedByEnvironment: Bool { portFromEnvironment != nil }
 
     /// 自动化实例专用：把全局作业闸门钉成「此刻已有一颗作业在跑」，N 秒后自动释放。
-    /// 为什么要这颗占位作业：`ensureNoActiveJob()` 是 MCP 层唯一那道"第二路不许并发"的防线，
-    /// import / retry / generate_schemes / export_scheme 四个入口共用它。判它"真拦得住"，
-    /// 历史上只有一条腿 —— 先派一单**真活**（云端计费）再去抢第二个坑，
-    /// 而且红不红取决于那次作业恰好跑了多久，本质是赌竞态。
-    /// 占位作业把窗口变成确定的：判据先在**免费**入口 `export_scheme` 上取到拒因，
-    /// 等它到期释放后拿同一份参数再取一次 —— 一拒一不拒成对出现，才能证明"拒"来自闸门、
-    /// 不是来自我的参数（只取到一次拒，换谁都可能是在替一个假前提背书）。
-    /// 生效条件收死在「被 env 钉了端口」这一类实例上：用户自己开的 App 永远进不来，也不写库。
+    ///
+    /// **生效条件——三条同时成立，缺一就不生效**（`holdJobSeconds` 就是这个合取的唯一实现处）：
+    /// 1. `MIXCUT_MCP_PORT` 被设成一个合法端口，即 `isPortPinnedByEnvironment`。
+    ///    这条不是便利，是**归属**：被 env 钉了端口的实例绑不上端口就直接退出（见下面
+    ///    `restartFromSettings` 的 exit 75 分支），所以"我连的就是这颗进程"是判据自己的前提。
+    /// 2. `MIXCUT_SELFTEST_HOLD_JOB` 被设成**正整数秒**。取不出正整数的一律按不生效处理
+    ///    —— 缺、空、`0`、负数、`abc`、`8.5` 全都不钉。宁可让判据红在"没钉住"（API-17 会点名这里），
+    ///    也不让一个拼错的环境变量把闸门悄悄关成一小时。
+    /// 3. 本进程此前**没钉过**（`heldGateJobID == nil`）：只钉一次，到期释放后也不再钉 ——
+    ///    判据要的是"一次钉、一次放"那个完整往返，钉成循环会让"释放后同一份参数不再被拒"
+    ///    那一格永远取不到读数，而那一格才是"拒因确实来自闸门"的唯一证明。
+    ///
+    /// **这道门不由 `#if DEBUG` 把关**，别把它和假库开关记成同一件事：
+    /// 后者在 `FileHelper.swift:21`，确实在 `#if DEBUG` 里；这段不在，Release 包里也带着它。
+    /// 所以唯一的门就是上面第 1、2 条。代价刻意做到很小 —— 假设有人在用户机器上给一份正常安装
+    /// 手动设了这两个变量，可观察到的后果只有两点：N 秒内新作业被 `JOB_ALREADY_RUNNING` 拒掉、
+    /// 日志里多一行「闸门自检」。不落库、不改数据、不写文件，到点自放。
+    ///
+    /// **为什么值得付这点代价**：`ensureNoActiveJob()` 是 MCP 层唯一那道"第二路不许并发"的防线，
+    /// 全仓一共七处调用（`MCPToolHandlers.swift:425/446/511/563` +
+    /// `MCPSegmentToolHandlers.swift:455/598/630`）。判它"真拦得住"，历史上只有一条腿 ——
+    /// 先派一单**真活**（云端计费）再去抢第二个坑，而且红不红取决于那次作业恰好跑了多久，
+    /// 本质是赌竞态。占位作业把窗口变成确定的：判据先在**免费**入口 `export_segments` 上取到拒因
+    /// （选它而不选 `export_scheme`：它撞的是同一颗闸门，却不需要先有方案、也不碰云端），
+    /// 等释放后拿同一份参数再取一次 —— 一拒一不拒成对出现，才能证明"拒"来自闸门而不是我的参数。
+    ///
+    /// 生效点排在 `Self.isEnabled`（设置里那个 Agent 服务开关）那次判断**之前**：
+    /// 服务关着、没人来连的时候，占位作业照样会钉 N 秒。对判据没有影响（那条腿必须连得上才跑得起来），
+    /// 但这是事实顺序，别读成"服务开了才钉"。
     static let holdJobEnvironmentKey = "MIXCUT_SELFTEST_HOLD_JOB"
 
     private static var holdJobSeconds: Int? {
@@ -109,10 +130,9 @@ final class AgentGateway {
     }
 
     /// 钉住闸门占位作业（只在 env 钉了端口且给了正秒数的自动化实例上发生）。
-    /// 幂等且**只钉一次**：设置开关会反复走到这里，到期释放后不再重钉 ——
-    /// 判据要的是"一次钉、一次放"那个完整往返；钉成循环会让"释放后同一份参数不再被拒"
-    /// 那一格永远取不到读数，而那一格才是"拒因确实来自闸门"的唯一证明。
-    /// 走 jobs.fail 而不是 finish：这颗作业从没产出任何东西，报 completed 是假话。
+    /// 钉住占位作业。生效条件（含"只钉一次"及其理由）只写在 `holdJobEnvironmentKey` 那一段，
+    /// 这里不复制第二遍 —— 同一规则两处各写一遍，改一处漏一处就是缺陷。
+    /// 到点走 `jobs.fail` 而不是 `finish`：这颗作业从没产出任何东西，报 completed 是假话。
     private func holdGateJobForSelfTest() {
         guard heldGateJobID == nil, let seconds = Self.holdJobSeconds else { return }
         let job = jobs.begin(kind: .selftestGateHold, projectID: nil)

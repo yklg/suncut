@@ -13,8 +13,11 @@ struct AgentJob: Sendable {
         case generateVoiceVariants = "generate_voice_variants"
         /// 工装专用：自动化实例把全局作业闸门钉住时留下的那颗占位作业。
         /// 单独立一个 kind 而不是借用 export_scheme / generate_schemes，是为了让 `get_job`
-        /// 一眼能分诊「这颗是工装钉的，不是真活」——借用真 kind 会让判据把占位读成产物，
-        /// 也会让"闸门在花钱之前就拦住了派单"这类主张没有可核对的身份。
+        /// 一眼能分诊「这颗是工装钉的，不是真活」：借用真 kind 时，判据既可能把占位读成
+        /// 一次真实产物，也可能把一次真实在跑读成工装痕迹 —— 两个方向都不可核对。
+        /// ⚠️ 别把这颗 kind 读成「闸门拦在花钱之前」已经证明：API-17 判的是
+        /// 「拒确实来自这颗占位作业」，"排在 begin 之前"那一格今天没有静态判据，登记在
+        /// 台账 `2026-10-11-schema-gate-stale-artifact.md` 的 §6-16。
         case selftestGateHold = "selftest_gate_hold"
     }
 
