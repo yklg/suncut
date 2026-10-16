@@ -182,7 +182,8 @@ def api05_error_codes_reachable(c, ctx):
         expect(inner.get("code") == code, "%s 期望码 %s，实际 %s（%s）" % (tool, code, inner.get("code"), text[:160]))
         seen.append(code)
     untested = sorted(set(ctx["all_codes"]) - set(seen))
-    return "已确认可达 %s；其余 %s 需真实数据/派单，见 API-08/09" % (",".join(seen), ",".join(untested) or "-")
+    return "已确认可达 %s；其余 %s 需真实数据，见 API-17（JOB_ALREADY_RUNNING 已零计费可达）与 API-08/09（真派单）" % (
+        ",".join(seen), ",".join(untested) or "-")
 
 
 def api06_create_then_read_back(c, ctx):
@@ -210,6 +211,8 @@ def api07_same_product_reused(c, ctx):
 
 
 SEED_NAME = "MCP派单夹具"          # 与 DebugSelfTest.runSeedProject 的默认名同源
+HOLD_KIND = "selftest_gate_hold"   # 与 AgentJobRegistry 里 Kind.selftestGateHold 的 rawValue 同源
+UUID_RE = re.compile(r"[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}")
 
 
 def find_seed_project(c):
@@ -227,6 +230,91 @@ def find_seed_project(c):
     return None
 
 
+def api17_gate_hold_refuses_free_entry(c, ctx):
+    """闸门钉住期间，**免费入口**必被拒；释放后同一份参数必不被拒 —— 一拒一不拒成对才算数。
+
+    为什么单独立这条（2026-10-16）：「全局唯一作业闸门拦第二路」这一性质此前只有 API-08 一条判据，
+    而它要先派一单**真活**（云端计费），红不红还取决于那次作业恰好跑了多久 —— 本质是赌竞态：
+    作业若秒完，第二路竞能挤进去，判据就成了一枚抛硬币。
+    本腿改吃 `AgentGateway` 的占位作业（`MIXCUT_SELFTEST_HOLD_JOB=<秒>`，只在被 env 钉了端口的
+    自动化实例上生效，不落库）：窗口是**定死**的，且走 `export_segments` 这条本地入口 ⇒ 零计费。
+    （`export_segments` 与 `generate_schemes` 撞的是同一颗 `ensureNoActiveJob()`，
+    见 `MCPSegmentToolHandlers.swift:598` 与 `MCPToolHandlers.swift:511`。）
+
+    三个"不许因错误原因通过"的点，逐个钉死：
+    1) 只看到"被拒"不说明是闸门拒的 ⇒ 必须从拒因里取出 job_id **反查**，且它的 `kind`
+       必须等于 selftest_gate_hold（是自检占位作业，不是别的什么真活在跑）；
+    2) 必须有**释放后同一份参数不再被拒**那一半，否则整条腿只是在判我的参数；
+    3) 本腿自己起的那颗真作业**不许留成 running 就返回** —— 它若还挂着，后面 API-08 会被
+       它拦住，那条派单腿就"通过在一个完全错误的理由上"。所以收尾要等它离 running。
+    同理，本腿**不往 ctx["jobs"] 里塞东西**：API-09 取的是 `ctx["jobs"][0]`，
+    塞进来就等于让计费腿去轮一颗与派单无关的作业。
+    """
+    import shutil
+    import tempfile
+    import time
+
+    pid = ctx["seed_project"]
+    expect(pid, "没有夹具项目 ⇒ 本轮没给被测实例带 MIXCUT_SELFTEST_SEED=1，本腿判据无法成立")
+    e1, listed, t1 = c.call("list_segments", {"project_id": pid}, timeout=30)
+    expect(not e1, "list_segments 失败：%s" % t1[:200])
+    segs = listed.get("segments") or []
+    expect(segs, "夹具项目里没有分镜：%s" % t1[:200])
+    seg_id = segs[0].get("id")
+    expect(seg_id, "第一颗分镜没有 id：%s" % json.dumps(segs[0], ensure_ascii=False)[:200])
+
+    out_dir = tempfile.mkdtemp(prefix="suncut-gate-hold-")
+    args = {"segment_ids": [seg_id], "output_dir": out_dir}
+
+    held = c.call("export_segments", args, timeout=30)
+    expect(held[0] and held[1].get("code") == "JOB_ALREADY_RUNNING",
+           "闸门本该是钉住的，export_segments 竞没被拒 ⇒ 检查 MIXCUT_SELFTEST_HOLD_JOB 与 "
+           "AgentGateway.holdGateJobForSelfTest 是否还生效（本腿要的是「钉住期必拒」）：%s"
+           % held[2][:220])
+    m = UUID_RE.search(held[1].get("message") or held[2] or "")
+    expect(m, "拒因里没带 job_id，无法反查是谁拦的我：%s" % (held[1].get("message") or "")[:200])
+    held_id = m.group(0)
+    e2, job, t2 = c.call("get_job", {"job_id": held_id}, timeout=30)
+    expect(not e2, "拒因里的 job_id=%s 反查不到作业：%s" % (held_id, t2[:200]))
+    expect(job.get("kind") == HOLD_KIND,
+           "拦住我的是 kind=%r 的作业，不是自检占位作业 %r ⇒ 现场有别的真活在跑，本轮读数不可用"
+           % (job.get("kind"), HOLD_KIND))
+    expect(job.get("state") == "running",
+           "占位作业状态=%r，不是 running（钉住与释放之间的窗口没抓住，别把它读成闸门生效）"
+           % job.get("state"))
+
+    released = None
+    deadline = time.time() + 45
+    while time.time() < deadline:
+        e3, job3, _t3 = c.call("get_job", {"job_id": held_id}, timeout=30)
+        if not e3 and job3.get("state") != "running":
+            released = job3.get("state")
+            break
+        time.sleep(0.5)
+    expect(released, "占位作业 45s 内没释放（钉住秒数给大了？）⇒ 拿不到反向对照；"
+                     "只有「拒」这一半的判据证明不了拒的是闸门")
+
+    after = c.call("export_segments", args, timeout=30)
+    expect(not (after[0] and after[1].get("code") == "JOB_ALREADY_RUNNING"),
+           "释放后**同一份参数**仍被闸门拒 ⇒ 拒因不是那颗占位作业（另有真活在跑，或闸门没放）：%s"
+           % after[2][:220])
+    my_job = after[1].get("job_id")
+    expect(my_job, "释放后这次调用既没被拒也没给出 job_id，读不出它做了什么：%s" % after[2][:220])
+    gone = None
+    deadline2 = time.time() + 30
+    while time.time() < deadline2:
+        e4, job4, _t4 = c.call("get_job", {"job_id": my_job}, timeout=30)
+        if not e4 and job4.get("state") != "running":
+            gone = job4.get("state")
+            break
+        time.sleep(0.5)
+    expect(gone, "本腿自己起的导出作业 30s 还挂在 running —— 就这样返回会把后面的 API-08 拦成"
+                 "「通过在一个错误的理由上」，所以这里判红而不是放行")
+    shutil.rmtree(out_dir, ignore_errors=True)
+    return "钉住期被拒（反查 kind=%s）→ 释放后同参数不再被拒（占位终态=%s、本腿作业终态=%s）" % (
+        HOLD_KIND, released, gone)
+
+
 def api08_job_gate_serializes(c, ctx):
     """全局唯一作业闸门：第二路派单必须拿 JOB_ALREADY_RUNNING。"""
     first = c.call("generate_schemes", {"project_id": ctx["seed_project"], "target_count": 2}, timeout=30)
@@ -241,7 +329,7 @@ def api08_job_gate_serializes(c, ctx):
 
 
 def api09_job_terminal_state(c, ctx):
-    """作业终态可轮询、带报告，且状态机没有 pending。"""
+    """作业终态可轮询、终态带产物，且状态机没有 pending。"""
     import time
     job_id = ctx["jobs"][0] if ctx["jobs"] else None
     expect(job_id, "没有可等的作业（API-08 未跑）")
@@ -385,6 +473,10 @@ CASES = [
     ("API-05", "错误码枚举逐个可达", READ, api05_error_codes_reachable),
     ("API-06", "建项目后回读字段齐全", WRITE, api06_create_then_read_back),
     ("API-07", "同名产品复用不重复建", WRITE, api07_same_product_reused),
+    # API-17 的**位置是承重的**，不按号排序：它要抓住"占位作业钉着"那个窗口，又必须在返回前
+    # 把闸门放回开的状态。排在派单档之前，等于替 API-08 先自证"闸门此刻是开的"——
+    # 否则 API-08 那枚 JOB_ALREADY_RUNNING 有可能是占位作业给的，而不是第一路真作业给的。
+    ("API-17", "闸门钉住期必拒、释放后同参数必不被拒（零计费）", WRITE, api17_gate_hold_refuses_free_entry),
     ("API-08", "全局唯一作业闸门拦第二路", DISPATCH, api08_job_gate_serializes),
     ("API-09", "作业终态可轮询、终态带产物、无 pending", DISPATCH, api09_job_terminal_state),
     ("API-10", "失踪作业报 JOB_NOT_FOUND", READ, api10_job_lost_after_restart),
@@ -434,10 +526,11 @@ def main():
         return 2
 
     ctx = {"catalog": catalog, "all_codes": set(all_codes), "jobs": [], "seed_project": None}
-    # 派单档的夹具：由被测实例自己种（`MIXCUT_SELFTEST_SEED=1` → `DebugSelfTest.runSeedProject`，
-    # 门禁在 ALLOW_DISPATCH=1 时带上那颗环境变量）。这一步**只读**（list_projects），不派单、零计费。
+    # 夹具项目找回改成**无条件**（这一步只读、零计费）：不只派单档要它，
+    # API-17 那条闸门腿在默认档里也要（它靠夹具拿到一颗真分镜去撞免费的导出入口）。
+    # 派单档缺它时仍按「判据无法成立」退出（见下面 tier == DISPATCH 那一格）。
+    ctx["seed_project"] = find_seed_project(c)
     if args.allow_dispatch and args.i_understand_real_calls:
-        ctx["seed_project"] = find_seed_project(c)
         print("派单夹具：%s" % (
             "已就位 project_id=%s" % ctx["seed_project"] if ctx["seed_project"]
             else "没找到（下面那两条派单腿会按「判据无法成立」退出，不会伪装成功能失败）"))

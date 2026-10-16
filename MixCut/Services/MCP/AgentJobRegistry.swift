@@ -11,6 +11,11 @@ struct AgentJob: Sendable {
         case exportScheme = "export_scheme"
         case exportSegments = "export_segments"
         case generateVoiceVariants = "generate_voice_variants"
+        /// 工装专用：自动化实例把全局作业闸门钉住时留下的那颗占位作业。
+        /// 单独立一个 kind 而不是借用 export_scheme / generate_schemes，是为了让 `get_job`
+        /// 一眼能分诊「这颗是工装钉的，不是真活」——借用真 kind 会让判据把占位读成产物，
+        /// 也会让"闸门在花钱之前就拦住了派单"这类主张没有可核对的身份。
+        case selftestGateHold = "selftest_gate_hold"
     }
 
     enum State: String, Sendable {

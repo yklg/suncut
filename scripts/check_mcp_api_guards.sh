@@ -30,6 +30,11 @@
 # 用法：bash scripts/check_mcp_api_guards.sh
 #   环境变量：SUNCUT_APP=<.app 路径>  CATALOG_PATH=<目录真源>  KEEP_APP=1 跑完不关 App
 #             PRODUCT_SRC_DIR=<产品源码根> 只给 selftest 合成扰动树用（同 CATALOG_PATH 一路惯例）
+#             MCP_PORT=<端口> 换端口（默认 8787）
+#             ONLY=API-03,API-08 只跑这几条（逗号分隔，交给自己传给 mcp_api_guards.py --only）；
+#               2026-10-16 起它还有一个作用：本轮会跑 API-17 时才给被测实例挂闸门占位作业
+#               （MIXCUT_SELFTEST_HOLD_JOB），单跑派单档时不挂 —— 见下面 LAUNCH_ENV 那段理由。
+#             ALLOW_DISPATCH=1 授权真派单（云端计费），与 mcp_api_guards.py 的双开关配套
 #   参数：--preflight-only 只跑前置（U01/U05/U03）就退出，不起 App、不动用户偏好 ——
 #         selftest 用它先证明"产物是当前的"，否则下面每条腿红的原因都不是它自己。
 # 注意：刻意不开 set -e —— 子命令非 0 退出码就是判据本身，不能被静默吞掉（本仓踩过）。
@@ -252,9 +257,26 @@ LOG_OFFSET="$(wc -c < "$SUNCUT_LOG" 2>/dev/null | tr -d ' ')"
 # 种子本身**不调云端、零计费**；计费只可能发生在 API-08/09 真去 generate_schemes 那一刻，
 # 而那一档必须由双开关显式授权（见 mcp_api_guards.py 里的 find_seed_project 与 rc=2 那道判据）。
 # bash 3.2 + set -u 下空数组要用 ${arr[@]+"..."} 才不报 unbound。
-SEED_ENV=()
-[ "${ALLOW_DISPATCH:-0}" = "1" ] && SEED_ENV=(MIXCUT_SELFTEST_SEED=1)
-env ${SEED_ENV[@]+"${SEED_ENV[@]}"} \
+#
+# 2026-10-16 两条改动，理由都不是"顺手"：
+# ① SEED 现在**每轮都给**（原先只在 ALLOW_DISPATCH=1 时给）—— API-17 那条免费的闸门腿
+#    同样要夹具（它拿一颗真分镜去撞免费的 export_segments），而它跑在默认档里。多出来的
+#    只有这棵每轮全新假根里的一行项目，别的腿不数项目总数（已核 mcp_api_guards.py 无此类断言）。
+# ② MIXCUT_SELFTEST_HOLD_JOB=<秒> 只在**本轮会跑 API-17** 时给。它把全局作业闸门钉住若干秒，
+#    如果有人 `ONLY=API-08` 单跑派单档也常开，那条腿拿到的 JOB_ALREADY_RUNNING
+#    就可能是占位作业给的而不是第一路真作业给的 —— 那正是"通过在一个错误的理由上"。
+#    秒数取 8：够"拒 + 反查 job_id"两个来回，又短于 API-17 自己的释放等待上限，墙钟仍在 60s 预算内。
+LAUNCH_ENV=(MIXCUT_SELFTEST_SEED=1)
+if [ -z "${ONLY:-}" ] || printf '%s' "$ONLY" | grep -q 'API-17'; then
+    # 口径与上面那颗「产品侧读不到 MIXCUT_MCP_PORT 覆盖点 ⇒ 判据失效」同源：
+    # 注入点不在产品里时，红要报在**工装**身上（退出码 2），不能让 API-17 红成"产品坏了"。
+    grep -q 'MIXCUT_SELFTEST_HOLD_JOB' \
+        "$PRODUCT_SRC/MixCut/Services/MCP/AgentGateway.swift" 2>/dev/null \
+        || invalid "产品侧读不到 MIXCUT_SELFTEST_HOLD_JOB 占位缝 —— 零计费的闸门腿（API-17）没有注入点，" \
+                   "判据无法成立。先看 AgentGateway.holdGateJobForSelfTest 还在不在，别去改产品码。"
+    LAUNCH_ENV+=(MIXCUT_SELFTEST_HOLD_JOB=8)
+fi
+env ${LAUNCH_ENV[@]+"${LAUNCH_ENV[@]}"} \
     LLVM_PROFILE_FILE="$WORK/app-%p.profraw" \
     MIXCUT_DEBUG_APP_SUPPORT_ROOT="$FAKE_ROOT" MIXCUT_MCP_PORT="$PORT" \
     "$APP_PATH/Contents/MacOS/"*SunCut > "$LOG" 2>&1 &

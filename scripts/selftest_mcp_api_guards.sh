@@ -208,6 +208,46 @@ else
 fi
 rm -f "$GATE_LOCK"
 
+echo "== 自证 13：产品侧丢了闸门占位缝 ⇒ 必须报「判据失效」(2)，而不是让 API-17 红成产品坏了 =="
+# API-17 是 2026-10-16 新加的那条**零计费**闸门腿：它靠 AgentGateway 读 MIXCUT_SELFTEST_HOLD_JOB
+# 把全局作业闸门钉住几秒，再在免费入口 export_segments 上取"拒 / 不拒"那一对读数。
+# 注入点不见了（被人摘掉或改名）时，缺的是**工装的可判性**，不是产品行为 ——
+# 所以必须红在退出码 2 并点名占位缝，绝不能落进 API-17 那条"竞没被拒"的功能红里。
+#
+# 扰动树从**真树拷**再摘那一处，不手写空壳：门禁对产品源码做好几颗 grep
+# （端口覆盖、MCPServer 观察 listener…），手写壳会先红在别的颗上，归因就不是这条了
+# —— 这一点是被实测打出来的：第一版写 `enum AgentGateway {}` + 一行 MCPServer 空壳，
+# 拿到的是「MCPServer 不再观察 listener 状态」那句 FAIL，退出码同样是 2，看着像绿。
+mkdir -p "$WORK/no_hold/MixCut/Services/MCP"
+GATEWAY_REAL="$ROOT/MixCut/Services/MCP/AgentGateway.swift"
+cp "$GATEWAY_REAL" "$ROOT/MixCut/Services/MCP/MCPServer.swift" "$WORK/no_hold/MixCut/Services/MCP/"
+GATEWAY_FAKE="$WORK/no_hold/MixCut/Services/MCP/AgentGateway.swift"
+before_hits="$(grep -c 'MIXCUT_SELFTEST_HOLD_JOB' "$GATEWAY_FAKE" || true)"
+before_hits="${before_hits:-0}"
+grep -v 'MIXCUT_SELFTEST_HOLD_JOB' "$GATEWAY_FAKE" > "$WORK/no_hold/gw.tmp"
+mv "$WORK/no_hold/gw.tmp" "$GATEWAY_FAKE"
+# 变异未注入这一态必须被抓住：摘之前 0 处说明真树本身没那颗字面（判据无从生效），
+# 摘之后仍有 0 处以上说明没摘干净（这条腿什么都没验）。
+if [ "$before_hits" -lt 1 ] || [ "$(grep -c 'MIXCUT_SELFTEST_HOLD_JOB' "$GATEWAY_FAKE" || true)" -ne 0 ]; then
+    echo "FAIL 自证 13 的变异没生效：摘前 ${before_hits} 处、摘后仍在 ⇒ 不许把这腿读成「判据有牙」"
+    fail=1
+else
+    expect_red "产品侧读不到闸门占位缝" 2 "占位缝" \
+            env PRODUCT_SRC_DIR="$WORK/no_hold" ONLY="API-17" bash "$CHECK"
+fi
+
+echo "== 自证 13b：反向对照 —— 真树（占位缝在位）单跑 API-17 必须绿 =="
+# 只验"摘掉会红"不够：任何一条 grep 失败都能红，那不等于它判的是这件事。
+# 补一格"在位就必须走得下去"的对照，两半都在，才证明这一格判的是「占位缝在不在」。
+out13b="$(env ONLY="API-17" bash "$CHECK" 2>&1)"; rc13b=$?
+printf '%s\n' "$out13b" | grep -E "API-17|前置 U0|判据失效" | sed 's/^/       /'
+if [ "$rc13b" = "0" ] && printf '%s' "$out13b" | grep -qE "API-17 +PASS"; then
+    echo "PASS API-17 单跑（占位缝在位 ⇒ 前置不误伤，这条零计费腿自己走到底）"
+else
+    echo "FAIL API-17 单跑：期望退出码 0 且该腿 PASS，实际退出码 ${rc13b}"
+    fail=1
+fi
+
 pkill -x SunCut 2>/dev/null
 echo ""
 if [ "$fail" = "0" ]; then
