@@ -4,7 +4,12 @@
 # 这颗门自己管被测 App 的完整生命周期，因为实测发现外部 nohup / 后台任务拉起的 App
 # 会随调用结束被回收，判据跑到一半就没服务了。
 #
-# 六道前置（任一不过就不跑用例，直接红）：
+# 七道前置（任一不过就不跑用例，直接红）：
+#   U07 作业闸门必须排在 `jobs.begin()` **之前**（台账 §6-16，2026-10-16 落地）——
+#       判的是**顺序**而不是"有没有闸门"：排在之后（或某条入口干脆没有）就意味着第二路
+#       **先花钱再被拒**，派单一旦发起就是云端计费 + 转写 + 导出，拒回它已经来不及。
+#       名册分两类（成对六处 / `splitSegmentTool` 一处刻意不是 job），不许写成"每块都要成对"；
+#       两颗文件里一颗闸门都取不到时按「判据失效」(2) 处理，不许把零命中读成"这里很干净"。
 #   U01 产物必须是 Debug —— 假库开关 MIXCUT_DEBUG_APP_SUPPORT_ROOT 在 #if DEBUG 内
 #       （MixCut/Utilities/FileHelper.swift:17-25，注释原文「Release 编译不进这一支」）。
 #       拿 Release 跑会**静默**写用户真库。注意 Xcode 16 的 Debug 用 dylib 注入，
@@ -75,6 +80,94 @@ if ! grep -q 'MIXCUT_MCP_PORT' "$PRODUCT_SRC/MixCut/Services/MCP/AgentGateway.sw
 fi
 if ! grep -q 'stateUpdateHandler' "$PRODUCT_SRC/MixCut/Services/MCP/MCPServer.swift" 2>/dev/null; then
     invalid "MCPServer 不再观察 listener 状态 —— 绑不上端口会静默假成功，判据失效"
+fi
+
+# ---------- 前置 U07：作业闸门必须排在 jobs.begin 之前（台账 §6-16 落地，2026-10-16） ----------
+# 判的是**顺序**而不是"有没有闸门"：`ensureNoActiveJob()` 排在 `jobs.begin()` 之后（或干脆没有）
+# 就意味着第二路**先花钱再被拒** —— 派单一旦发起就是云端计费 + 转写 + 导出，拒回它已经来不及了。
+# 这条今天只有代码顺序在保：API-17 与 API-08 判的都是"拦得住"，不判"拦在花钱之前"。
+# 名册分两类，不许合成一条"每块都要成对"（那会把合法的那处判红）：
+#   · 成对的六处：块里有 jobs.begin，且闸门在它**之前**；
+#   · 互斥的一处 `splitSegmentTool`：拆分不是 job（同步等结果），但它自己那行注释写明了
+#     必须与 job 那条腿互斥 —— 导入正在重建同一批分镜时插一刀，会把刚落库的段再切一半。
+# `ensureNoActiveJob` 那颗块是闸门的**定义**，签名里的 `()` 长得像调用点，必须显式排除。
+note "== 前置 U07：闸门与 jobs.begin 的次序 =="
+python3 - "$PRODUCT_SRC" <<'PY'
+import re, sys
+
+root = sys.argv[1]
+FILES = ["MixCut/Services/MCP/MCPToolHandlers.swift",
+         "MixCut/Services/MCP/MCPSegmentToolHandlers.swift"]
+PAIRED = {"importVideos", "retryPipeline", "generateSchemes",
+          "exportScheme", "exportSegments", "generateVoiceVariants"}
+EXCLUSIVE = {"splitSegmentTool"}
+DEFINITION = {"ensureNoActiveJob"}
+
+# 结构边界切块：按「四个空格开头的 func 声明」取起点，本块到下一个起点为止。
+# 不用字符长度窗口 —— 那会溢到下一个 handler（台账 v2.2 那条老规矩，也是本仓判据自错的常客）。
+DECL_RE = re.compile(r"(?m)^    (?:private |static |fileprivate |public )*func (\w+)")
+fails, paired_found, exclusive_found, gate_total = [], set(), set(), 0
+
+for rel in FILES:
+    try:
+        src = open(root + "/" + rel, encoding="utf-8").read()
+    except OSError as exc:
+        print("U07 取不出 %s（%s）⇒ 判据无法成立" % (rel, exc))
+        sys.exit(2)
+    decls = [(m.start(), m.group(1)) for m in DECL_RE.finditer(src)]
+    if not re.search(r"ensureNoActiveJob\(", src):
+        print("U07 在 %s 里一颗闸门都取不到 ⇒ 判据无法成立（这不等于「这里很干净」）" % rel)
+        sys.exit(2)
+    for i, (start, name) in enumerate(decls):
+        end = decls[i + 1][0] if i + 1 < len(decls) else len(src)
+        body = src[start:end]
+        gates = list(re.finditer(r"ensureNoActiveJob\(\)", body))
+        begins = list(re.finditer(r"jobs\.begin\(", body))
+        if name in DEFINITION:
+            continue            # 那是闸门自己的定义：签名里的 () 长得像调用点，必须显式排除
+        if not gates and not begins:
+            continue
+        line = src[:start].count("\n") + 1
+        if begins:
+            gate_total += len(gates)
+            if not gates:
+                fails.append("%s:%d func %s 里有 jobs.begin 却没有 ensureNoActiveJob "
+                             "—— 这条入口不受闸门保护" % (rel, line, name))
+                continue
+            if gates[0].start() >= begins[0].start():
+                g_l = line + body[:gates[0].start()].count("\n")
+                b_l = line + body[:begins[0].start()].count("\n")
+                fails.append("%s func %s 的闸门排在 jobs.begin **之后**（第 %d 行 vs 第 %d 行）"
+                             "⇒ 第二路会先花钱再被拒" % (rel, name, g_l, b_l))
+                continue
+            paired_found.add(name)
+        else:
+            gate_total += len(gates)
+            exclusive_found.add(name)
+
+if paired_found != PAIRED:
+    fails.append("成对名册不符：应有 %s，实得 %s（缺 %s / 多 %s）"
+                 % ("、".join(sorted(PAIRED)), "、".join(sorted(paired_found)) or "无",
+                    "、".join(sorted(PAIRED - paired_found)) or "无",
+                    "、".join(sorted(paired_found - PAIRED)) or "无"))
+if exclusive_found != EXCLUSIVE:
+    fails.append("互斥名册不符：应有 %s，实得 %s（缺 %s / 多 %s）"
+                 % ("、".join(sorted(EXCLUSIVE)), "、".join(sorted(exclusive_found)) or "无",
+                    "、".join(sorted(EXCLUSIVE - exclusive_found)) or "无",
+                    "、".join(sorted(exclusive_found - EXCLUSIVE)) or "无"))
+
+if fails:
+    for f in fails:
+        print("U07 红：%s" % f)
+    sys.exit(1)
+print("前置 U07 ✓ 六处成对（闸门都在 jobs.begin 之前）+ 一处互斥（%s），闸门调用共 %d 处逐颗对上"
+      % ("、".join(sorted(EXCLUSIVE)), gate_total))
+PY
+u07rc=$?
+if [ "$u07rc" = "2" ]; then
+    invalid "前置 U07 判据无法成立（上面 U07 那几行是真实原因）—— 取样面取不出闸门，别读成「这里没有派单入口」"
+elif [ "$u07rc" != "0" ]; then
+    die "前置 U07 红 —— 闸门次序或名册与账不符（上面 U07 那几行是真实原因）"
 fi
 
 WORK="$ROOT/.scratch/mcp-guards"

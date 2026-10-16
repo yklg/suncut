@@ -214,13 +214,14 @@ echo "== 自证 13：产品侧丢了闸门占位缝 ⇒ 必须报「判据失效
 # 注入点不见了（被人摘掉或改名）时，缺的是**工装的可判性**，不是产品行为 ——
 # 所以必须红在退出码 2 并点名占位缝，绝不能落进 API-17 那条"竞没被拒"的功能红里。
 #
-# 扰动树从**真树拷**再摘那一处，不手写空壳：门禁对产品源码做好几颗 grep
-# （端口覆盖、MCPServer 观察 listener…），手写壳会先红在别的颗上，归因就不是这条了
-# —— 这一点是被实测打出来的：第一版写 `enum AgentGateway {}` + 一行 MCPServer 空壳，
-# 拿到的是「MCPServer 不再观察 listener 状态」那句 FAIL，退出码同样是 2，看着像绿。
-mkdir -p "$WORK/no_hold/MixCut/Services/MCP"
+# 扰动树从**真树整目录拷**再摘那一处，不手写壳、也不只拷两份文件：
+# 门禁对产品源码做好几颗 grep（端口覆盖、MCPServer 观察 listener、U07 的两份 handler 名册…），
+# 取样面不全的壳会先红在别的颗上 —— 而被摘掉占位缝时退出码常常同样是 2，看着就像绿。
+# 这一点不是推测：本腿第一版就只拷了 AgentGateway + MCPServer 两份，
+# 装上 U07 之后它红的是「U07 取不出 handler」，expect_red 靠"原因命中"那半条才没被读成 PASS。
+mkdir -p "$WORK/no_hold/MixCut/Services"
+cp -R "$ROOT/MixCut/Services/MCP" "$WORK/no_hold/MixCut/Services/"
 GATEWAY_REAL="$ROOT/MixCut/Services/MCP/AgentGateway.swift"
-cp "$GATEWAY_REAL" "$ROOT/MixCut/Services/MCP/MCPServer.swift" "$WORK/no_hold/MixCut/Services/MCP/"
 GATEWAY_FAKE="$WORK/no_hold/MixCut/Services/MCP/AgentGateway.swift"
 before_hits="$(grep -c 'MIXCUT_SELFTEST_HOLD_JOB' "$GATEWAY_FAKE" || true)"
 before_hits="${before_hits:-0}"
@@ -247,6 +248,68 @@ else
     echo "FAIL API-17 单跑：期望退出码 0 且该腿 PASS，实际退出码 ${rc13b}"
     fail=1
 fi
+
+echo "== 自证 14：把闸门挪到 jobs.begin 之后 ⇒ U07 必须红（先花钱再被拒的形状） =="
+# 变异一律**从真树拷再动那一处**，不手写壳（自证 13 就是被手写壳骗过一次：
+# 壳会先红在别的判据上，退出码一样，看着像绿）。每格都自带「变异未注入」这一态。
+mkdir -p "$WORK/late_gate/MixCut/Services"
+cp -R "$ROOT/MixCut/Services/MCP" "$WORK/late_gate/MixCut/Services/"
+python3 - "$WORK/late_gate/MixCut/Services/MCP/MCPToolHandlers.swift" <<'PY'
+import hashlib, sys
+path = sys.argv[1]
+src = open(path, encoding="utf-8").read()
+a = "        try ensureNoActiveJob()\n"
+b = "        let job = jobs.begin(kind: .generateSchemes, projectID: project.id)\n"
+pair = a + b
+assert src.count(pair) == 1, "锚点没命中（%d 处）—— 变异未注入，这腿什么都没验" % src.count(pair)
+out = src.replace(pair, b + a)
+assert out != src, "字节没变 —— 变异未注入"
+assert hashlib.sha256(out.encode()).hexdigest() != hashlib.sha256(src.encode()).hexdigest()
+open(path, "w", encoding="utf-8").write(out)
+print("已注入变异：generateSchemes 那颗闸门与 jobs.begin 换位")
+PY
+expect_red "闸门排在 jobs.begin 之后" 1 "排在 jobs.begin" \
+        env PRODUCT_SRC_DIR="$WORK/late_gate" bash "$CHECK" --preflight-only
+
+echo "== 自证 15：摘掉一处闸门（exportSegments 那条入口不受保护）⇒ U07 必须红 =="
+mkdir -p "$WORK/no_gate/MixCut/Services"
+cp -R "$ROOT/MixCut/Services/MCP" "$WORK/no_gate/MixCut/Services/"
+python3 - "$WORK/no_gate/MixCut/Services/MCP/MCPSegmentToolHandlers.swift" <<'PY'
+import hashlib, sys
+path = sys.argv[1]
+src = open(path, encoding="utf-8").read()
+a = "        try ensureNoActiveJob()\n"
+b = "        let projectID = jobProjectID(explicit: args.project_id, segments: segments)\n"
+assert src.count(a + b) == 1, "锚点没命中（%d 处）—— 变异未注入" % src.count(a + b)
+out = src.replace(a + b, b)
+assert out != src and hashlib.sha256(out.encode()).hexdigest() != hashlib.sha256(src.encode()).hexdigest()
+open(path, "w", encoding="utf-8").write(out)
+print("已注入变异：exportSegments 那颗闸门调用被摘掉（begin 留在原地）")
+PY
+expect_red "入口没有闸门" 1 "没有 ensureNoActiveJob" \
+        env PRODUCT_SRC_DIR="$WORK/no_gate" bash "$CHECK" --preflight-only
+
+echo "== 自证 16：两份文件里闸门整体改名（一颗调用都取不到）⇒ 必须报「判据失效」(2) =="
+# 这一格守的是「扫不到 ≠ 干净」：取样面里一颗闸门都没有时，判据必须自认失能，
+# 不许把零命中读成"所有入口都不需要闸门"（本仓老规矩：遍历空集恒绿）。
+mkdir -p "$WORK/renamed/MixCut/Services"
+cp -R "$ROOT/MixCut/Services/MCP" "$WORK/renamed/MixCut/Services/"
+python3 - "$WORK/renamed/MixCut/Services/MCP" <<'PY'
+import hashlib, os, sys
+d = sys.argv[1]
+changed = 0
+for name in ("MCPToolHandlers.swift", "MCPSegmentToolHandlers.swift"):
+    path = os.path.join(d, name)
+    src = open(path, encoding="utf-8").read()
+    out = src.replace("ensureNoActiveJob", "gateCheckRenamedAway")
+    assert out != src and hashlib.sha256(out.encode()).hexdigest() != hashlib.sha256(src.encode()).hexdigest()
+    open(path, "w", encoding="utf-8").write(out)
+    changed += 1
+assert changed == 2, "只改了 %d 份文件 —— 变异未注满整个取样面" % changed
+print("已注入变异：两份 handler 里的闸门名字整体改掉（调用与定义同时消失）")
+PY
+expect_red "闸门整体取不到" 2 "一颗闸门都取不到" \
+        env PRODUCT_SRC_DIR="$WORK/renamed" bash "$CHECK" --preflight-only
 
 pkill -x SunCut 2>/dev/null
 echo ""
