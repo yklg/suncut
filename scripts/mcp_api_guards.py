@@ -257,7 +257,21 @@ def api09_job_terminal_state(c, ctx):
     expect(last and last.get("state") in ("completed", "failed"),
            "300s 内没到终态，最后读数=%s" % json.dumps(last, ensure_ascii=False)[:200])
     expect("pending" not in json.dumps(last), "状态机竞出现 pending")
-    return "终态=%s，带 report=%s" % (last.get("state"), bool(last.get("report")))
+    # `report` 是**导入类作业**才有的字段（AgentJobRegistry 里 `var report: ImportReport?`，
+    # get_job 只在 `job.report != nil` 时才发这个键）；generate_schemes 走的是 finishWithResult，
+    # 产物在 `result` 里。所以本腿核的是 completed ⇒ result 非空，
+    # 以前那句标题里的"带报告"是把导入作业的形状错安到了方案作业上（实测：终态 completed
+    # 而 report=False，且这是设计如此，不是缺陷）。
+    if last.get("state") == "completed":
+        result = last.get("result") or {}
+        expect(isinstance(result, dict) and "scheme_count" in result,
+               "completed 却没带 result.scheme_count，最后读数=%s"
+               % json.dumps(last, ensure_ascii=False)[:240])
+        return "终态=%s，result=%s（report 是导入类作业字段，本作业不适用=%s）" % (
+            last.get("state"),
+            {k: result.get(k) for k in ("scheme_count", "failed_strategies")},
+            bool(last.get("report")))
+    return "终态=%s，failure_message=%s" % (last.get("state"), str(last.get("failure_message"))[:80])
 
 
 def api10_job_lost_after_restart(c, ctx):
@@ -372,7 +386,7 @@ CASES = [
     ("API-06", "建项目后回读字段齐全", WRITE, api06_create_then_read_back),
     ("API-07", "同名产品复用不重复建", WRITE, api07_same_product_reused),
     ("API-08", "全局唯一作业闸门拦第二路", DISPATCH, api08_job_gate_serializes),
-    ("API-09", "作业终态可轮询、带报告、无 pending", DISPATCH, api09_job_terminal_state),
+    ("API-09", "作业终态可轮询、终态带产物、无 pending", DISPATCH, api09_job_terminal_state),
     ("API-10", "失踪作业报 JOB_NOT_FOUND", READ, api10_job_lost_after_restart),
     ("API-11", "list_segments 二选一契约", READ, api11_list_segments_requires_one_selector),
     ("API-12", "删除两步确认：预览不删、confirm 才删", WRITE, api12_delete_needs_confirmation),
