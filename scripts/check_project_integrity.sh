@@ -6,15 +6,20 @@
 #
 # 2026-09-30 追加第三道门：全部 .sh 里 `$变量` 后不许紧跟全角标点 —— 否则这套"判据"在用户终端
 # （UTF-8 locale）里根本跑不起来，等于伪装防线。详见该段注释。
+# 2026-10-15 追加第四道：VERSION 文件 ↔ App target 的 MARKETING_VERSION 必须同值。
+# 版本号有三处消费者（设置/关于界面、MCP 报给 Agent 的版本、sidecar 里的 appVersion），
+# 而 pbxproj 手工维护 ⇒ 只改 VERSION 时那三处会一起静默停在旧值。详见该段注释。
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 # PBX_PATH 可指向别的 pbxproj（用于在"改动前"的备份上验证本判据确实会红，而非恒绿）
 PBX="${PBX_PATH:-$ROOT/MixCut.xcodeproj/project.pbxproj}"
+# VERSION_PATH 同一档用途：只在台架里指过去，用来证明"版本号缺失/不一致"这两格真的会红。
+VERSION_FILE="${VERSION_PATH:-$ROOT/VERSION}"
 
-python3 - "$ROOT" "$PBX" <<'PY'
+python3 - "$ROOT" "$PBX" "$VERSION_FILE" <<'PY'
 import os, re, sys
 
-root, pbx_path = sys.argv[1], sys.argv[2]
+root, pbx_path, version_path = sys.argv[1], sys.argv[2], sys.argv[3]
 text = open(pbx_path, encoding="utf-8").read()
 
 scan_dirs = [os.path.join(root, "MixCut"), os.path.join(root, "Sources", "MixCutCore")]
@@ -152,7 +157,11 @@ else:
     # PRODUCT_NAME 只对 **App target** 对账。测试 target 写 `"$(TARGET_NAME)"` 本就正常，
     # 全文件扫会把它的值也算进来，冒出 §6-11 那条假红。做法是顺着
     # target → buildConfigurationList → buildConfigurations → XCBuildConfiguration 三跳取回属于自己的那几颗。
+    # PRODUCT_NAME / MARKETING_VERSION 都**逐颗配置**核，不合并成集合。
+    # 合并成一个 set 会留一格洞：Debug 写着正确值、Release 整个键被删 ⇒ 集合照样相等 ⇒ 判据绿，
+    # 而那个 Release 包的版本号是 Xcode 的默认值。本工程 App target 有 Debug/Release 两颗配置。
     prod = set()
+    per_config = []      # (target, 配置名, [PRODUCT_NAME…], [MARKETING_VERSION…])
     if not app_targets:
         print("FAIL[判据失效] 工程里没有 application target —— 显示身份无从对账")
         failed = True
@@ -165,17 +174,51 @@ else:
             failed = True
             continue
         for cid in re.findall(r"([0-9A-F]{24})", cl.group(1)):
-            cb = re.search(re.escape(cid) + r" /\*[^*]*\*/ = \{.*?buildSettings = \{(.*?)\n\t{3,}\};",
+            cb = re.search(re.escape(cid) + r" /\*([^*]*)\*/ = \{.*?buildSettings = \{(.*?)\n\t{3,}\};",
                            text, re.S)
-            if cb:
-                prod.update(re.findall(r"PRODUCT_NAME = ([^;]+);", cb.group(1)))
+            label = cb.group(1).strip() if cb else "?"
+            body = cb.group(2) if cb else ""
+            pn = re.findall(r"PRODUCT_NAME = ([^;]+);", body)
+            mv = re.findall(r"MARKETING_VERSION = ([^;]+);", body)
+            per_config.append((t["name"], label, pn, mv))
+            prod.update(pn)
     apps = set(re.findall(r"explicitFileType = wrapper\.application;[^}]*?path = ([^;]+);", text))
-    if prod == {display} and apps == {display + ".app"}:
-        print(f"PASS 显示身份单一来源：App target 的 PRODUCT_NAME 与产物名都等于 Brand.displayName（{display}）")
-    else:
+
+    bad_prod = [f"{tn}/{lab}={'、'.join(pn) or '<缺>'}" for tn, lab, pn, _mv in per_config if pn != [display]]
+    if not per_config:
+        print("FAIL[判据失效] 一颗 App target 的 XCBuildConfiguration 都取不出来 —— 显示身份无从对账")
+        failed = True
+    elif bad_prod or apps != {display + ".app"}:
         print(f"FAIL[显示身份] Brand.displayName={display!r}，但 App target 的 PRODUCT_NAME={sorted(prod)}、产物={sorted(apps)}")
+        print(f"   —— 逐颗配置看：{bad_prod or '（这颗本身没问题）'}")
         print("   —— 只改 Brand 会让界面叫新名、菜单栏/Dock/Finder 仍叫旧名（改名必须两处一起翻）")
         failed = True
+    else:
+        print(f"PASS 显示身份单一来源：App target 的 {len(per_config)} 颗配置的 PRODUCT_NAME 与产物名都等于 Brand.displayName（{display}）")
+
+    # 版本号对账：真源是根目录 VERSION —— `generate_xcodeproj.py` 写的优先级就是
+    # 「VERSION 文件 → 最新 git tag（去掉 v 前缀）→ 0.0.0」。但 pbxproj 现在是**手工维护**的，
+    # 改 VERSION 不会自动流进 App target 的 MARKETING_VERSION ⇒ 三处读它的地方一起说谎，
+    # 而且没有一处会报错：设置/关于里显示的数字（SettingsView）、MCP server 报给 Agent 的版本
+    # （AgentGateway）、以及 sidecar 里的 appVersion —— 拒开面板那句「记录由 X 写下」正是读它。
+    try:
+        want_version = open(version_path, encoding="utf-8").read().strip()
+    except OSError:
+        want_version = ""
+    bad_mv = [f"{tn}/{lab}={'、'.join(v) or '<缺>'}" for tn, lab, _, v in per_config if v != [want_version]]
+    if not want_version:
+        print(f"FAIL[判据失效] 取不出 {version_path} 里的版本号 —— 无从对账，不算通过")
+        failed = True
+    elif not per_config:
+        print("FAIL[判据失效] 没有可比对的 App target 配置 —— 版本号无从对账")
+        failed = True
+    elif bad_mv:
+        print(f"FAIL[版本不一致] VERSION={want_version}，但有配置不等于它：{bad_mv}")
+        print("   —— 界面版本号、MCP 报出去的版本、sidecar 的 appVersion 全都读 MARKETING_VERSION；")
+        print("      发版只改 VERSION 不动工程，这三处会一起静默停在旧值（改版本必须两处一起改）")
+        failed = True
+    else:
+        print(f"PASS 版本号单一来源：VERSION 与 App target 的 {len(per_config)} 颗配置里的 MARKETING_VERSION 一致（{want_version}）")
 
 sys.exit(1 if failed else 0)
 PY
