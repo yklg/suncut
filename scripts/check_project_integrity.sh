@@ -262,12 +262,14 @@ if hits:
 print("PASS 全部 .sh 的 $变量后不紧跟非 ASCII（判据在用户 locale 下真跑得起来）")
 
 # ---- 权限位对账：全部**已入库**的 .sh 必须带可执行位（100755）---------------
-# 为什么值得钉：本仓 21 支 .sh 里曾有 3 支是 644（`check_schema_ledger_guards`、`check_live_store_guards`、
+# 为什么值得钉：本仓已入库的 33 支 .sh 里曾有 3 支是 644（数目实测，非估算）（`check_schema_ledger_guards`、`check_live_store_guards`、
 # `check_association_guards`），而文档与台账里确实存在 `./scripts/x.sh` 这种写法 ⇒ 那条"指令"对它们
 # 必然 permission denied（2026-10-13 就为这个改过一次 CLAUDE.md 的口径）。2026-10-16 补齐权限位，
 # 这条判据防止再漂回去。
 # 取 git 索引里的 mode，不取本地 stat：**别人 clone 出来的那个形态才是契约** ——
 # 本机 chmod +x 但提交时丢了执行位，判据照样该红。
+# 覆盖面刻意含「软件测试/」下那 7 支第三方拷贝：今天它们本来就是 755；哪天引入一颗 644 的
+# vendored 脚本它会红，那时再决定收窄范围还是补权限，别一上来就开豁免名单（同族老规矩）。
 # GIT_MODE_ROOT 只给台架用（指一棵合成 git 仓库），用来证明这一格真的会红，而不是恒绿。
 mode_root = os.environ.get("GIT_MODE_ROOT") or root
 try:
