@@ -350,6 +350,12 @@ def api09_job_terminal_state(c, ctx):
     # 产物在 `result` 里。所以本腿核的是 completed ⇒ result 非空，
     # 以前那句标题里的"带报告"是把导入作业的形状错安到了方案作业上（实测：终态 completed
     # 而 report=False，且这是设计如此，不是缺陷）。
+    # ⚠️ 也别把这颗计数收紧成 `> 0`（2026-10-17 读过生产者才定的口径，见台账 §6-18）：
+    # `SchemeViewModel.swift:407-412` 里方案数 = 各策略返回的 composition 之和，
+    # 而 `failedStrategies` 只收「策略本身失败」的那些 ⇒ 策略成功却返回空 composition 时
+    # `scheme_count=0` 且 `failed_strategies=0` **同时成立**，0 方案是合法业务结局，
+    # 不是作业契约破损（UI 那侧 `SchemeListView.swift:28/214` 已经在展示失败策略）。
+    # 若将来产品改成「零方案即 fail」，这条结论要随之重开，别照抄今天的话。
     if last.get("state") == "completed":
         result = last.get("result") or {}
         expect(isinstance(result, dict) and "scheme_count" in result,
