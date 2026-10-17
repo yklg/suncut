@@ -311,6 +311,21 @@ PY
 expect_red "闸门整体取不到" 2 "一颗闸门都取不到" \
         env PRODUCT_SRC_DIR="$WORK/renamed" bash "$CHECK" --preflight-only
 
+echo "== 自证 17：两条**计费**判据的形状侧（假件，零调用、零计费）=="
+# API-09 与 API-17 的真机格都要云端计费，于是它们"有没有牙"本来只能靠花钱来复验。
+# scripts/selftest_mcp_leg_shapes.py 把不花钱的那一半搬进仓库：坏读数必须红、好读数必须绿、
+# 超时与失能分支不许静默通过。条数由台架自己报（本仓规矩：自证的条数不许手写，
+# 手写的那个数会在下一次加腿时变成假话）。
+python3 "$ROOT/scripts/selftest_mcp_leg_shapes.py" > "$WORK/leg_shapes.log" 2>&1
+rc17=$?
+grep -E "^形状侧合计|^FAIL" "$WORK/leg_shapes.log" | head -8 | sed 's/^/       /'
+if [ "$rc17" = "0" ]; then
+    echo "PASS 计费判据的形状侧全部按期望（台架自带三格自守：未登记入口 / 非 GuardFail 异常 / 一侧全空）"
+else
+    echo "FAIL 形状侧退出码 ${rc17} —— 2 意味着**台架自己失能**，比判据红更该先修"
+    fail=1
+fi
+
 pkill -x SunCut 2>/dev/null
 echo ""
 if [ "$fail" = "0" ]; then
