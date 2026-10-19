@@ -132,9 +132,12 @@ struct DeliverySpecJudgingTests {
 
     @Test("未被任何一手记录覆盖的形状判 unproven —— 未核验不等于不合格，闸口必须放行")
     func unprovenShapesAreNotBlocked() {
-        // 720×1280 是典型：用户口述放行过，但没有逐条对着平台读数核过，因此不在 provenAccepted 里。
-        // 拿"没证据"去拦用户，就是拿猜测当事实。
-        for (w, h) in [(720, 1280), (2160, 3840), (900, 1600), (1080, 1620)] {
+        // 720×1280 是典型：用户口述放行过，但没有逐条对着平台读数核过，因此不在 provenAccepted 里
+        // （F 格正在证它）。拿"没证据"去拦用户，就是拿猜测当事实。
+        // 126×224 是刻意挑的：它**精确 9:16**、宽得离谱、名册里没有 ——
+        // 用来证明"比例规则"不会顺手把没测过的小尺寸一起拦掉（规则只管比例，宽度下限仍未立）。
+        // 注：900×1600 与 1080×1620 已从本表移出，2026-10-19 五格对照给了它们确定读数。
+        for (w, h) in [(720, 1280), (2160, 3840), (126, 224), (1440, 2560)] {
             #expect(DeliverySpec.qianchuanVertical.judge(width: w, height: h) == .unproven,
                     "\(w)×\(h) 没有任何一手记录覆盖")
             #expect(DeliveryGate.rejectionMessage(for: .qianchuanVertical, width: w, height: h) == nil,
@@ -155,6 +158,88 @@ struct DeliverySpecJudgingTests {
     @Test("缺省交付目标必须是千川，不是「不限」—— 缺省到不限等于没有闸")
     func fallbackIsQianchuan() {
         #expect(DeliverySpec.fallback == .qianchuanVertical)
+    }
+}
+
+// MARK: - DS-04b 两条独立校验（2026-10-19 五格对照的产出）
+
+@Suite("DS · 宽度名册与比例规则是两条独立校验")
+struct AspectRuleTests {
+
+    @Test("486×864 是精确 9:16，它被拒只能记在**宽度**名册上，不许记成违反比例规则")
+    func narrowButExactRatioIsRejectedByRosterNotRule() {
+        let verdict = DeliverySpec.qianchuanVertical.judge(width: 486, height: 864)
+        guard case .rejected(let reason) = verdict else {
+            Issue.record("486×864 实传被拒，判定却是 \(verdict)"); return
+        }
+        #expect(reason == .thisSizeProvenRejected(
+                    DeliverySpec.qianchuanVertical.provenRejected.first { $0.width == 486 }!),
+                "B 格的平台原文是「（宽度）」，理由必须记在名册上：\(reason)")
+    }
+
+    @Test("1080×1620 宽 1080 完全够，它被拒只能记成违反比例规则")
+    func wrongRatioIsRejectedByRule() {
+        let verdict = DeliverySpec.qianchuanVertical.judge(width: 1080, height: 1620)
+        guard case .rejected(let reason) = verdict else {
+            Issue.record("1080×1620 实传被拒，判定却是 \(verdict)"); return
+        }
+        guard case .violatesProvenRule(let rule, let evidence) = reason else {
+            Issue.record("C 格的平台原文是「比例」，理由必须记在规则上：\(reason)"); return
+        }
+        #expect(rule == .exactNineSixteen)
+        #expect(evidence.date == "2026-10-19")
+        let msg = DeliveryGate.rejectionMessage(for: .qianchuanVertical, width: 1080, height: 1620)
+        #expect(msg?.contains("精确 9:16") == true, "文案要指得出违反了哪条规则：\(msg ?? "nil")")
+    }
+
+    @Test("900×1600 不是任何标准分辨率档，却实传放行 ⇒ 平台不查白名单")
+    func nonStandardExactRatioSizeIsAccepted() {
+        #expect(DeliverySpec.qianchuanVertical.judge(width: 900, height: 1600) == .ok)
+    }
+
+    @Test("规则不许无证据存在：每条 AspectRule 都要有非空来源与日期")
+    func everyRuleCarriesEvidence() {
+        for rule in AspectRule.allCases {
+            let e = rule.evidence
+            #expect(e.source.count >= 8, "\(rule.rawValue) 的来源写得太短，回溯不到：\(e.source)")
+            #expect(e.date.count == 10 && e.date.contains("-"), "\(rule.rawValue) 缺日期：\(e.date)")
+            for banned in ["待核验", "未核验", "TODO", "听说", "应该"] {
+                #expect(!e.source.contains(banned), "规则来源里出现「\(banned)」= 无证据立规则")
+            }
+        }
+        #expect(!DeliverySpec.qianchuanVertical.aspectRules.isEmpty, "千川目标必须带着已证规则")
+    }
+
+    @Test("规则只属于所选目标：「不限」下 1080×1620 仍是未核验，不是被拦")
+    func rulesAreScopedToTheTarget() {
+        #expect(DeliverySpec.unrestricted.aspectRules.isEmpty)
+        #expect(DeliverySpec.unrestricted.judge(width: 1080, height: 1620) == .unproven)
+        #expect(DeliveryGate.rejectionMessage(for: .unrestricted, width: 1080, height: 1620) == nil)
+    }
+
+    /// 本规则取**零容差**（`w*16 == h*9` 整数相等），这比已证的边界更严一档：
+    /// 实传只证了「2:3 被拒」与「精确 9:16 放行」，**平台对"差两像素"的近邻尺寸容不容、
+    /// 容多少从未测过**。取零容差是有方向的保守 —— 宁可拦下一个也许能过的画布，
+    /// 也不要放出去一条整批报废（2026-10-19 那 41 条就是这么发生的）。
+    /// 若哪天要放宽，必须先去平台实传取证，不许凭感觉填容差。
+    @Test("零容差：差 2 像素的近邻画布按规则拦下（此立场比已证边界更严，理由见注释）")
+    func ratioRuleIsZeroTolerance() {
+        #expect(!AspectRule.exactNineSixteen.isSatisfied(width: 1080, height: 1922))
+        #expect(!AspectRule.exactNineSixteen.isSatisfied(width: 1080, height: 1918))
+        #expect(AspectRule.exactNineSixteen.isSatisfied(width: 1080, height: 1920))
+        #expect(AspectRule.exactNineSixteen.isSatisfied(width: 486, height: 864))
+        #expect(AspectRule.exactNineSixteen.isSatisfied(width: 900, height: 1600))
+        // 旧 480p 档写死的 (480, 854) 正是这条规则要拦的典型：480×16=7680 ≠ 854×9=7686
+        #expect(!AspectRule.exactNineSixteen.isSatisfied(width: 480, height: 854))
+    }
+
+    @Test("名册命中优先于规则：704×1248 既在名册又不合规则，理由要记成实传过的那条")
+    func rosterBeatsRule() {
+        guard case .rejected(let reason) = DeliverySpec.qianchuanVertical.judge(width: 704, height: 1248)
+        else { Issue.record("704×1248 实传被拒却没判拒"); return }
+        #expect(reason == .thisSizeProvenRejected(
+                    DeliverySpec.qianchuanVertical.provenRejected.first { $0.width == 704 }!),
+                "亲手传过的尺寸应当优先引用那条记录：\(reason)")
     }
 }
 
@@ -217,7 +302,7 @@ struct DeliveryReadoutTests {
         let text = DeliveryCanvas.readout(target: .qianchuanVertical,
                                           tier: .original, sourceMaxWidth: 480, sourceMaxHeight: 960)
         #expect(text.contains("480×960"), "回显里没有该画布：\(text)")
-        #expect(text.contains("已被平台证明拒收"), "拒收形状不能只报个数：\(text)")
+        #expect(text.contains("已被平台证明不可投放"), "拒收形状不能只报个数：\(text)")
         #expect(text.contains("2026-10-19"), "要带取证日期：\(text)")
     }
 

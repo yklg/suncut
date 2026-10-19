@@ -104,8 +104,8 @@ public struct DeliveryCanvas: Sendable, Equatable {
         switch target.spec.judge(width: c.width, height: c.height) {
         case .ok:
             return head + "（平台已证放行）"
-        case .provenRejected(let record):
-            return head + "（\(record.date) 已被平台证明拒收，导出会被拦下）"
+        case .rejected(let reason):
+            return head + "（\(reason.evidence.date) 已被平台证明不可投放，导出会被拦下）"
         case .unproven:
             // 「未核验」既不是「不合格」也不是「没问题」—— 屏幕上必须说清是前者。
             return head + "（该尺寸尚无平台一手记录，能否放行未核验）"
@@ -132,47 +132,109 @@ public struct PlatformVerdictRecord: Sendable, Equatable {
     }
 }
 
+/// 一条**已被一手证据证明**的画幅规则。
+///
+/// 为什么需要它（而不是只靠逐尺寸名册）：逐尺寸名册只能拦住"我们恰好传过的那个尺寸"，
+/// 而素材尺寸是连续的 —— `.original` 档会把素材自己的宽高原样透出去，
+/// 素材库里现成有 704×1248、480×960、720×960 三颗非 9:16 的，下一批还会有别的。
+/// 拦住**一类**形状要靠规则，规则必须有证据，没证据的一律不立。
+public enum AspectRule: String, Sendable, CaseIterable, Equatable {
+    /// 画幅必须**精确** 9:16（整数交叉相乘，零容差）。
+    ///
+    /// 证据（2026-10-19 用户实传千川「上传视频」面板，五格对照小样）：
+    /// `1080×1620`（2:3）被拒，红字「素材尺寸**比例**不符合规范」；
+    /// 同批 `900×1600`（精确 9:16、宽度 900）**放行**。
+    /// 而 `486×864`（精确 9:16、宽 486）被拒时红字是「素材尺寸（**宽度**）不符合规范」——
+    /// **两条报错措辞不同 ⇒ 平台是两条互相独立的校验**，本规则只对应"比例"那一条。
+    case exactNineSixteen
+
+    public func isSatisfied(width: Int, height: Int) -> Bool {
+        switch self {
+        case .exactNineSixteen:
+            return width > 0 && height > 0 && width * 16 == height * 9
+        }
+    }
+
+    public var label: String {
+        switch self {
+        case .exactNineSixteen: return "画幅必须精确 9:16"
+        }
+    }
+
+    /// 立这条规则所依据的那一手记录。规则不许无证据存在。
+    public var evidence: PlatformVerdictRecord {
+        switch self {
+        case .exactNineSixteen:
+            return PlatformVerdictRecord(
+                width: 1080, height: 1620,
+                source: "千川上传面板红字「素材尺寸比例不符合规范，请检查后重新上传」；同批 900×1600（精确 9:16）放行",
+                date: "2026-10-19")
+        }
+    }
+}
+
+/// 被拒的具体理由 —— 分得很细，是因为"这个尺寸我们亲手传过并被拒"和
+/// "这个尺寸没传过但违反了某条已证规则"是两种强度不同的知识，报错时必须分开说。
+public enum RejectionReason: Sendable, Equatable {
+    case thisSizeProvenRejected(PlatformVerdictRecord)
+    case violatesProvenRule(rule: AspectRule, evidence: PlatformVerdictRecord)
+
+    public var evidence: PlatformVerdictRecord {
+        switch self {
+        case .thisSizeProvenRejected(let record): return record
+        case .violatesProvenRule(_, let evidence): return evidence
+        }
+    }
+}
+
 /// 一个尺寸对某个交付目标的判定结果。
 public enum Deliverability: Sendable, Equatable {
     case ok
-    case provenRejected(record: PlatformVerdictRecord)
-    /// 没有任何一手记录覆盖这个形状。**既不能当成"可以投放"，也不许拿它硬拦用户** ——
+    case rejected(reason: RejectionReason)
+    /// 没有任何一手记录或已证规则覆盖这个形状。**既不能当成"可以投放"，也不许拿它硬拦用户** ——
     /// 它是"我们还不知道"，不是"没问题"。
     case unproven
 }
 
-/// 交付目标：产物要交给谁、对方已经证明接受/拒绝过哪些尺寸。
+/// 交付目标：产物要交给谁、对方已经证明接受/拒绝过哪些尺寸、以及已证的画幅规则。
 ///
-/// ⚠️ **这里故意不放宽度下限，也不放"允许的尺寸集合"**。2026-10-19 的三组一手数据
-/// （拒收：480×854、480×960、704×1248；放行：1080×1920）把
-/// 「宽度有下限」「必须精确 9:16」「只认标准分辨率白名单」三个假设**完全混淆**了 ——
-/// 过的三条既宽度 ≥720 又是精确 9:16 又恰是标准档，拒的三条三条全不满足。
-/// 一个假设都没被证伪之前，任何写进代码的门槛数字都是猜的。
-/// 等五格对照小样（计划 §三）跑完再钉，钉之前 `judge` 只对**已证**的形状表态。
+/// ⚠️ **宽度下限仍未写进来**。2026-10-19 的五格对照只把它夹到 **(486, 900]**：
+/// `486×864`（精确 9:16）被拒、`900×1600` 放行。中间那一格 `720×1280` 是**决定性的**，
+/// 因为 720p 是导出面板上现成的一个档位 —— 它过不了就说明那一档得下架。
+/// 在 F 格读数回来之前，这里不许出现任何 `minWidth`。
+/// 同批被证伪的是「标准分辨率白名单」假设：`900×1600` 不是任何标准档却过了。
 public struct DeliverySpec: Sendable, Equatable {
     public let name: String
     public let provenAccepted: [PlatformVerdictRecord]
     public let provenRejected: [PlatformVerdictRecord]
+    public let aspectRules: [AspectRule]
 
     public init(name: String,
                 provenAccepted: [PlatformVerdictRecord],
-                provenRejected: [PlatformVerdictRecord]) {
+                provenRejected: [PlatformVerdictRecord],
+                aspectRules: [AspectRule] = []) {
         self.name = name
         self.provenAccepted = provenAccepted
         self.provenRejected = provenRejected
+        self.aspectRules = aspectRules
     }
 
     /// 巨量千川 · 竖屏投放。
     ///
-    /// 注：用户同日实传还放行过 720×1280 与 2160×3840，但那是"源素材都能上传成功"这句口述
-    /// 减去两条例外后的**推论**，没有逐条对着平台读数核过，因此不进 `provenAccepted`。
+    /// 注：用户同日实传还放行过 2160×3840，但那是"源素材都能上传成功"这句口述
+    /// 减去几条例外后的**推论**，没有逐条对着平台读数核过，因此不进 `provenAccepted`。
+    /// 720×1280 同样仍是推论 —— 它是 F 格要证的那一颗（见类型文档注释）。
     public static let qianchuanVertical = DeliverySpec(
         name: "巨量千川 · 竖屏投放",
         provenAccepted: [
             PlatformVerdictRecord(
                 width: 1080, height: 1920,
                 source: "千川开放平台 video/get 回包（账户自有素材库，120 条 width/height 全为此尺寸）",
-                date: "2026-10-12")
+                date: "2026-10-12"),
+            PlatformVerdictRecord(
+                width: 900, height: 1600,
+                source: "千川「上传视频」面板实传放行（进度条走完＋绿勾，无红字）。这一格同时证伪了「标准分辨率白名单」假设 —— 900×1600 不是任何标准档",
+                date: "2026-10-19")
         ],
         provenRejected: [
             PlatformVerdictRecord(
@@ -186,13 +248,19 @@ public struct DeliverySpec: Sendable, Equatable {
             PlatformVerdictRecord(
                 width: 704, height: 1248,
                 source: "同上，用户实传源素材 爆点2/01ea1a41803d77ce4f0370019e7690161f_309.mp4",
+                date: "2026-10-19"),
+            PlatformVerdictRecord(
+                width: 486, height: 864,
+                source: "千川「上传视频」面板红字：素材尺寸（宽度）不符合规范（五格对照 B 格；它是**精确 9:16**，所以拒它的是宽度那条校验，不是比例）",
                 date: "2026-10-19")
-        ])
+        ],
+        aspectRules: [.exactNineSixteen])
 
-    /// 不限：本地留档用，不承诺可投放。两张证据表都为空 ⇒ `judge` 恒返回 `.unproven`。
+    /// 不限：本地留档用，不承诺可投放。证据表与规则全空 ⇒ `judge` 恒返回 `.unproven`。
     public static let unrestricted = DeliverySpec(name: "不限（仅本地留档）",
                                                   provenAccepted: [],
-                                                  provenRejected: [])
+                                                  provenRejected: [],
+                                                  aspectRules: [])
 
     /// 未显式选定交付目标时的缺省目标。
     ///
@@ -204,7 +272,12 @@ public struct DeliverySpec: Sendable, Equatable {
     /// 只对**已证**的形状表态；表是空的时候什么都不拦（见类型文档注释里的理由）。
     public func judge(width: Int, height: Int) -> Deliverability {
         if let hit = provenRejected.first(where: { $0.width == width && $0.height == height }) {
-            return .provenRejected(record: hit)
+            return .rejected(reason: .thisSizeProvenRejected(hit))
+        }
+        // 规则查在 provenAccepted 之前：名册只能拦住"恰好传过的那几个尺寸"，
+        // 而 .original 档透出的尺寸是连续的 —— 靠规则才拦得住没登记过的那一类。
+        for rule in aspectRules where !rule.isSatisfied(width: width, height: height) {
+            return .rejected(reason: .violatesProvenRule(rule: rule, evidence: rule.evidence))
         }
         if provenAccepted.contains(where: { $0.width == width && $0.height == height }) {
             return .ok
@@ -251,8 +324,16 @@ public enum DeliveryGate {
     /// **只拦"已被平台证明拒收"的形状。** 「未核验」不是"不合格" —— 拿它拦用户就是
     /// 拿猜测当事实；平台判据的三个假设还没分离（见 `DeliverySpec` 的文档注释）。
     public static func rejectionMessage(for spec: DeliverySpec, width: Int, height: Int) -> String? {
-        guard case .provenRejected(let rec) = spec.judge(width: width, height: height) else { return nil }
-        return "输出画布 \(width)×\(height) 已被平台证明拒收（\(rec.date)，来源：\(rec.source)）。"
+        guard case .rejected(let reason) = spec.judge(width: width, height: height) else { return nil }
+        let why: String
+        switch reason {
+        case .thisSizeProvenRejected:
+            why = "该尺寸已被实传证明拒收"
+        case .violatesProvenRule(let rule, _):
+            why = "违反已证平台规则：\(rule.label)"
+        }
+        let record = reason.evidence
+        return "输出画布 \(width)×\(height) 不可投放（\(why)；\(record.date)，平台原文：\(record.source)）。"
              + "请改用其它分辨率档位；若确需该尺寸，请选「不限（仅本地留档）」交付目标。"
     }
 }
