@@ -67,6 +67,50 @@ public struct DeliveryCanvas: Sendable, Equatable {
     /// 奇数向上取偶。`yuv420p` 的色度次采样要求宽高都是偶数，奇数会让 ffmpeg 要么报错、
     /// 要么自行降采样到另一种像素格式 —— 两种都比"取偶"更难查。
     public static func evenUp(_ n: Int) -> Int { (n + 1) / 2 * 2 }
+
+    /// 导出面板的回显。**与 `size()` 同处产出** —— 这样"面板说的"和"真算出来的"不可能是两套话。
+    ///
+    /// 原先面板只有一个裸 `Picker("分辨率")`，从头到尾不告诉你这档实际输出多少乘多少；
+    /// 于是 480p 被选中时屏上一个字都没变，41 条报废品就这么导出去了。
+    /// 若把这句话拼在 `ExportView` 里，它就是第八份尺寸抄本 —— 所以拼装在 Core。
+    ///
+    /// ⚠️ `.original` 档下，若调用方没有素材最大宽高就**不许猜**：面板自己再遍历一遍素材，
+    /// 就是"两处算同一件事、可以各说各话"—— 那正是本次事故的形状。此时如实说"导出时现算"。
+    public static func readout(target: DeliveryTargetID, tier: DeliveryTier,
+                               sourceMaxWidth: Int? = nil, sourceMaxHeight: Int? = nil) -> String {
+        // 能不能提前报出确切画布：固定档一定能；`.original` 只有拿到素材最大宽高才能，
+        // 而面板拿不到（它若为此再遍历一遍素材，就又造出第八份算尺寸的抄本）。
+        let known: (width: Int, height: Int)?
+        switch tier {
+        case .p1080, .p720:
+            let c = size(tier: tier, sourceMaxWidth: 0, sourceMaxHeight: 0)
+            known = (c.width, c.height)
+        case .original:
+            if let w = sourceMaxWidth, let h = sourceMaxHeight, w > 0, h > 0 {
+                let c = size(tier: .original, sourceMaxWidth: w, sourceMaxHeight: h)
+                known = (c.width, c.height)
+            } else {
+                known = nil
+            }
+        }
+
+        let head: String
+        if let c = known {
+            head = "\(target.label) · 将输出 \(c.width)×\(c.height)"
+        } else {
+            head = "\(target.label) · 输出＝本方案素材最大宽高（面板不预测，导出时现算）"
+        }
+        guard let c = known else { return head }
+        switch target.spec.judge(width: c.width, height: c.height) {
+        case .ok:
+            return head + "（平台已证放行）"
+        case .provenRejected(let record):
+            return head + "（\(record.date) 已被平台证明拒收，导出会被拦下）"
+        case .unproven:
+            // 「未核验」既不是「不合格」也不是「没问题」—— 屏幕上必须说清是前者。
+            return head + "（该尺寸尚无平台一手记录，能否放行未核验）"
+        }
+    }
 }
 
 // MARK: - 平台判定证据
@@ -153,7 +197,8 @@ public struct DeliverySpec: Sendable, Equatable {
     /// 未显式选定交付目标时的缺省目标。
     ///
     /// 本产品的产物就是千川/抖音投放素材，缺省到"不限"等于没有闸。
-    /// 导出面板的「交付目标」选择器落地后，这一颗只服务 MCP 等无人值守入口。
+    /// 面板的「交付目标」选择器已落地（`ExportView`），所以这一颗现在只服务
+    /// 无人值守入口（MCP 的 `export_scheme` 目前仍不传 config，见台账 §六-3）。
     public static let fallback: DeliverySpec = .qianchuanVertical
 
     /// 只对**已证**的形状表态；表是空的时候什么都不拦（见类型文档注释里的理由）。
@@ -165,6 +210,32 @@ public struct DeliverySpec: Sendable, Equatable {
             return .ok
         }
         return .unproven
+    }
+}
+
+/// 交付目标的可持久化标识（面板选择器与 `@AppStorage` 存的就是这颗）。
+///
+/// 为什么不让 `@AppStorage` 直接存 `DeliverySpec`：它是带两张证据表的 struct，
+/// 一旦落盘，代码里的证据表更新后就会与用户存的旧副本分叉 —— 存的必须是"选了哪个目标"，
+/// 证据表永远由代码现给。
+public enum DeliveryTargetID: String, CaseIterable, Identifiable, Sendable {
+    case qianchuanVertical
+    case unrestricted
+
+    public var id: String { rawValue }
+
+    public var label: String {
+        switch self {
+        case .qianchuanVertical: return "巨量千川 · 竖屏投放"
+        case .unrestricted:      return "不限（仅本地留档）"
+        }
+    }
+
+    public var spec: DeliverySpec {
+        switch self {
+        case .qianchuanVertical: return .qianchuanVertical
+        case .unrestricted:      return .unrestricted
+        }
     }
 }
 

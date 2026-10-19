@@ -377,6 +377,13 @@ struct ExportView: View {
         }
     }
 
+    /// 导出面板的画布回显。文案与换算同出自 `MixCutCore.DeliveryCanvas.readout` ——
+    /// 面板**不**自己拼数字，也**不**为预测 `.original` 的结果再遍历一遍素材
+    /// （那等于造出第八份算尺寸的抄本，正是 2026-10-19 整批拒收的形状）。
+    private var canvasReadout: String {
+        DeliveryCanvas.readout(target: exportConfig.deliveryTarget, tier: exportConfig.resolution)
+    }
+
     /// 根据当前编码配置和总时长估算导出文件总大小（MB）
     private func estimatedFileSizeMB(durationSec: Double) -> Int {
         let kbps = exportConfig.quality.videoBitrateKbps(for: exportConfig.codec)
@@ -399,11 +406,25 @@ struct ExportView: View {
             }
 
             VStack(spacing: DesignTokens.Spacing.compact) {
+                Picker("交付目标", selection: $exportConfig.deliveryTarget) {
+                    ForEach(DeliveryTargetID.allCases) { target in
+                        Text(target.label).tag(target)
+                    }
+                }
+
                 Picker("分辨率", selection: $exportConfig.resolution) {
                     ForEach(ExportConfig.ExportResolution.allCases) { res in
                         Text(res.rawValue).tag(res)
                     }
                 }
+
+                // 这行回显是 2026-10-19 事故的正解：此前面板只有一个裸「分辨率」Picker，
+                // 选中 480p 时屏上一个字都没变，41 条 480 宽的报废品就这么导出去了。
+                // 文案与换算同出自 Core 的 DeliveryCanvas.readout（ES-05 守卫要求本文件必须引用它）。
+                Text(canvasReadout)
+                    .font(DesignTokens.Typography.microRegular)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
 
                 Picker("编码器", selection: $exportConfig.codec) {
                     ForEach(ExportConfig.ExportCodec.allCases) { codec in

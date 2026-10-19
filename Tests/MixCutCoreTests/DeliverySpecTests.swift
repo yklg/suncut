@@ -189,7 +189,55 @@ struct DeliverySpecEvidenceTests {
     }
 }
 
-// MARK: - DS-05 派生量随基准漂移
+// MARK: - DS-05 面板回显与换算同源
+
+@Suite("DS · 面板回显")
+struct DeliveryReadoutTests {
+
+    /// 回显里那个数字必须**就是** `size()` 算出来的那个 —— 不是第二处拼出来的。
+    /// 做法：把 `size()` 的输出格式化进期望串，再要求 `readout` 含同一串。
+    @Test("固定档回显逐字含 size() 的产出，且三种判定各说各的话", arguments: [
+        // (目标, 档位, 期望尾巴关键词)
+        (DeliveryTargetID.qianchuanVertical, DeliveryTier.p1080, "平台已证放行"),
+        (DeliveryTargetID.qianchuanVertical, DeliveryTier.p720, "未核验"),
+        (DeliveryTargetID.unrestricted, DeliveryTier.p1080, "未核验"),
+    ])
+    func readoutCarriesTheSameNumber(target: DeliveryTargetID, tier: DeliveryTier, tail: String) {
+        let canvas = DeliveryCanvas.size(tier: tier, sourceMaxWidth: 0, sourceMaxHeight: 0)
+        let text = DeliveryCanvas.readout(target: target, tier: tier)
+        #expect(text.contains("\(canvas.width)×\(canvas.height)"),
+                "回显没报出 size() 的 \(canvas.width)×\(canvas.height)：\(text)")
+        #expect(text.contains(target.label), "回显要说清交付目标：\(text)")
+        #expect(text.contains(tail), "判定措辞应为「\(tail)」：\(text)")
+    }
+
+    @Test("已证拒收的尺寸必须在回显里被点名，而不是静默显示一个数")
+    func rejectedSizeIsNamed() {
+        // 480×960 是 2026-10-19 用户实传被拒的形状；用 .original + 显式源尺寸复现它
+        let text = DeliveryCanvas.readout(target: .qianchuanVertical,
+                                          tier: .original, sourceMaxWidth: 480, sourceMaxHeight: 960)
+        #expect(text.contains("480×960"), "回显里没有该画布：\(text)")
+        #expect(text.contains("已被平台证明拒收"), "拒收形状不能只报个数：\(text)")
+        #expect(text.contains("2026-10-19"), "要带取证日期：\(text)")
+    }
+
+    @Test(".original 且面板没有素材尺寸时，回显必须承认不知道，不许假报一个数")
+    func originalWithoutSourceDimsAdmitsIgnorance() {
+        // 面板若自己再遍历一遍素材去"预测"最大宽，就是第八份算尺寸的抄本 —— 那正是本次事故的形状。
+        let text = DeliveryCanvas.readout(target: .qianchuanVertical, tier: .original)
+        #expect(!text.contains("×"), "没有素材尺寸却报了具体画布，等于猜：\(text)")
+        #expect(text.contains("导出时现算"), "要如实说明不知道：\(text)")
+    }
+
+    @Test("给了素材尺寸时 .original 回显必须报出取偶后的实际画布")
+    func originalWithSourceDimsReportsCanvas() {
+        let text = DeliveryCanvas.readout(target: .unrestricted,
+                                          tier: .original, sourceMaxWidth: 703, sourceMaxHeight: 1247)
+        #expect(text.contains("704×1248"), "奇数应取偶后回显：\(text)")
+    }
+}
+
+// MARK: - DS-06 派生量随基准漂移
 
 @Suite("DS · 派生量的基准不变量")
 struct DerivedMetricBasisTests {

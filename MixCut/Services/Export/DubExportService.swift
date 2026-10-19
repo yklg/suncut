@@ -611,7 +611,7 @@ actor DubExportService {
         let canvas = DeliveryCanvas.size(tier: config.resolution,
                                          sourceMaxWidth: sourceMaxWidth,
                                          sourceMaxHeight: sourceMaxHeight)
-        if let blocked = DeliveryGate.rejectionMessage(for: .fallback,
+        if let blocked = DeliveryGate.rejectionMessage(for: config.deliveryTarget.spec,
                                                        width: canvas.width,
                                                        height: canvas.height) {
             throw ExportError.deliveryBlocked(blocked)

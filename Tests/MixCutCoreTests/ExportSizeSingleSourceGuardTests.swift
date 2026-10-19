@@ -225,7 +225,40 @@ struct ExportSizeNoFalsePositiveTests {
     }
 }
 
-// MARK: - ES-05 变异腿（证明判据有牙）
+// MARK: - ES-05 面板回显必须走 Core 同一函数
+
+@Suite("ES · 面板回显不许自己拼")
+struct ExportViewReadoutGuardTests {
+
+    private let viewPath = "MixCut/Views/Export/ExportView.swift"
+
+    @Test("ExportView 必须引用 DeliveryCanvas.readout")
+    func viewMustDelegateReadoutToCore() {
+        let src = esRead(viewPath)
+        #expect(src.count > 3000, "读不到导出面板 —— 判据没跑起来，不算通过")
+        let code = TagRowHostScan.codeOnly(src)
+        #expect(ExportSizeScan.count(in: code, "DeliveryCanvas.readout") >= 1,
+                "面板没有回显实际输出尺寸 ⇒ 又会回到「选了 480p 屏上一个字都没变」那个状态")
+        // ⚠️ 这里**不**加"面板里不许出现「将输出」字样"那种反向禁字判据：
+        // 手拼的回显活在字符串字面量里，而 codeOnly 会剥掉字符串 ⇒ 那条永远不会触发，
+        // 是恒绿的假牙（本轮实测想过一次，靠变异腿才发现）。真正有牙的是上面这条正向在场。
+    }
+
+    @Test("变异腿：把回显换成面板手拼字符串 ⇒ 正向在场判据必须变红")
+    func handAssembledReadoutTurnsItRed() {
+        let src = esRead(viewPath)
+        // 锚点取单行：多行锚点会因缩进对不上而静默不落地（本轮实测踩过一次）。
+        let mutated = src.replacingOccurrences(
+            of: "DeliveryCanvas.readout(target: exportConfig.deliveryTarget, tier: exportConfig.resolution)",
+            with: "\"1080×1920\"")
+        #expect(mutated != src, "变异没落地，对照作废")
+        let code = TagRowHostScan.codeOnly(mutated)
+        #expect(ExportSizeScan.count(in: code, "DeliveryCanvas.readout") == 0,
+                "去掉 Core 调用后仍被判绿 ⇒ 上面那条正向在场判据是空的")
+    }
+}
+
+// MARK: - ES-06 变异腿（证明判据有牙）
 
 @Suite("ES · 变异腿")
 struct ExportSizeMutationTests {

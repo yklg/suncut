@@ -2,6 +2,8 @@ import Foundation
 
 /// 导出配置
 struct ExportConfig {
+    /// 交付目标：决定用哪张平台证据表闸这次导出。缺省千川 —— 本产品的产物就是投放素材。
+    var deliveryTarget: DeliveryTargetID = .qianchuanVertical
     var resolution: ExportResolution = .original
     var codec: ExportCodec = .h264Hardware    // 默认硬件加速：5-10× 速度
     var quality: ExportQuality = .high
@@ -209,7 +211,7 @@ actor ExportService {
         let canvas = DeliveryCanvas.size(tier: config.resolution,
                                          sourceMaxWidth: maxWidth,
                                          sourceMaxHeight: maxHeight)
-        if let blocked = DeliveryGate.rejectionMessage(for: .fallback,
+        if let blocked = DeliveryGate.rejectionMessage(for: config.deliveryTarget.spec,
                                                        width: canvas.width,
                                                        height: canvas.height) {
             throw ExportError.deliveryBlocked(blocked)
