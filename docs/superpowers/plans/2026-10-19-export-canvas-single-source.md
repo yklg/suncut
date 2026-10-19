@@ -48,14 +48,20 @@
 - `DeliverySpec`：`provenAccepted`/`provenRejected` **证据表**（每行带日期＋一手来源），只登记两条硬事实；
   `judge` 只对已证形状表态，未覆盖的一律 `.unproven`
 - `DeliveryGate.rejectionMessage`：只硬拦**已证拒收**的形状
+- `DeliveryTargetID`（可持久化的目标标识，`spec` 现给证据表 —— 存"选了哪个目标"，不存证据表副本）
+  ＋ `DeliveryCanvas.readout`（面板回显与 `size()` 同处产出；`.original` 拿不到素材尺寸时
+  **如实说"导出时现算"，不假报一个数**）
 
 **App 侧**：6 处尺寸决策改调 Core；导出前闸（`ExportError.deliveryBlocked`）＋
 导出后 ffprobe 回读并与计划值比对（`FFmpegRunner.probeCanvasSize`、
 `ExportError.canvasMismatch`/`canvasUnverifiable`，不符则删**本次自己创建**的成品）。
+导出面板加「交付目标」Picker ＋ 一行实时回显（`ExportView.canvasReadout`，
+此前该面板只有一个裸「分辨率」Picker，选中 480p 时屏上一个字都没变）。
 
-**测试 33 条**（全仓 1122 → **1149**）
-- `Tests/MixCutCoreTests/DeliverySpecTests.swift` 16 条：档位矩阵（参数化，先例 `OrphanFileFinderTests.swift:148`）、
-  偶数不变量、缺测兜底、非 9:16 源不带偏画布、横屏不翻转固定档、证据表可回溯性、派生量基准
+**测试新增 39 条 `@Test` 声明**（Core 执行数 **1155**、App 测试目标 **11**）
+- `Tests/MixCutCoreTests/DeliverySpecTests.swift` 22 条：档位矩阵（参数化，先例 `OrphanFileFinderTests.swift:148`）、
+  偶数不变量、缺测兜底、非 9:16 源不带偏画布、横屏不翻转固定档、证据表可回溯性、
+  **面板回显与换算同源（DS-05）**、派生量基准（DS-06）
 - `Tests/MixCutCoreTests/ExportSizeSingleSourceGuardTests.swift` 12 条：App 侧画布字面量必须为 0、
   Core 侧必须仍有、扫描根健全、**四处近邻字面量必绿**（`ArrangeOrderSheet` 的 `minWidth: 720`、
   `ASRService` 的 `7200`、`ThumbnailCache` 注释、`Wan25VideoEditClient` 的 `"720P"`）、三条变异腿
@@ -70,11 +76,11 @@
 
 | 腿 | 结果 |
 |---|---|
-| `swift test` 全量 | **1149 tests passed，4 known issues（均为既有故意红钉），非 known 失败 0** |
+| `swift test` 全量 | **1155 tests passed，4 known issues（均为既有故意红钉），非 known 失败 0** |
 | `scripts/check_app_build.sh` | PASS（xcodebuild 全工程，258 编译单元） |
 | `scripts/check_pbx_registration.py` | PASS（含新登记的 `DeliverySpec.swift`） |
 | `scripts/check_project_integrity.sh` | PASS（含"测试文件未泄进 App target"一项） |
-| App 测试腿 `xcodebuild -only-testing:MixCutAppTests test` | **TEST SUCCEEDED，11 passed / 0 failed**（增量、冷构建、加前置探针后共 3 次均绿） |
+| App 测试腿 `xcodebuild -only-testing:MixCutAppTests test` | **TEST SUCCEEDED，11 passed / 0 failed × 连续 3 次**（套件加 `.serialized` 之后；加之前 7 次跑红 3 次，见 §四 末） |
 | 其余 9 支 `check_*_guards.sh` | 全 PASS |
 | `check_mcp_api_guards.sh` | **未跑完** —— 见 §六 |
 
@@ -88,12 +94,33 @@
 2. **`check_mcp_api_guards.sh` 拦我测旧产物**：我改过 Swift（含纯注释）却没重建 `.scratch/dd`，
    它拒绝用 10-16 的 dylib 给当前代码背书。重建后 U05 转绿。这条纪律是对的，我违反了它。
 
-### 一处未解释的现象（诚实记录）
+### 一处 flaky：初判"无法复现、真因未知"，后来复现并修掉了
 
-App 测试腿**首跑**有 3 条（全部走 `concat` 的那 3 条）在 **0.000 秒即失败**（抛错，非断言不过），
-同批不用 `concat` 的 2 条 2 秒后正常通过。增量重跑与冷构建重跑**都没能复现**，
-所以「冷构建取不到包内 ffmpeg」这个第一假设**已被证伪**，真因未知。
-已加 `esIRequireBinaries()` 前置探针，把未来的同类空抛换成具名原因；**不声称已修复**。
+〔初记，2026-10-19 白天〕App 测试腿**首跑**有 3 条（全部走 `concat` 的那 3 条）在 **0.000 秒即失败**
+（抛错，非断言不过），同批不用 `concat` 的 2 条 2 秒后正常通过。增量重跑与冷构建重跑**都没能复现**，
+所以当时记为「真因未知、不声称已修复」。
+
+〔已推翻上面那句，同日 18:2x〕它**能复现**，而且不是偶发到看不见的程度：改完面板那一轮起
+**连红 3 次**，且**失败集合会移动**（一会儿红这 3 条、一会儿红那 2 条），耗时读数 0.000 秒与
+3~4 秒混杂。我先后提了四个假设，全部被自己的实验证伪：
+
+| 假设 | 反证 |
+|---|---|
+| 冷构建取不到包内 ffmpeg | 用 `-derivedDataPath` 强制冷构建跑，**是绿的** |
+| 宿主 App 正在被重签名/注册 | 4 次运行都有 `codesign`＋`RegisterWithLaunchServices`，其中 3 次绿 |
+| `Skipping duplicate build file` 警告 | 绿与红的运行里都出现 2 次，不区分 |
+| 共享一颗 `FFmpegRunner`（`runningProcess` 只有一个槽位，`FFmpegRunner.swift:125/276/448`） | 拆成"一条用例一颗"之后**仍然连红 3 次** |
+| 磁盘/inode 耗尽导致 `mkstemp` 失败 | `df` 显示可用 370Gi、ifree 3.9G |
+
+**真因与处置**：本组每条用例都要 spawn 多个 ffmpeg/ffprobe 子进程，而 Swift Testing **默认并行跑用例**；
+压力上来时抛点在 `esIScratch()` 建目录那一步 —— 它在 `esIRequireBinaries()` 与 `esIRender()` 两处诊断
+**之外**，所以 `Issue.record` 一次都没触发、Xcode 只留下 `mkstemp: fileSystemFailure`。
+给套件加 `.serialized` 后**连绿 3 次**（11 passed / 0 failed × 3）。
+这是结构性改动，不是"重跑到绿"。约束与已排除方向都写进了 `ExportCanvasReadbackTests.swift` 的套件注释。
+
+**仍未钉死的一环**：我证明的是"串行化让它稳定"，不是具体哪一个系统调用在什么阈值上失败 ——
+没有拿到 `esIScratch()` 抛出的错误原文（它在诊断范围外）。若哪天有人把这组改回并行，
+预期症状就是本段描述的样子。
 
 ## 五、行为变更清单（需知悉）
 
@@ -134,7 +161,14 @@ App 测试腿**首跑**有 3 条（全部走 `concat` 的那 3 条）在 **0.000
      推荐 (b) ＋ 顺带把遮挡开关显式化；(a) 是更便宜但把成本摊到三条中间片上的做法。
 3. **MCP `export_scheme`** 仍靠默认 `.original`（`MCPToolHandlers.swift:574` 不传 config）；
    改它要连 `AgentToolCatalog` 的 inputSchema 与 `scripts/mcp_api_guards.py` 一起动。
-4. **面板「交付目标」选择器与实时回显**（计划 W3）未做；`ExportConfig` 仍不持久化。
+4. **面板：选择器与回显已落，持久化未做，屏上未实机看过。**
+   「交付目标」Picker ＋ `ExportView.canvasReadout` 实时回显已加（编译与判据都过）。
+   两件事仍欠：
+   - `ExportConfig` 仍不持久化。要做对得先把这份 config 的归属从 `@State` 改成 `@AppStorage`
+     **单一来源**；若只是"再存一份到 UserDefaults 然后同步回 @State"，就造出两个地方各存一份
+     —— 那正是本次在修的东西，不做半吊子版本。
+   - **屏上没看过**。要看得重启用户正开着的 SunCut（PID 21334），按 `CLAUDE.md` 的规矩
+     杀用户实例前须先确认 ⇒ 已交由用户决定，不声称已验证。
 5. **`check_mcp_api_guards.sh` 未跑完**：端口 8787 被用户正开着的 SunCut（PID 21334）持有。
    该守卫会启动第二个实例并快照/还原用户偏好，而本轮改动与 MCP 零交集 ⇒ 未擅自执行。
    要跑需用户先退出 SunCut，或明示授权用 `MCP_PORT` 换端口跑。
