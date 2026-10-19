@@ -443,4 +443,14 @@ public enum DeliveryGate {
         return "输出画布 \(width)×\(height) 不可投放（\(why)；\(record.date)，平台原文：\(record.source)）。"
              + "请改用其它分辨率档位；若确需该尺寸，请选「不限（仅本地留档）」交付目标。"
     }
+
+    /// 时长闸的文案 —— **同样只住这一处**。三条导出腿（整方案配音、整方案普通、单分镜变体）
+    /// 都调它；上一版我在两个文件里各写了一遍同样的话，那正是本轮在修的"同一句话多处抄"。
+    public static func durationRejectionMessage(for spec: DeliverySpec, seconds: Double) -> String? {
+        guard case .rejected(let reason) = spec.verdict(durationSeconds: seconds) else { return nil }
+        let record = reason.evidence
+        return "成片时长 \(String(format: "%.1f", seconds))s 不可投放（\(reason.violationLabel)；"
+             + "\(record.date)，平台原文：\(record.source)）。"
+             + "若这只是本地留档，请把交付目标改成「不限（仅本地留档）」。"
+    }
 }

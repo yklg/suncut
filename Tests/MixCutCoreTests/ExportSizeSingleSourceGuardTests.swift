@@ -258,6 +258,43 @@ struct ExportViewReadoutGuardTests {
     }
 }
 
+// MARK: - ES-07 闸口措辞与三条腿
+
+@Suite("ES · 闸口措辞唯一住所与三条导出腿")
+struct DeliveryGateWordingGuardTests {
+
+    /// ⚠️ 这里**故意没有**"闸口措辞只许住 Core"那种文本扫描判据。
+    /// 试过，它是恒真的假牙：`codeOnly` 会剥字符串字面量，而"不可投放""平台原文"
+    /// 这类文案**永远活在字符串里** ⇒ "App 侧命中数为 0" 恒成立，
+    /// 而"Core 侧必须 ≥1"当场读出 0（2026-10-19 实测）。
+    /// 措辞的唯一住所由**类型**保证：App 侧只能 `throw ExportError.deliveryBlocked(blocked)`，
+    /// 拿到的是 Core 产出的字符串，没有构造权 ⇒ 想抄就得自己写一遍，而那条变异腿数的是标识符。
+    @Test("三条交付腿都必须调 durationRejectionMessage（少一条就是漏挂闸）")
+    func allDeliveryLegsCallTheDurationGate() {
+        let n = esCount(["DeliveryGate.durationRejectionMessage"], inFiles: esSwiftFiles(under: "MixCut"))
+        #expect(n >= 3,
+                "只有 \(n) 处调用时长闸，少于三条腿（整方案配音 / 整方案普通 / 单分镜变体）⇒ 有一条漏挂")
+    }
+
+    @Test("变异腿：摘掉其中一条腿的时长闸 ⇒ 计数守卫必须变红")
+    func droppingOneLegTurnsItRed() {
+        let rel = "MixCut/Services/Export/DubExportService.swift"
+        let src = esRead(rel)
+        let mutated = src.replacingOccurrences(
+            of: "DeliveryGate.durationRejectionMessage", with: "DurationGateRemovedForTest")
+        #expect(mutated != src, "变异没落地，对照作废")
+        // 在内存里逐文件计数：被改的那颗用改后文本，其余读磁盘
+        var total = 0
+        for file in esSwiftFiles(under: "MixCut") {
+            let text = file == rel ? mutated : esRead(file)
+            total += ExportSizeScan.count(in: TagRowHostScan.codeOnly(text),
+                                          "DeliveryGate.durationRejectionMessage")
+        }
+        #expect(total < 3,
+                "摘掉一条腿的闸之后计数仍是 \(total)，没跌破 3 ⇒ 那条守卫数的是别的东西")
+    }
+}
+
 // MARK: - ES-06 变异腿（证明判据有牙）
 
 @Suite("ES · 变异腿")

@@ -375,11 +375,9 @@ actor DubExportService {
             guard spec.fps > 0 else { return sum }
             return sum + max(0, Double(spec.endFrame - spec.startFrame) / spec.fps)
         }
-        if case .rejected(let reason) = config.deliveryTarget.spec.verdict(durationSeconds: totalSeconds) {
-            throw ExportError.deliveryBlocked(
-                "成片时长 \(String(format: "%.1f", totalSeconds))s 不可投放（\(reason.violationLabel)；"
-                + "\(reason.evidence.date)，平台原文：\(reason.evidence.source)）。"
-                + "若这只是本地留档，请把交付目标改成「不限（仅本地留档）」。")
+        if let blocked = DeliveryGate.durationRejectionMessage(for: config.deliveryTarget.spec,
+                                                               seconds: totalSeconds) {
+            throw ExportError.deliveryBlocked(blocked)
         }
 
         // 临时工作目录
@@ -436,6 +434,20 @@ actor DubExportService {
                                      sourceMaxWidth: videoWidth,
                                      sourceMaxHeight: videoHeight)
         let outW = canvas.width, outH = canvas.height
+
+        // 时长闸：这条腿是 `VariantBatchExportService` 的**变体**分支专用（实测仅此一个调用方），
+        // 变体含克隆配音＋BGM＋烧录字幕，是确定要投放的成片 ⇒ 与整方案导出同样硬拦。
+        // 同一条服务里的**原版**分支不走这里，因此不受这道闸 —— 那是刻意的：
+        // 原版很可能只是中间素材，拦它可能拦错（见 BatchExportSheet 的文案与台账 §六-2）。
+        let segSeconds = spec.fps > 0
+            ? max(0, Double(spec.endFrame - spec.startFrame) / spec.fps)
+            : 0
+        if segSeconds > 0,
+           let blocked = DeliveryGate.durationRejectionMessage(for: config.deliveryTarget.spec,
+                                                               seconds: segSeconds) {
+            throw ExportError.deliveryBlocked(blocked)
+        }
+
         let workDir = FileHelper.tempDirectory.appendingPathComponent("dubseg-\(UUID().uuidString)")
         let existedBefore = FileManager.default.fileExists(atPath: outputPath)
         try FileManager.default.createDirectory(at: workDir, withIntermediateDirectories: true)

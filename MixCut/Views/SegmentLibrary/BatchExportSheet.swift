@@ -202,6 +202,12 @@ struct BatchExportSheet: View {
                 Text("原版与变体都走 H.264 硬件编码（变体另加克隆配音+BGM混音+烧录新字幕）")
                     .font(DesignTokens.Typography.microRegular)
                     .foregroundStyle(.secondary)
+                // 两条腿的**规格校验范围不同**，必须写在屏上：不写的话，"选了 20 个却只导出 18 个"
+                // 那种无从察觉的坑会换个形式重演一次（这次是"原版全过了但传不上去"）。
+                Text("变体按交付目标校验画幅与时长，不合规格会被拦下；"
+                     + "原版按源片尺寸原样切出、**不做交付规格校验**（可能宽/高/时长不合平台要求）")
+                    .font(DesignTokens.Typography.microRegular)
+                    .foregroundStyle(.secondary)
             }
         }
     }

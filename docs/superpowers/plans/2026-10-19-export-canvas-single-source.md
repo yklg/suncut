@@ -256,7 +256,31 @@
    `MixCutAppTests/ExportDurationGateTests.swift` 第三条因此**故意不断言"1 秒能导成功"**，
    只断"不是被时长闸拦的" —— 否则这条判据会被一个无关故障绑住。
 
-## 七、改动文件（已分 9 笔提交，工作树干净、未推送）
+## 六-2 的处置结果（2026-10-19 晚，按推荐的「只拦变体」执行）
+
+分镜批量那条面板一次导「原版＋全部变体」**两种**东西，所以没有一把梭：
+
+- **变体腿已挂闸**：`exportSingleSegment`（实测仅此一个调用方 = `VariantBatchExportService`
+  的 `.variant` 分支）现在过尺寸闸（原有）＋时长闸（本轮加）。变体含克隆配音＋BGM＋烧录字幕，
+  是确定要投放的成片。
+- **原版腿仍不挂**，但**屏上写明了**：`BatchExportSheet` 新增一行
+  「变体按交付目标校验画幅与时长，不合规格会被拦下；原版按源片尺寸原样切出、
+  **不做交付规格校验**（可能宽/高/时长不合平台要求）」。
+  不写的话，"选了 20 个却只导出 18 个"那种无从察觉的坑会换个形式重演一次
+  —— 这次是"原版全导出来了但传不上去"。
+- 尺寸闸仍不覆盖原版腿（它走 `cutSegment`，无 scale）⇒ **漏口 #7 仍在**，
+  只是现在**在屏上可见**了。要收它仍受帧率归一那个代价约束（见上）。
+
+### 一处我写了又删的判据（恒真的假牙）
+
+试过加一条"闸口措辞（『不可投放』『平台原文』）只许住 Core、App 侧必须为 0"的文本扫描。
+**它是错的，已删**：`codeOnly` 会剥字符串字面量，而文案永远活在字符串里
+⇒ "App 侧为 0" 恒成立，"Core 侧 ≥1" 当场读出 0。
+措辞的唯一住所由**类型**保证：App 侧只能 `throw ExportError.deliveryBlocked(blocked)`，
+拿到的是 Core 产出的字符串，没有构造权。留下的有效守卫是"三条腿都调
+`DeliveryGate.durationRejectionMessage`"（代码位标识符，`codeOnly` 保留）＋ 一条摘腿变异腿。
+
+## 七、改动文件（已分 11 笔提交，工作树干净、未推送）
 
 - 新增：`Sources/MixCutCore/DeliverySpec.swift`、`Tests/MixCutCoreTests/DeliverySpecTests.swift`、
   `Tests/MixCutCoreTests/ExportSizeSingleSourceGuardTests.swift`、`MixCutAppTests/ExportCanvasReadbackTests.swift`、
