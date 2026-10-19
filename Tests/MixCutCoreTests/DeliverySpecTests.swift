@@ -137,7 +137,11 @@ struct DeliverySpecJudgingTests {
         // 126×224 是刻意挑的：它**精确 9:16**、宽得离谱、名册里没有 ——
         // 用来证明"比例规则"不会顺手把没测过的小尺寸一起拦掉（规则只管比例，宽度下限仍未立）。
         // 注：900×1600 与 1080×1620 已从本表移出，2026-10-19 五格对照给了它们确定读数。
-        for (w, h) in [(720, 1280), (2160, 3840), (126, 224), (1440, 2560)] {
+        // 2160×3840 也已移出 —— 面板原文有**上限** 1440*2560，4K 是越界不是未核验（见 DS-04c）。
+        // 126×224 也已移出：它精确 9:16 但宽度远低于 720，按平台先后次序会被区间规则拦掉，
+        // 属于"已证越界"不是"未核验"。这里只留**两条规则都合、却没被任何记录覆盖**的尺寸
+        // （宽须被 9 整除才是精确 9:16：729×16=11664=1296×9、1179×16=18864=2096×9）。
+        for (w, h) in [(720, 1280), (729, 1296), (1179, 2096), (1440, 2560)] {
             #expect(DeliverySpec.qianchuanVertical.judge(width: w, height: h) == .unproven,
                     "\(w)×\(h) 没有任何一手记录覆盖")
             #expect(DeliveryGate.rejectionMessage(for: .qianchuanVertical, width: w, height: h) == nil,
@@ -197,6 +201,49 @@ struct AspectRuleTests {
         #expect(DeliverySpec.qianchuanVertical.judge(width: 900, height: 1600) == .ok)
     }
 
+    /// 平台原文（用户 2026-10-19 截自「上传视频」面板）：
+    /// 「竖版视频：宽高比9:16，视频码率≥516kbps，大小≤1000M，**720*1280≤分辨率≤1440*2560**，4s≤时长≤300s」
+    /// 与同批实传逐格对表一致：486×864 与 480×854 报「（宽度）」被拒、900×1600 放行。
+    @Test("分辨率**上限**是这张规则表里新的一半：4K 走 .original 会超上限被拒")
+    func resolutionRangeHasACeilingToo() {
+        guard let range = DeliverySpec.qianchuanVertical.resolutionRange else {
+            Issue.record("千川目标没带分辨率区间 —— 上限那条又没人守了"); return
+        }
+        #expect(range.contains(width: 1080, height: 1920))
+        #expect(range.contains(width: 720, height: 1280), "下限应当含边界")
+        #expect(range.contains(width: 1440, height: 2560), "上限应当含边界")
+        // 素材库里实有 10 颗 2160×3840；.original 是面板默认档 ⇒ 这颗以前无人拦
+        #expect(!range.contains(width: 2160, height: 3840))
+        guard case .rejected(.outsideProvenResolutionRange) = DeliverySpec.qianchuanVertical
+                .judge(width: 2160, height: 3840) else {
+            Issue.record("2160×3840 精确 9:16 但超上限，必须被区间规则拦下"); return
+        }
+    }
+
+    @Test("次序要照平台自己的先后来：宽度与比例都不合时，报的是区间（D 格实测如此）")
+    func rangeIsCheckedBeforeRatio() {
+        // 400×711 既不在区间内、也不是精确 9:16，且**不在名册里**
+        // —— 用一颗没传过的，才证明是规则在按次序判，而不是名册先命中。
+        #expect(400 * 16 != 711 * 9, "这颗必须两条都不合，否则本测试什么都没测")
+        let verdict = DeliverySpec.qianchuanVertical.judge(width: 400, height: 711)
+        guard case .rejected(let reason) = verdict else {
+            Issue.record("400×711 该被拦，实得 \(verdict)"); return
+        }
+        #expect(reason == .outsideProvenResolutionRange(DeliverySpec.qianchuanVertical.resolutionRange!),
+                "平台对 480×854 报的是「（宽度）」，所以区间要先于比例：\(reason)")
+    }
+
+    @Test("区间规则也必须带一手证据，且不许凭空存在")
+    func rangeCarriesEvidenceAndIsTargetScoped() {
+        guard let range = DeliverySpec.qianchuanVertical.resolutionRange else {
+            Issue.record("千川目标缺区间规则"); return
+        }
+        #expect(range.evidence.source.contains("720*1280"), "要引面板原文：\(range.evidence.source)")
+        #expect(range.evidence.date == "2026-10-19")
+        #expect(DeliverySpec.unrestricted.resolutionRange == nil,
+                "「不限」目标不该带任何区间")
+    }
+
     @Test("规则不许无证据存在：每条 AspectRule 都要有非空来源与日期")
     func everyRuleCarriesEvidence() {
         for rule in AspectRule.allCases {
@@ -208,6 +255,7 @@ struct AspectRuleTests {
             }
         }
         #expect(!DeliverySpec.qianchuanVertical.aspectRules.isEmpty, "千川目标必须带着已证规则")
+        #expect(DeliverySpec.qianchuanVertical.resolutionRange != nil, "千川目标必须带着已证区间")
     }
 
     @Test("规则只属于所选目标：「不限」下 1080×1620 仍是未核验，不是被拦")

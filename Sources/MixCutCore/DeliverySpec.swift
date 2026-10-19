@@ -132,6 +132,34 @@ public struct PlatformVerdictRecord: Sendable, Equatable {
     }
 }
 
+/// 平台对**分辨率绝对值**的区间约束 —— 与 `AspectRule`（只管比例）是两条独立校验。
+///
+/// 为什么必须单独存在（2026-10-19）：千川上传面板原文写的是
+/// 「720*1280 ≤ 分辨率 ≤ **1440*2560**」—— **有上限**。而 `.original` 是导出面板的默认档、
+/// 素材库里现成有 10 颗 2160×3840，走默认档就会**超上限被拒**。
+/// 那颗比这次的 480 更隐蔽：用户什么都没选错，素材好反而坏事。
+public struct ResolutionRange: Sendable, Equatable {
+    public let width: ClosedRange<Int>
+    public let height: ClosedRange<Int>
+    /// 立这条区间所依据的一手记录。无证据的区间不许存在。
+    public let evidence: PlatformVerdictRecord
+
+    public init(width: ClosedRange<Int>, height: ClosedRange<Int>, evidence: PlatformVerdictRecord) {
+        self.width = width
+        self.height = height
+        self.evidence = evidence
+    }
+
+    public func contains(width: Int, height: Int) -> Bool {
+        self.width.contains(width) && self.height.contains(height)
+    }
+
+    /// 越界时该报「宽度」还是「比例」不是随便定的：
+    /// D 格 `480×854` 宽度与比例**两条都不合**，平台红字报的是「（宽度）」
+    /// ⇒ 平台先查分辨率区间。`judge` 按同一先后来排，好让文案与平台对得上。
+    public var label: String { "分辨率须落在 \(width.lowerBound)×\(height.lowerBound) ~ \(width.upperBound)×\(height.upperBound) 之间" }
+}
+
 /// 一条**已被一手证据证明**的画幅规则。
 ///
 /// 为什么需要它（而不是只靠逐尺寸名册）：逐尺寸名册只能拦住"我们恰好传过的那个尺寸"，
@@ -177,11 +205,13 @@ public enum AspectRule: String, Sendable, CaseIterable, Equatable {
 /// "这个尺寸没传过但违反了某条已证规则"是两种强度不同的知识，报错时必须分开说。
 public enum RejectionReason: Sendable, Equatable {
     case thisSizeProvenRejected(PlatformVerdictRecord)
+    case outsideProvenResolutionRange(ResolutionRange)
     case violatesProvenRule(rule: AspectRule, evidence: PlatformVerdictRecord)
 
     public var evidence: PlatformVerdictRecord {
         switch self {
         case .thisSizeProvenRejected(let record): return record
+        case .outsideProvenResolutionRange(let range): return range.evidence
         case .violatesProvenRule(_, let evidence): return evidence
         }
     }
@@ -198,32 +228,43 @@ public enum Deliverability: Sendable, Equatable {
 
 /// 交付目标：产物要交给谁、对方已经证明接受/拒绝过哪些尺寸、以及已证的画幅规则。
 ///
-/// ⚠️ **宽度下限仍未写进来**。2026-10-19 的五格对照只把它夹到 **(486, 900]**：
-/// `486×864`（精确 9:16）被拒、`900×1600` 放行。中间那一格 `720×1280` 是**决定性的**，
-/// 因为 720p 是导出面板上现成的一个档位 —— 它过不了就说明那一档得下架。
-/// 在 F 格读数回来之前，这里不许出现任何 `minWidth`。
-/// 同批被证伪的是「标准分辨率白名单」假设：`900×1600` 不是任何标准档却过了。
+/// 分辨率区间**已立**（720…1440 宽 / 1280…2560 高），依据是用户 2026-10-19 截自
+/// 千川「上传视频」面板的原文：「竖版视频：宽高比9:16，视频码率≥516kbps，大小≤1000M，
+/// **720\*1280≤分辨率≤1440\*2560**，4s≤时长≤300s」。它与同批实传逐格对表一致
+/// （486×864 与 480×854 报「（宽度）」被拒、900×1600 放行），故不再是推断。
+///
+/// ⚠️ 面板原文还有**本文件此前完全没建模的一半：上限**。素材库里实有 10 颗 2160×3840，
+/// 而 `.original` 是默认档 —— 4K 批次走默认档会**超上限被拒**，比 480 那次更隐蔽（用户没选错）。
+///
+/// **仍未立为规则**的是面板原文里的另外三条：码率 ≥516kbps、大小 ≤1000M、**时长 4s…300s**。
+/// 前两条我们的产物远远超标，不值得拦；**时长那条是真隐患** ——
+/// `BatchSegmentExportService` 导的是单个分镜，而 `SegmentSplitRule.minimumSliceSeconds` 只有
+/// 0.3 秒，一条短分镜导出来就是 3 秒不到的片子，平台会按"时长"拒。本轮不擅自扩范围，记在台账 §六。
 public struct DeliverySpec: Sendable, Equatable {
     public let name: String
     public let provenAccepted: [PlatformVerdictRecord]
     public let provenRejected: [PlatformVerdictRecord]
     public let aspectRules: [AspectRule]
+    public let resolutionRange: ResolutionRange?
 
     public init(name: String,
                 provenAccepted: [PlatformVerdictRecord],
                 provenRejected: [PlatformVerdictRecord],
-                aspectRules: [AspectRule] = []) {
+                aspectRules: [AspectRule] = [],
+                resolutionRange: ResolutionRange? = nil) {
         self.name = name
         self.provenAccepted = provenAccepted
         self.provenRejected = provenRejected
         self.aspectRules = aspectRules
+        self.resolutionRange = resolutionRange
     }
 
     /// 巨量千川 · 竖屏投放。
     ///
     /// 注：用户同日实传还放行过 2160×3840，但那是"源素材都能上传成功"这句口述
     /// 减去几条例外后的**推论**，没有逐条对着平台读数核过，因此不进 `provenAccepted`。
-    /// 720×1280 同样仍是推论 —— 它是 F 格要证的那一颗（见类型文档注释）。
+    /// 720×1280 仍在名册外：它是面板原文的**下边界**，区间与比例两条规则都放行，
+    /// 所以 `judge` 给它 `.unproven`（不是"不合格"，是"没亲手传过"）。
     public static let qianchuanVertical = DeliverySpec(
         name: "巨量千川 · 竖屏投放",
         provenAccepted: [
@@ -254,7 +295,14 @@ public struct DeliverySpec: Sendable, Equatable {
                 source: "千川「上传视频」面板红字：素材尺寸（宽度）不符合规范（五格对照 B 格；它是**精确 9:16**，所以拒它的是宽度那条校验，不是比例）",
                 date: "2026-10-19")
         ],
-        aspectRules: [.exactNineSixteen])
+        aspectRules: [.exactNineSixteen],
+        resolutionRange: ResolutionRange(
+            width: 720...1440,
+            height: 1280...2560,
+            evidence: PlatformVerdictRecord(
+                width: 720, height: 1280,
+                source: "千川「上传视频」面板原文「竖版视频：宽高比9:16，视频码率≥516kbps，大小≤1000M，720*1280≤分辨率≤1440*2560，4s≤时长≤300s」；并与同批实传对表：486×864 与 480×854 报「（宽度）」被拒、900×1600 放行",
+                date: "2026-10-19")))
 
     /// 不限：本地留档用，不承诺可投放。证据表与规则全空 ⇒ `judge` 恒返回 `.unproven`。
     public static let unrestricted = DeliverySpec(name: "不限（仅本地留档）",
@@ -274,8 +322,12 @@ public struct DeliverySpec: Sendable, Equatable {
         if let hit = provenRejected.first(where: { $0.width == width && $0.height == height }) {
             return .rejected(reason: .thisSizeProvenRejected(hit))
         }
-        // 规则查在 provenAccepted 之前：名册只能拦住"恰好传过的那几个尺寸"，
+        // 次序照平台自己的先后（见 ResolutionRange 注释）：先分辨率区间，再画幅比例。
+        // 两者都查在 provenAccepted 之前：名册只能拦住"恰好传过的那几个尺寸"，
         // 而 .original 档透出的尺寸是连续的 —— 靠规则才拦得住没登记过的那一类。
+        if let range = resolutionRange, !range.contains(width: width, height: height) {
+            return .rejected(reason: .outsideProvenResolutionRange(range))
+        }
         for rule in aspectRules where !rule.isSatisfied(width: width, height: height) {
             return .rejected(reason: .violatesProvenRule(rule: rule, evidence: rule.evidence))
         }
@@ -329,6 +381,8 @@ public enum DeliveryGate {
         switch reason {
         case .thisSizeProvenRejected:
             why = "该尺寸已被实传证明拒收"
+        case .outsideProvenResolutionRange(let range):
+            why = "违反已证平台规则：\(range.label)"
         case .violatesProvenRule(let rule, _):
             why = "违反已证平台规则：\(rule.label)"
         }
