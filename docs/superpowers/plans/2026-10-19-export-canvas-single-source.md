@@ -80,7 +80,7 @@
 | `scripts/check_app_build.sh` | PASS（xcodebuild 全工程，258 编译单元） |
 | `scripts/check_pbx_registration.py` | PASS（含新登记的 `DeliverySpec.swift`） |
 | `scripts/check_project_integrity.sh` | PASS（含"测试文件未泄进 App target"一项） |
-| App 测试腿 `xcodebuild -only-testing:MixCutAppTests test` | **TEST SUCCEEDED，11 passed / 0 failed × 连续 3 次**（套件加 `.serialized` 之后；加之前 7 次跑红 3 次，见 §四 末） |
+| App 测试腿 `xcodebuild -only-testing:MixCutAppTests test` | **TEST SUCCEEDED，15 passed / 0 failed**（ES-I 组 `.serialized` 后连绿 3 次 11/0，加 MCP 解析 4 条后 15/0；加 `.serialized` 前 7 次跑红 3 次，见 §四 末） |
 | 其余 9 支 `check_*_guards.sh` | 全 PASS |
 | `check_mcp_api_guards.sh` | **未跑完** —— 见 §六 |
 
@@ -132,6 +132,8 @@
 | 导出前硬拦"已证拒收"画布 | 目前只可能命中 `.original` 透出 480×960 / 704×1248 这类源 |
 | `concat(resolution:)` 由可选改必填 | 内部 API，2 个调用方已同批改 |
 | `ShotCompositionService.compose` 默认参数移除 | 1 个调用方（`ShotEditViewModel.swift:535`）已同批改 |
+| MCP `export_scheme` 结果 JSON 的 `exported` 由 `[路径]` 变成 `[{path,canvas,delivery_target}]` | 形状变更。实测无消费方（`mcp_api_guards.py` 不读它、`AgentToolCatalogTests` 只断 required 两键），但**外部 agent 若已按旧形状解析会断** |
+| MCP `export_scheme` 新增可选入参 `delivery_target` | 不传即千川。未知值硬报错（不静默回退）⇒ 传过拼错值的调用方会从"静默按默认跑"变成"报错" |
 
 ## 六、还欠什么
 
@@ -140,6 +142,11 @@
    使任何一格的红都归不到码率上）：`1080×1920`（阳性对照）/`486×864`（精确 9:16 但窄）/
    `1080×1620`（宽但画幅错）/`480×854`（已知红对照，意外过即台架坏了）/**`900×1600`**
    （精确 9:16、宽度达标、但非标准档 —— 专杀"白名单"假设）。需用户在其账号上逐条真传，测完即删。
+   **2026-10-19 18:4x 更新：五格小样已生成并逐格 ffprobe 反查通过**（SAR 全 `1:1`、时长 15.000s、
+   30fps、yuv420p、**均含音频轨**、码率 6.19~6.22 Mbps），落在
+   `~/千川判据取证-2026-10-19/`，同目录 `README.md` 带读数表与判读规则。
+   B/E 两格的精确 9:16 已手算复核：486×16=7776=864×9；900×16=14400=1600×9。
+   **仍等用户真传** —— 这一步我不能替。
 2. **`VariantBatchExportService.swift:136` 的 `.original` 腿**仍不带 scale 出交付目录（漏口 #7）。
    〔**本条初稿的两处错记，2026-10-19 实测后改**〕
    - 我写过「改重编码会让分镜批量导出**明显变慢**，因为从流复制变重编码」—— **前提就是错的**：
@@ -147,6 +154,12 @@
      要加的只是 scale/pad 滤镜。实测增量（同一条 20s 源、各跑两遍、产物均 ffprobe 反查为 1080×1920/600 帧）：
      `trim+videotoolbox` 3.84s、4.57s → 加 scale 后 4.76s、5.29s ⇒ **约 +18~23%**，不是数量级变化。
      （口径注：该源本就是 1080×1920，scale 近似空转，量到的是滤镜图开销；720→1080 上采会略高。）
+   - **新发现（2026-10-19 18:4x），它改变了推荐结论**：路线 (b)「改走 `exportSingleSegment`」
+     会顺带吃进 `renderSegment` 滤镜链尾的 `fps=\(fpsInt)` 归一化，而 `cutSegment` **不设帧率**。
+     对 25fps 素材（素材库里 `爆点2/…309.mp4` 就是 25/1）这意味着**帧复制** ——
+     比 +18~23% 的码率代价实质得多，且我原先没记。⇒ **(b) 不再按"推荐"交付**，
+     要么先给 `renderSegment` 加"帧率原样透传"的形态，要么改走 (a)（必填 canvas，
+     代价是 3 条中间片各吃一次空转 scale）。**已停下来等拍，未擅自选。**
    - 我写过这条腿"调用方 1 处"—— 也错。`cutSegment` 实测有 **4 个调用方**：
      `ShotVariantService.swift:69`、`ShotCompositionService.swift:60`、`VariantBatchExportService.swift:136`、
      `BatchSegmentExportService.swift:82`。其中 3 个切的是**中间片**（分镜变体、合成输入），不是交付件。
@@ -159,8 +172,18 @@
          而该标志语义是"人声已锁定"，**借来当"别遮挡"用是语义误用，将来会咬人**，
          做 (b) 就得先把"不遮挡"表达成显式参数而不是搭这个便车。
      推荐 (b) ＋ 顺带把遮挡开关显式化；(a) 是更便宜但把成本摊到三条中间片上的做法。
-3. **MCP `export_scheme`** 仍靠默认 `.original`（`MCPToolHandlers.swift:574` 不传 config）；
-   改它要连 `AgentToolCatalog` 的 inputSchema 与 `scripts/mcp_api_guards.py` 一起动。
+3. **MCP `export_scheme` 已落（2026-10-19 18:5x）**：新增可选入参 `delivery_target`
+   （`enum: qianchuanVertical | unrestricted`，省略＝千川），handler 显式解析并带进 `ExportConfig`，
+   结果 JSON 的 `exported` 每条回报 `canvas` 与 `delivery_target`。
+   **未知值一律抛 `INVALID_ARGUMENT` 并列出可选项，不静默退回缺省** —— 静默回退就是无声分叉。
+   判据 4 条见 `MixCutAppTests/ExportDeliveryTargetParsingTests.swift`，其中一条把
+   "schema 里的 enum 必须逐字等于 `allCases`"钉住，防 schema 与解析两头漂。
+   〔我原先写「改它要连 `scripts/mcp_api_guards.py` 一起动」—— **实测不需要**：
+   `_dummy()` 只喂 required 字段（`delivery_target` 是可选），API-09 也只核 `completed ⇒ result 非空`，
+   没有任何腿读 `exported` 的形状。守卫一行未改，11 支全 PASS。〕
+   **仍欠**：MCP 这条路的 `resolution` 档位仍是默认 `.original`（要等 §六-2 的帧率问题与
+   「`.original` 在投放目标下不可选」一起定）；且 `check_mcp_api_guards.sh` 本轮**未跑**
+   （8787 被用户的 SunCut 持有，它会启动第二个实例并快照/还原用户偏好）。
 4. **面板：选择器与回显已落，持久化未做，屏上未实机看过。**
    「交付目标」Picker ＋ `ExportView.canvasReadout` 实时回显已加（编译与判据都过）。
    两件事仍欠：

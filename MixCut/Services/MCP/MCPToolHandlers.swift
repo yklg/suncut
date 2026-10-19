@@ -533,6 +533,23 @@ final class MCPToolHandlers {
     private struct ExportSchemeArgs: Decodable {
         let scheme_ids: [String]
         let output_dir: String
+        /// 交付目标。可选，省略＝千川竖屏投放。
+        let delivery_target: String?
+    }
+
+    /// 解析 `delivery_target`。**未知值一律报错，不静默退回缺省** ——
+    /// 静默回退等于"你以为按千川闸着，实际按另一张表闸了"，正是本次事故那类无声分叉
+    /// （41 条 480 宽的成片导出时，没有任何一处知道自己按的是什么口径）。
+    /// （internal 而非 private：App 测试目标要直接打这颗解析，见
+    /// `MixCutAppTests/ExportDeliveryTargetParsingTests`。）
+    nonisolated static func deliveryTarget(_ raw: String?) throws -> DeliveryTargetID {
+        guard let raw else { return .qianchuanVertical }
+        guard let parsed = DeliveryTargetID(rawValue: raw) else {
+            let options = DeliveryTargetID.allCases.map(\.rawValue).joined(separator: " / ")
+            throw ToolFailure(code: .invalidArgument,
+                              message: "delivery_target 取值非法：\(raw)。可选：\(options)")
+        }
+        return parsed
     }
 
     private func exportScheme(_ data: Data) throws -> Outcome {
@@ -544,6 +561,11 @@ final class MCPToolHandlers {
         if let problem = ExportDestination.validate(directory: outputURL) {
             throw ToolFailure(code: .invalidArgument, message: problem)
         }
+        // 无人值守入口的交付目标：显式解析，缺省千川。原先这里连 config 都不传，
+        // 直接吃 ExportConfig() 的默认档 —— 等于 MCP 这条路完全没有交付口径。
+        let target = try Self.deliveryTarget(args.delivery_target)
+        var config = ExportConfig()
+        config.deliveryTarget = target
         // 先在 MainActor 上校验并提取全部导出任务（SwiftData 模型不能进后台）
         var tasks: [(input: ExportInput, outputPath: String, name: String)] = []
         var projectID: UUID?
@@ -565,14 +587,23 @@ final class MCPToolHandlers {
         let job = jobs.begin(kind: .exportScheme, projectID: projectID)
         let registry = jobs
         let exportTasks = tasks
+        let exportConfig = config
         Task { @MainActor in
-            var exported: [String] = []
+            var exported: [[String: String]] = []
             var failures: [[String: String]] = []
             for task in exportTasks {
                 do {
                     let service = ExportService()
-                    try await service.export(input: task.input, outputPath: task.outputPath)
-                    exported.append(task.outputPath)
+                    try await service.export(input: task.input, outputPath: task.outputPath,
+                                             config: exportConfig)
+                    // 报画布：`ExportService.performExport` 已经断言过"落盘画布 == 计划画布"
+                    // （不符即抛错、走不到这里），所以这里的计划值就是实测值，不必再探一次文件。
+                    let canvas = DeliveryCanvas.size(tier: exportConfig.resolution,
+                                                     sourceMaxWidth: task.input.maxWidth,
+                                                     sourceMaxHeight: task.input.maxHeight)
+                    exported.append(["path": task.outputPath,
+                                     "canvas": "\(canvas.width)x\(canvas.height)",
+                                     "delivery_target": target.rawValue])
                 } catch {
                     failures.append(["scheme": task.name, "reason": FriendlyError.reason(for: error)])
                 }

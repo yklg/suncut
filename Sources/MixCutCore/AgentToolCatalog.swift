@@ -121,7 +121,7 @@ public enum AgentToolCatalog {
         MCPToolDefinition(
             name: "export_scheme",
             description: "把方案导出为成片 mp4（原声导出，默认 H.264 硬件加速，命名规则与 UI 批量导出一致）。返回 job_id，用 get_job 轮询",
-            inputSchemaJSON: #"{"type":"object","properties":{"scheme_ids":{"type":"array","items":{"type":"string"},"description":"要导出的方案 UUID 数组，串行导出"},"output_dir":{"type":"string","description":"输出目录绝对路径，必须已存在且可写"}},"required":["scheme_ids","output_dir"]}"#,
+            inputSchemaJSON: #"{"type":"object","properties":{"scheme_ids":{"type":"array","items":{"type":"string"},"description":"要导出的方案 UUID 数组，串行导出"},"output_dir":{"type":"string","description":"输出目录绝对路径，必须已存在且可写"},"delivery_target":{"type":"string","enum":["qianchuanVertical","unrestricted"],"description":"交付目标，省略＝qianchuanVertical（巨量千川·竖屏投放）。它决定用哪张平台证据表闸这次导出；传未知值直接报错，不会静默退回缺省。unrestricted＝不限（仅本地留档，不承诺可投放）"}},"required":["scheme_ids","output_dir"]}"#,
             annotationsJSON: #"{"readOnlyHint":false,"destructiveHint":false}"#),
         MCPToolDefinition(
             name: "delete_project",
