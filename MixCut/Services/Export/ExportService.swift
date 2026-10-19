@@ -218,6 +218,16 @@ actor ExportService {
         }
         let resolution = canvas.filterString
 
+        // 时长闸：面板原文第四条校验「4s≤时长≤300s」。整方案导出确定是交付件，所以硬拦。
+        // 与尺寸闸分开判，因为没有证据说明平台先查哪一条（见 DeliverySpec.verdict 的注释）。
+        let totalSeconds = segmentInfos.reduce(0.0) { $0 + max(0, $1.end - $1.start) }
+        if case .rejected(let reason) = config.deliveryTarget.spec.verdict(durationSeconds: totalSeconds) {
+            throw ExportError.deliveryBlocked(
+                "成片时长 \(String(format: "%.1f", totalSeconds))s 不可投放（\(reason.violationLabel)；"
+                + "\(reason.evidence.date)，平台原文：\(reason.evidence.source)）。"
+                + "若这只是本地留档，请把交付目标改成「不限（仅本地留档）」。")
+        }
+
         onProgress?(ExportProgress(
             phase: .encoding,
             progress: 0.05,

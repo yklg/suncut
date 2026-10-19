@@ -280,6 +280,7 @@
 		FF77AA88BB99CC0011DD22EE /* RewriteResultMapper.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF77AA88BB99CC0011DD22EF /* RewriteResultMapper.swift */; };
 7D0000000000000000000000 /* ExportCanvasReadbackTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7A0000000000000000000001 /* ExportCanvasReadbackTests.swift */; };
 7B0000000000000000000001 /* ExportDeliveryTargetParsingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7C0000000000000000000001 /* ExportDeliveryTargetParsingTests.swift */; };
+7D0000000000000000000001 /* ExportDurationGateTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7A0000000000000000000002 /* ExportDurationGateTests.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -569,6 +570,7 @@
 		FFC59912B0CFE892506831DB /* ShotEditRules.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = ShotEditRules.swift; path = Sources/MixCutCore/ShotEditRules.swift; sourceTree = "<group>"; };
 7A0000000000000000000001 /* ExportCanvasReadbackTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExportCanvasReadbackTests.swift; sourceTree = "<group>"; };
 7C0000000000000000000001 /* ExportDeliveryTargetParsingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExportDeliveryTargetParsingTests.swift; sourceTree = "<group>"; };
+7A0000000000000000000002 /* ExportDurationGateTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExportDurationGateTests.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -755,6 +757,7 @@
 		7C0000000000000000000000 /* MixCutAppTests */ = {
 			isa = PBXGroup;
 			children = (
+				7A0000000000000000000002 /* ExportDurationGateTests.swift */,
 				7C0000000000000000000001 /* ExportDeliveryTargetParsingTests.swift */,
 				7A0000000000000000000001 /* ExportCanvasReadbackTests.swift */,
 				7B0000000000000000000000 /* VoiceCloneServiceTests.swift */,
@@ -1551,6 +1554,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				7D0000000000000000000001 /* ExportDurationGateTests.swift in Sources */,
 				7B0000000000000000000001 /* ExportDeliveryTargetParsingTests.swift in Sources */,
 				7D0000000000000000000000 /* ExportCanvasReadbackTests.swift in Sources */,
 				7A0000000000000000000000 /* VoiceCloneServiceTests.swift in Sources */,

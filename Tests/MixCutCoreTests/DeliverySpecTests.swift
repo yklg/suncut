@@ -291,6 +291,63 @@ struct AspectRuleTests {
     }
 }
 
+// MARK: - DS-04c 时长区间（面板原文第四条校验）
+
+@Suite("DS · 时长区间")
+struct DurationRangeTests {
+
+    @Test("上下边界含端点；越界的两侧各判一次拒", arguments: [
+        // (秒, 期望是否放行)
+        (0.3, false), (3.9, false), (4.0, true), (60.0, true),
+        (300.0, true), (300.1, false), (3600.0, false),
+    ])
+    func boundaries(seconds: Double, expectOK: Bool) {
+        let v = DeliverySpec.qianchuanVertical.verdict(durationSeconds: seconds)
+        if expectOK {
+            #expect(v == .ok, "\(seconds)s 在 4~300s 内，却判 \(v)")
+        } else {
+            guard case .rejected(.outsideProvenDurationRange) = v else {
+                Issue.record("\(seconds)s 越界，却没被区间规则拦住（实得 \(v)）"); return
+            }
+        }
+    }
+
+    @Test("那颗真实越界产物：3.066667s 必须判拒，且文案指得到「时长」")
+    func realOffendingArtifactIsCaught() {
+        let v = DeliverySpec.qianchuanVertical.verdict(durationSeconds: 3.066667)
+        guard case .rejected(let reason) = v else {
+            Issue.record("实测 3.066667s 的产物未被拦（实得 \(v)）"); return
+        }
+        #expect(reason.violationLabel.contains("时长"), "文案要说是时长：\(reason.violationLabel)")
+        #expect(reason.evidence.date == "2026-10-19")
+    }
+
+    @Test("时长规则也必须带一手原文，且「会拒」那一半不许冒充实测")
+    func durationEvidenceIsHonest() {
+        guard let range = DeliverySpec.qianchuanVertical.durationRange else {
+            Issue.record("千川目标缺时长区间"); return
+        }
+        #expect(range.evidenceSource.contains("4s≤时长≤300s"), "要引面板原文：\(range.evidenceSource)")
+        // 那颗 3.07s 文件只证了"存在越界产物"，没证"平台会拒"—— 注释必须自己承认这点
+        #expect(range.evidenceSource.contains("未被实传"),
+                "证据串要写清「会拒」是原文推定不是实测：\(range.evidenceSource)")
+        #expect(range.evidenceDate.count == 10)
+        #expect(DeliverySpec.unrestricted.durationRange == nil, "「不限」不该带时长区间")
+        #expect(DeliverySpec.unrestricted.verdict(durationSeconds: 0.3) == .unproven)
+    }
+
+    /// 时长与尺寸**故意不合成一个 judge**：没有证据说明平台先查哪一条。
+    @Test("时长与尺寸各自独立判定，不许假装知道谁先")
+    func durationAndSizeAreJudgedSeparately() {
+        // 一颗尺寸完全合规、时长越界的：尺寸判 ok，时长判拒
+        #expect(DeliverySpec.qianchuanVertical.judge(width: 1080, height: 1920) == .ok)
+        guard case .rejected(.outsideProvenDurationRange) =
+                DeliverySpec.qianchuanVertical.verdict(durationSeconds: 2.0) else {
+            Issue.record("尺寸合规但时长 2s 越界，该被时长规则单独拦住"); return
+        }
+    }
+}
+
 // MARK: - DS-04 证据表自身不许掺水
 
 @Suite("DS · 证据表完整性")

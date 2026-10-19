@@ -370,6 +370,18 @@ actor DubExportService {
                                      sourceMaxHeight: input.maxHeight)
         let outW = canvas.width, outH = canvas.height
 
+        // 时长闸（面板原文「4s≤时长≤300s」）：配音导出确定是交付件，硬拦。
+        let totalSeconds = input.segments.reduce(0.0) { sum, spec in
+            guard spec.fps > 0 else { return sum }
+            return sum + max(0, Double(spec.endFrame - spec.startFrame) / spec.fps)
+        }
+        if case .rejected(let reason) = config.deliveryTarget.spec.verdict(durationSeconds: totalSeconds) {
+            throw ExportError.deliveryBlocked(
+                "成片时长 \(String(format: "%.1f", totalSeconds))s 不可投放（\(reason.violationLabel)；"
+                + "\(reason.evidence.date)，平台原文：\(reason.evidence.source)）。"
+                + "若这只是本地留档，请把交付目标改成「不限（仅本地留档）」。")
+        }
+
         // 临时工作目录
         let workDir = FileHelper.tempDirectory.appendingPathComponent("dubexport-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: workDir, withIntermediateDirectories: true)

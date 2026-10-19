@@ -160,6 +160,34 @@ public struct ResolutionRange: Sendable, Equatable {
     public var label: String { "分辨率须落在 \(width.lowerBound)×\(height.lowerBound) ~ \(width.upperBound)×\(height.upperBound) 之间" }
 }
 
+/// 平台对**时长**的区间约束 —— 面板原文四条校验里的第三条，与尺寸那两条同样独立。
+///
+/// 为什么单独一类而不是塞进 `ResolutionRange`：时长不能靠重缩放修 —— 尺寸不合规可以重新
+/// 缩放，时长不够**只能改内容**（补定格）或者不导。所以它的"被拦"意味着完全不同的下一步。
+///
+/// 证据分两半，强度也不同：区间本身来自面板原文（一手，用户 2026-10-19 截屏）；
+/// 而"确实有产物落在区间外"由一颗真实文件坐实 —— 但它**只证了越界存在，没证平台会拒**
+/// （那颗没被实传过）。所以这条规则的"会拒"半边是原文推定，不是实测。
+public struct DurationRange: Sendable, Equatable {
+    public let seconds: ClosedRange<Double>
+    public let evidenceSource: String
+    public let evidenceDate: String
+
+    public init(seconds: ClosedRange<Double>, evidenceSource: String, evidenceDate: String) {
+        self.seconds = seconds
+        self.evidenceSource = evidenceSource
+        self.evidenceDate = evidenceDate
+    }
+
+    public func contains(_ seconds: Double) -> Bool { self.seconds.contains(seconds) }
+
+    public var label: String {
+        let lo = seconds.lowerBound, hi = seconds.upperBound
+        func fmt(_ v: Double) -> String { v == v.rounded() ? "\(Int(v))" : String(format: "%.1f", v) }
+        return "时长须落在 \(fmt(lo))s ~ \(fmt(hi))s 之间"
+    }
+}
+
 /// 一条**已被一手证据证明**的画幅规则。
 ///
 /// 为什么需要它（而不是只靠逐尺寸名册）：逐尺寸名册只能拦住"我们恰好传过的那个尺寸"，
@@ -206,12 +234,28 @@ public enum AspectRule: String, Sendable, CaseIterable, Equatable {
 public enum RejectionReason: Sendable, Equatable {
     case thisSizeProvenRejected(PlatformVerdictRecord)
     case outsideProvenResolutionRange(ResolutionRange)
+    case outsideProvenDurationRange(DurationRange)
     case violatesProvenRule(rule: AspectRule, evidence: PlatformVerdictRecord)
+
+    /// 违反的是什么 —— **措辞的唯一住所**。两条导出腿与 rejectionMessage 都调它，
+    /// 免得同一句话各写一遍（那正是本次事故在修的东西）。
+    public var violationLabel: String {
+        switch self {
+        case .thisSizeProvenRejected: return "该尺寸已被实传证明拒收"
+        case .outsideProvenResolutionRange(let range): return "违反已证平台规则：\(range.label)"
+        case .outsideProvenDurationRange(let range): return "违反已证平台规则：\(range.label)"
+        case .violatesProvenRule(let rule, _): return "违反已证平台规则：\(rule.label)"
+        }
+    }
 
     public var evidence: PlatformVerdictRecord {
         switch self {
         case .thisSizeProvenRejected(let record): return record
         case .outsideProvenResolutionRange(let range): return range.evidence
+        case .outsideProvenDurationRange(let range):
+            // 时长证据没有尺寸，借 0×0 承载同一份原文与日期
+            return PlatformVerdictRecord(width: 0, height: 0,
+                                         source: range.evidenceSource, date: range.evidenceDate)
         case .violatesProvenRule(_, let evidence): return evidence
         }
     }
@@ -246,17 +290,20 @@ public struct DeliverySpec: Sendable, Equatable {
     public let provenRejected: [PlatformVerdictRecord]
     public let aspectRules: [AspectRule]
     public let resolutionRange: ResolutionRange?
+    public let durationRange: DurationRange?
 
     public init(name: String,
                 provenAccepted: [PlatformVerdictRecord],
                 provenRejected: [PlatformVerdictRecord],
                 aspectRules: [AspectRule] = [],
-                resolutionRange: ResolutionRange? = nil) {
+                resolutionRange: ResolutionRange? = nil,
+                durationRange: DurationRange? = nil) {
         self.name = name
         self.provenAccepted = provenAccepted
         self.provenRejected = provenRejected
         self.aspectRules = aspectRules
         self.resolutionRange = resolutionRange
+        self.durationRange = durationRange
     }
 
     /// 巨量千川 · 竖屏投放。
@@ -302,13 +349,19 @@ public struct DeliverySpec: Sendable, Equatable {
             evidence: PlatformVerdictRecord(
                 width: 720, height: 1280,
                 source: "千川「上传视频」面板原文「竖版视频：宽高比9:16，视频码率≥516kbps，大小≤1000M，720*1280≤分辨率≤1440*2560，4s≤时长≤300s」；并与同批实传对表：486×864 与 480×854 报「（宽度）」被拒、900×1600 放行",
-                date: "2026-10-19")))
+                date: "2026-10-19")),
+        durationRange: DurationRange(
+            seconds: 4...300,
+            evidenceSource: "千川「上传视频」面板原文「竖版视频：…4s≤时长≤300s」；另实测到一颗真实产物越界：~/Desktop/视频素材/1_视频库 (1).mp4 = 540×960 @ 3.066667s（宽与时长两条都不合，但它未被实传，所以「会拒」这一半是原文推定）",
+            evidenceDate: "2026-10-19"))
 
     /// 不限：本地留档用，不承诺可投放。证据表与规则全空 ⇒ `judge` 恒返回 `.unproven`。
     public static let unrestricted = DeliverySpec(name: "不限（仅本地留档）",
                                                   provenAccepted: [],
                                                   provenRejected: [],
-                                                  aspectRules: [])
+                                                  aspectRules: [],
+                                                  resolutionRange: nil,
+                                                  durationRange: nil)
 
     /// 未显式选定交付目标时的缺省目标。
     ///
@@ -316,6 +369,14 @@ public struct DeliverySpec: Sendable, Equatable {
     /// 面板的「交付目标」选择器已落地（`ExportView`），所以这一颗现在只服务
     /// 无人值守入口（MCP 的 `export_scheme` 目前仍不传 config，见台账 §六-3）。
     public static let fallback: DeliverySpec = .qianchuanVertical
+
+    /// 时长判定。**与尺寸判定分开，因为没有证据说明平台先查哪一个** ——
+    /// 合成一个 `judge` 就得凭空排一个先后次序，那是把猜测写进代码。
+    /// 已证的只有"宽度先于比例"（D 格 480×854 两条都不合却报「（宽度）」）。
+    public func verdict(durationSeconds: Double) -> Deliverability {
+        guard let range = durationRange else { return .unproven }
+        return range.contains(durationSeconds) ? .ok : .rejected(reason: .outsideProvenDurationRange(range))
+    }
 
     /// 只对**已证**的形状表态；表是空的时候什么都不拦（见类型文档注释里的理由）。
     public func judge(width: Int, height: Int) -> Deliverability {
@@ -377,15 +438,7 @@ public enum DeliveryGate {
     /// 拿猜测当事实；平台判据的三个假设还没分离（见 `DeliverySpec` 的文档注释）。
     public static func rejectionMessage(for spec: DeliverySpec, width: Int, height: Int) -> String? {
         guard case .rejected(let reason) = spec.judge(width: width, height: height) else { return nil }
-        let why: String
-        switch reason {
-        case .thisSizeProvenRejected:
-            why = "该尺寸已被实传证明拒收"
-        case .outsideProvenResolutionRange(let range):
-            why = "违反已证平台规则：\(range.label)"
-        case .violatesProvenRule(let rule, _):
-            why = "违反已证平台规则：\(rule.label)"
-        }
+        let why = reason.violationLabel
         let record = reason.evidence
         return "输出画布 \(width)×\(height) 不可投放（\(why)；\(record.date)，平台原文：\(record.source)）。"
              + "请改用其它分辨率档位；若确需该尺寸，请选「不限（仅本地留档）」交付目标。"

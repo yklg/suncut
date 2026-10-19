@@ -244,7 +244,19 @@
    同批原文里的「码率 ≥516kbps」与「大小 ≤1000M」**不拟立**：产物实测 3.0~6.2 Mbps、
    21~52 MB，离边界两个数量级，立了只会多一条永远不会响的闸。
 
-## 七、改动文件（已分 8 笔提交，工作树干净、未推送）
+9. **新发现一颗与本改动无关的既有缺陷：短时长方案在包内 ffmpeg 上直接导不出来。**
+   一手证据（2026-10-19，`ExportService.export` 真跑，输入 1 秒）：
+   包内 ffmpeg 8.1 以 **`rc=234`** 失败，stderr 是
+   `Error submitting audio frame to the encoder` / `Error encoding a frame: Invalid argument`
+   （aac 编码器），`Conversion failed!`。
+   **分界点未量出**：我试图在 shell 里复现 1.0/2.0/3.0/3.5/4.0 秒的边界，**五个全都失败**
+   —— 说明我那条复现命令与产品链路不同形，读数无效；只有"1 秒经产品路径必失败"这一条成立。
+   与时长闸无关（闸在它之前就放行了），但**它和时长闸管的是同一类东西：短分镜**。
+   要修得先按产品链路重取分界，属独立一轮，本轮不动。
+   `MixCutAppTests/ExportDurationGateTests.swift` 第三条因此**故意不断言"1 秒能导成功"**，
+   只断"不是被时长闸拦的" —— 否则这条判据会被一个无关故障绑住。
+
+## 七、改动文件（已分 9 笔提交，工作树干净、未推送）
 
 - 新增：`Sources/MixCutCore/DeliverySpec.swift`、`Tests/MixCutCoreTests/DeliverySpecTests.swift`、
   `Tests/MixCutCoreTests/ExportSizeSingleSourceGuardTests.swift`、`MixCutAppTests/ExportCanvasReadbackTests.swift`、
