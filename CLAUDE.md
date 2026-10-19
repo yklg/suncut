@@ -183,6 +183,30 @@ AI 提示词模板存放在 `MixCut/Resources/Prompts/`，通过 `PromptLoader` 
 
 如果新增任何展示视频或视频缩略图的视图，**审查时必须验证比例是 9:16**，不是请立刻调整。已经存在的视图也应该按这个规则审计修正。
 
+## 导出产物的画幅与尺寸（必须遵守 ⚠️）
+
+上面那条只管**展示视图**，**导出侧此前一条约束都没有** —— 这个空洞在 2026-10-19 造成整批
+41 条成片被巨量千川以「素材尺寸（宽度）不符合规范」拒收，而导出链路全程零信号：尺寸规则抄了
+7 份、面板不显示实际输出尺寸、导出前后只回读 `start_time` 与 `duration`，**从不回读宽高**。
+
+因此：
+
+- **档位→画布的换算只许有一处**：`Sources/MixCutCore/DeliverySpec.swift` 的
+  `DeliveryCanvas.size(tier:sourceMaxWidth:sourceMaxHeight:)`。`MixCut/**` 里再出现
+  `width: 1080, height: 1920` / `"720:1280"` 这类画布字面量即判红，
+  由 `Tests/MixCutCoreTests/ExportSizeSingleSourceGuardTests.swift` 钉住（它只扫复合形态，
+  不扫裸数字 —— `ArrangeOrderSheet` 的 `minWidth: 720`、`ASRService` 的 `7200` 是既有正确代码）。
+- **尺寸常量必须住在 Core**：`MixCut/**` 不参与 SwiftPM 编译，写在 App 里的尺寸规则
+  **根本无法被 `swift test` 覆盖**。
+- **导出后必须回读宽高并与计划值比对**（`FFmpegRunner.probeCanvasSize`）。
+  不符就抛错并删掉本次自己创建的成品 —— 一个画布不对的 mp4 双击能正常播放、看着完全正常，
+  只有拿到平台才会被发现，那是最坏的失败方式。
+- **不许新增"整数上凑不出 9:16"的档位**：480 宽的精确 9:16 高是 853.33，所以旧 480p 档
+  写死的 (480, 854) 结构性地永远不合规，已整档删除。加新档位前先算 `w * 16 == h * 9`。
+- **平台门槛数值目前未证**：千川按「宽度下限」「必须精确 9:16」还是「标准分辨率白名单」判，
+  三个假设在现有数据里互相混淆、一个都没被证伪。`DeliverySpec` 因此只登记**一手证据**
+  （带日期与来源），`judge` 只对已证的形状表态；**没跑过对照实验的数字一律不许写进代码**。
+
 ## 数据模型注意事项
 
 - `Segment.semanticTypesData` 是 `Data?`，通过计算属性 `semanticTypes: [SemanticType]` 读写（JSON 编解码）
