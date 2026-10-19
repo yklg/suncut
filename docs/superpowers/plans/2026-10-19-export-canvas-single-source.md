@@ -33,7 +33,7 @@
 | 4 | `FFmpegRunner.swift:645` 兜底 `?? "1080:1920"` | 改非可选入参，兜底删除 |
 | 5 | `ShotCompositionService.swift:39` 默认参数 `"720:1280"` | 改收 `DeliveryCanvas`，调用方 `ShotEditViewModel.swift:535` 同批改 |
 | 6 | `DubExportService.swift:405-412` 把单段自身宽高当 maxWidth | 改调 Core（单段作业时"自身即本批最大"，语义等价，已注明） |
-| 7 | `VariantBatchExportService.swift:136` 走**完全不带 scale** 的 `cutSegment` ⇒ 源尺寸原样出 | **未动**，属 §7.5 契约变更（流复制→重编码有性能代价），等单独回报 |
+| 7 | `VariantBatchExportService.swift:136` 走**完全不带 scale** 的 `cutSegment` ⇒ 源尺寸原样出 | **未动**，属 §7.5 契约变更，等单独回报（代价已量，见 §六-2） |
 | — | 导出前不校验、导出后只回读 `start_time`/`duration` | 已补前置闸＋后置回读（见 §三） |
 
 **五问法**：被拒 → 画布不合平台判据（判据待分离）→ 为什么产出 480×854 → 面板有 `.p480` 档，
@@ -114,7 +114,24 @@ App 测试腿**首跑**有 3 条（全部走 `concat` 的那 3 条）在 **0.000
    `1080×1620`（宽但画幅错）/`480×854`（已知红对照，意外过即台架坏了）/**`900×1600`**
    （精确 9:16、宽度达标、但非标准档 —— 专杀"白名单"假设）。需用户在其账号上逐条真传，测完即删。
 2. **`VariantBatchExportService.swift:136` 的 `.original` 腿**仍不带 scale 出交付目录（漏口 #7）。
-   改重编码会让分镜批量导出明显变慢，须先用 `scripts/stage0_export_probe.py` 取墙钟数再拍。
+   〔**本条初稿的两处错记，2026-10-19 实测后改**〕
+   - 我写过「改重编码会让分镜批量导出**明显变慢**，因为从流复制变重编码」—— **前提就是错的**：
+     `cutSegment` 本来就用 `-c:v h264_videotoolbox` 重编码（该方法体里 `-c copy` 出现 **0 次**），
+     要加的只是 scale/pad 滤镜。实测增量（同一条 20s 源、各跑两遍、产物均 ffprobe 反查为 1080×1920/600 帧）：
+     `trim+videotoolbox` 3.84s、4.57s → 加 scale 后 4.76s、5.29s ⇒ **约 +18~23%**，不是数量级变化。
+     （口径注：该源本就是 1080×1920，scale 近似空转，量到的是滤镜图开销；720→1080 上采会略高。）
+   - 我写过这条腿"调用方 1 处"—— 也错。`cutSegment` 实测有 **4 个调用方**：
+     `ShotVariantService.swift:69`、`ShotCompositionService.swift:60`、`VariantBatchExportService.swift:136`、
+     `BatchSegmentExportService.swift:82`。其中 3 个切的是**中间片**（分镜变体、合成输入），不是交付件。
+   - **因此留下的分叉（需拍）**：
+     (a) 给 `cutSegment` 加**必填** `canvas:` 参数，4 个调用方一律表态 —— 3 个中间片传
+         `.original` 语义（行为不变但各吃一次空转 scale 的 +18~23%），换来"没有调用能静默用源尺寸"；
+     (b) 只改交付腿，让它改走既有的 `exportSingleSegment`（`DubExportService.swift:453`
+         `keepOriginalAudio = isVoiceLocked || dubAudioPath == nil` 证明该路径本就支持无配音保原声，
+         且已带闸与回读）—— 旁路被**删除**而非加补丁；但要它不加遮挡带得传 `isVoiceLocked: true`，
+         而该标志语义是"人声已锁定"，**借来当"别遮挡"用是语义误用，将来会咬人**，
+         做 (b) 就得先把"不遮挡"表达成显式参数而不是搭这个便车。
+     推荐 (b) ＋ 顺带把遮挡开关显式化；(a) 是更便宜但把成本摊到三条中间片上的做法。
 3. **MCP `export_scheme`** 仍靠默认 `.original`（`MCPToolHandlers.swift:574` 不传 config）；
    改它要连 `AgentToolCatalog` 的 inputSchema 与 `scripts/mcp_api_guards.py` 一起动。
 4. **面板「交付目标」选择器与实时回显**（计划 W3）未做；`ExportConfig` 仍不持久化。
