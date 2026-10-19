@@ -217,8 +217,11 @@ private func rosterProblems(actual: [String: Int], recorded: [ProbeRosterEntry])
 /// 为什么全仓逐文件计数也要登：素材轴只 8 个文件，但"新长出一处裸问"这件事本身
 /// 不分轴 —— 计数名册负责"变多就红"，G-M03 负责"素材轴必须走唯一出口"。
 private let probeRoster: [ProbeRosterEntry] = [
-    // 84 处 / 29 文件 —— 全部由 dump 腿产出。`exempt` 全为 false：这张表管的是"计数变了就红"，
-    // 不承担理由；"素材轴必须走唯一出口"由下面 `materialExemptions` + G-M03 管。
+    // 86 处 / 29 文件 —— 由 dump 腿产出后逐行对回（**只改真正变动的计数**：直接整段粘回会把
+    // FileHelper 的 `exempt: true` 与空 `reason` 一起带进来，反而触发「豁免条目缺理由」；
+    // 第二张表生成物里那句 `reason: "FILL_ME"` 也说明它是脚手架、不是成品）。
+    // 2026-10-19 变动：`DubExportService.swift` 6 → 8 —— 导出后置回读新增两处
+    // `existedBefore` 裸问（只清理本次自己创建的文件），与 `ExportService.swift:190` 同族。
     .init(file: #"MixCut/App/DebugSelfTest.swift"#, count: 4, exempt: false, reason: ""),
     .init(file: #"MixCut/App/MixCutApp.swift"#, count: 6, exempt: false, reason: ""),
     .init(file: #"MixCut/App/SchemaGuard.swift"#, count: 3, exempt: false, reason: ""),
@@ -227,7 +230,7 @@ private let probeRoster: [ProbeRosterEntry] = [
     .init(file: #"MixCut/Services/AI/OpenAICompatibleClient.swift"#, count: 1, exempt: false, reason: ""),
     .init(file: #"MixCut/Services/ASR/ASRService.swift"#, count: 6, exempt: false, reason: ""),
     .init(file: #"MixCut/Services/Export/BatchSegmentExportService.swift"#, count: 1, exempt: false, reason: ""),
-    .init(file: #"MixCut/Services/Export/DubExportService.swift"#, count: 6, exempt: false, reason: ""),
+    .init(file: #"MixCut/Services/Export/DubExportService.swift"#, count: 8, exempt: false, reason: ""),
     .init(file: #"MixCut/Services/Export/ExportService.swift"#, count: 3, exempt: false, reason: ""),
     .init(file: #"MixCut/Services/Export/VariantBatchExportService.swift"#, count: 2, exempt: false, reason: ""),
     .init(file: #"MixCut/Services/Knowledge/DocumentTextExtractor.swift"#, count: 1, exempt: false, reason: ""),

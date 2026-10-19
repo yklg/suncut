@@ -537,7 +537,12 @@ final class ShotEditViewModel {
                 fps: video.fps,
                 slots: slots,
                 segmentStart: segment.startTime,
-                segmentEnd: segment.endTime
+                segmentEnd: segment.endTime,
+                // 替换片画布走唯一真源。这颗尺寸会顺着 `effectivePicture` 回流成
+                // `.original` 档的输入素材尺寸，所以它不能再是某处写死的字符串。
+                resolution: DeliveryCanvas.size(tier: .p720,
+                                                sourceMaxWidth: video.width,
+                                                sourceMaxHeight: video.height)
             )
             // 移动合成片到替换画面目录 + 生成缩略图
             let destURL = FileHelper.replacedPictureURL(videoHash: hash, segmentId: segment.id)

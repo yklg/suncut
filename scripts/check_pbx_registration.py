@@ -33,7 +33,10 @@ EXPECTED = ["RawAudioCacheStore.swift", "RawAudioCache.swift", "SegmentCommitter
              "MissingMaterialFinder.swift", "VideoDeletionScopeResolver.swift",
              # 批 4（2026-10-14）：App 侧那个文件在 MixCut/Infrastructure/ 子目录里 ——
              # register_pbx_file.py 早先只查 MixCut 顶层，子目录里的真文件会被判成"拼写错了"。
-             "MissingMaterialCopy.swift", "MaterialAvailabilityStore.swift"]
+             "MissingMaterialCopy.swift", "MaterialAvailabilityStore.swift",
+             # 批 5（2026-10-19）：导出画布尺寸的唯一真源。它一旦被踢出编译单元，
+             # 报 cannot find type 的会是 ExportService / DubExportService，而不是它自己。
+             "DeliverySpec.swift"]
 
 
 def main() -> int:

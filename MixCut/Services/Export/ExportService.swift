@@ -6,23 +6,14 @@ struct ExportConfig {
     var codec: ExportCodec = .h264Hardware    // 默认硬件加速：5-10× 速度
     var quality: ExportQuality = .high
 
-    enum ExportResolution: String, CaseIterable, Identifiable {
-        case original = "原始分辨率"
-        case p1080 = "1080p"
-        case p720 = "720p"
-        case p480 = "480p"
-
-        var id: String { rawValue }
-
-        var scaleFilter: String? {
-            switch self {
-            case .original: return nil
-            case .p1080: return "scale=-2:1080"
-            case .p720: return "scale=-2:720"
-            case .p480: return "scale=-2:480"
-            }
-        }
-    }
+    /// 档位与尺寸常量已下沉 `MixCutCore.DeliveryTier` / `DeliveryCanvas`（2026-10-19）。
+    ///
+    /// 原先这里是第二份抄本（`.p1080 → "scale=-2:1080"` 等），且 `scaleFilter` 全仓零引用
+    /// —— 一份没人用的尺寸抄本，正是"改一处忘五处"能长期存活的原因，一并删除。
+    ///
+    /// 旧 `case p480 = "480p"` 已整档删除：480 宽的精确 9:16 高是 853.33，
+    /// 整数上永远凑不出合规画布，旧实现写死 (480, 854) 算出来是 240:427。
+    typealias ExportResolution = DeliveryTier
 
     enum ExportCodec: String, CaseIterable, Identifiable {
         case h264Hardware = "H.264（硬件加速・推荐）"
@@ -212,20 +203,18 @@ actor ExportService {
         let maxWidth = input.maxWidth
         let maxHeight = input.maxHeight
 
-        // 确定输出分辨率
-        let resolution: String
-        switch config.resolution {
-        case .original:
-            let w = maxWidth > 0 ? (maxWidth + 1) / 2 * 2 : 1080
-            let h = maxHeight > 0 ? (maxHeight + 1) / 2 * 2 : 1920
-            resolution = "\(w):\(h)"
-        case .p1080:
-            resolution = maxWidth > maxHeight ? "1920:1080" : "1080:1920"
-        case .p720:
-            resolution = maxWidth > maxHeight ? "1280:720" : "720:1280"
-        case .p480:
-            resolution = maxWidth > maxHeight ? "854:480" : "480:854"
+        // 输出画布尺寸：唯一真源在 `MixCutCore.DeliveryCanvas`。
+        // 这里原先是同一规则的第二份抄本（含一条 `maxWidth > maxHeight` 的横屏分支，
+        // 与 DubExportService 那份并不一致）—— 两份"重复实现"行为不同，就是重复的代价。
+        let canvas = DeliveryCanvas.size(tier: config.resolution,
+                                         sourceMaxWidth: maxWidth,
+                                         sourceMaxHeight: maxHeight)
+        if let blocked = DeliveryGate.rejectionMessage(for: .fallback,
+                                                       width: canvas.width,
+                                                       height: canvas.height) {
+            throw ExportError.deliveryBlocked(blocked)
         }
+        let resolution = canvas.filterString
 
         onProgress?(ExportProgress(
             phase: .encoding,
@@ -249,6 +238,22 @@ actor ExportService {
                 ))
             }
         )
+
+        // 后置回读：证明"计划画布"真的等于"落盘画布"。
+        //
+        // 为什么必须有这一步：2026-10-19 整批 41 条成片被千川拒收，而导出全程零信号 ——
+        // 这条腿此前只回读 `start_time` 与 `duration`，**从不回读宽高**。计划值与实际值
+        // 一旦分叉（档位算错、滤镜被改、编码器自行降采样），只有拿到文件的人才会发现。
+        // 探测失败同样算失败：拿不到证据不等于证据是好的。
+        let actual = await ffmpeg.probeCanvasSize(path: outputPath)
+        guard let actual else {
+            throw ExportError.canvasUnverifiable(outputPath)
+        }
+        if actual != canvas {
+            throw ExportError.canvasMismatch(
+                planned: "\(canvas.width)×\(canvas.height)",
+                actual: "\(actual.width)×\(actual.height)")
+        }
 
         onProgress?(ExportProgress(
             phase: .completed,
@@ -298,6 +303,9 @@ enum ExportError: LocalizedError {
     case noValidSegments
     case encodingFailed(String)
     case missingVocals(String)
+    case deliveryBlocked(String)
+    case canvasMismatch(planned: String, actual: String)
+    case canvasUnverifiable(String)
 
     var errorDescription: String? {
         switch self {
@@ -309,6 +317,13 @@ enum ExportError: LocalizedError {
             return "编码失败: \(detail)"
         case .missingVocals(let path):
             return "人声分离产物缺失（\((path as NSString).lastPathComponent)），无法去除原 BGM。请重新导出（会自动重新分离）"
+        case .deliveryBlocked(let why):
+            return why
+        case .canvasMismatch(let planned, let actual):
+            return "成片实际画布 \(actual) 与计划画布 \(planned) 不符，已丢弃半成品不交付"
+        case .canvasUnverifiable(let path):
+            return "无法回读成片画布尺寸（\((path as NSString).lastPathComponent)），"
+                 + "不能凭「没读到」就当合格；请检查 ffprobe 是否可用后重试"
         }
     }
 }

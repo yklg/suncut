@@ -58,7 +58,10 @@ public extension SubtitleMaskRenderSpec {
     /// ⚠️ 有了 `SubtitleMaskRect.minimumHeight`（带高不能矮于本分镜字幕块）之后这条**仍然必需**，
     /// 因为两者量的不是同一个东西：下限钉在 1080×1920 基准上，最低档字号算出 0.043（该基准下 82px，
     /// 刚好过半径 20 要的 80px 线）；而钳位吃的是**本次导出的实际像素** —— 导出档按源片宽度走（`.original`），
-    /// 480×854 的成片上同一个 0.043 只有 36px，能接受的半径就掉到 9。库里也还留着下限之前拖矮的旧值。
+    /// 480 宽的成片上同一个 0.043 只有 36px，能接受的半径就掉到 9。库里也还留着下限之前拖矮的旧值。
+    ///
+    /// 注：旧 480p 档写死的 480×854 已随 2026-10-19 那次整批拒收被删除，但**这条钳位依然会踩到** ——
+    /// `.original` 仍会把源片宽度原样透出，素材库里现存 480×960 这一颗（2026-10-19 ffprobe 实测）。
     func clampedRadius(cropWidth: Int, cropHeight: Int) -> Int {
         min(nominalBlurRadius, max(0, min(cropWidth, cropHeight) / 4))
     }

@@ -30,13 +30,15 @@ actor ShotCompositionService {
     ///   - fps: 帧率
     ///   - slots: 按 orderIndex 升序排列的坑
     ///   - segmentStart/segmentEnd: 原逻辑分镜时间窗口（秒），用于取原音频
-    ///   - resolution: 输出分辨率（默认竖屏 720×1280）
+    ///   - resolution: 输出画布。由调用方从 `MixCutCore.DeliveryCanvas` 取 ——
+    ///     原先这里是 `String = "720:1280"` 的默认参数，是全仓第四处尺寸字面量；
+    ///     字符串形状还让"忘了算尺寸"能静默通过编译。
     func compose(sourceVideoPath: String,
                  fps: Double,
                  slots: [SlotInput],
                  segmentStart: Double,
                  segmentEnd: Double,
-                 resolution: String = "720:1280") async throws -> Result {   // scale 滤镜用冒号，非 x
+                 resolution: DeliveryCanvas) async throws -> Result {
         guard fps > 0, !slots.isEmpty else {
             throw NSError(domain: "ShotComposition", code: -1, userInfo: [NSLocalizedDescriptionKey: "无有效分镜头或帧率"])
         }
@@ -65,7 +67,7 @@ actor ShotCompositionService {
 
         // 2) concat 拼接（统一 30fps/scale/pad）
         let joined = work.appendingPathComponent("joined.mp4").path
-        try await ffmpeg.concat(segments: segs, outputPath: joined, resolution: resolution)
+        try await ffmpeg.concat(segments: segs, outputPath: joined, resolution: resolution.filterString)
 
         // 3) 取原逻辑分镜音频段
         let audio = work.appendingPathComponent("audio.m4a").path

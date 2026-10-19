@@ -159,6 +159,7 @@
 		AE000000000000000000002D /* NarrativeContinuity.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF000000000000000000002F /* NarrativeContinuity.swift */; };
 		AE000000000000000000002C /* AIModelPricing.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF000000000000000000002E /* AIModelPricing.swift */; };
 		AE000000000000000000002E /* SegmentSplitRule.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF0000000000000000000036 /* SegmentSplitRule.swift */; };
+		AE000000000000000000002F /* DeliverySpec.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF000000000000000000003F /* DeliverySpec.swift */; };
 		AE000000000000000000002B /* AIUsageRecord.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF000000000000000000002D /* AIUsageRecord.swift */; };
 		AE000000000000000000002A /* AIThinkingPolicy.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF000000000000000000002C /* AIThinkingPolicy.swift */; };
 		AE00000000000000000000A2 /* SegmentationPlanSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF00000000000000000000A2 /* SegmentationPlanSettings.swift */; };
@@ -277,6 +278,7 @@
 		FF00BB11CC22DD3344EE55AB /* DubStaleness.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF00BB11CC22DD3344EE55AA /* DubStaleness.swift */; };
 		FF66AA77BB88CC99DD00EE11 /* SubtitleFontSizePopover.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF66AA77BB88CC99DD00EE12 /* SubtitleFontSizePopover.swift */; };
 		FF77AA88BB99CC0011DD22EE /* RewriteResultMapper.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF77AA88BB99CC0011DD22EF /* RewriteResultMapper.swift */; };
+7D0000000000000000000000 /* ExportCanvasReadbackTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7A0000000000000000000001 /* ExportCanvasReadbackTests.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -456,6 +458,7 @@
 		AF000000000000000000002F /* NarrativeContinuity.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = NarrativeContinuity.swift; path = Sources/MixCutCore/NarrativeContinuity.swift; sourceTree = "<group>"; };
 		AF000000000000000000002E /* AIModelPricing.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = AIModelPricing.swift; path = Sources/MixCutCore/AIModelPricing.swift; sourceTree = "<group>"; };
 		AF0000000000000000000036 /* SegmentSplitRule.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = SegmentSplitRule.swift; path = Sources/MixCutCore/SegmentSplitRule.swift; sourceTree = "<group>"; };
+		AF000000000000000000003F /* DeliverySpec.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = DeliverySpec.swift; path = Sources/MixCutCore/DeliverySpec.swift; sourceTree = "<group>"; };
 		AF000000000000000000002D /* AIUsageRecord.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = AIUsageRecord.swift; path = Sources/MixCutCore/AIUsageRecord.swift; sourceTree = "<group>"; };
 		AF000000000000000000002C /* AIThinkingPolicy.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = AIThinkingPolicy.swift; path = Sources/MixCutCore/AIThinkingPolicy.swift; sourceTree = "<group>"; };
 		AF00000000000000000000A2 /* SegmentationPlanSettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SegmentationPlanSettings.swift; sourceTree = "<group>"; };
@@ -563,6 +566,7 @@
 		FF77AA88BB99CC0011DD22EF /* RewriteResultMapper.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = RewriteResultMapper.swift; path = Sources/MixCutCore/RewriteResultMapper.swift; sourceTree = "<group>"; };
 		FF88AA99BB00CC1122DD33EE /* QwenVoice.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = QwenVoice.swift; path = Sources/MixCutCore/QwenVoice.swift; sourceTree = "<group>"; };
 		FFC59912B0CFE892506831DB /* ShotEditRules.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = ShotEditRules.swift; path = Sources/MixCutCore/ShotEditRules.swift; sourceTree = "<group>"; };
+7A0000000000000000000001 /* ExportCanvasReadbackTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExportCanvasReadbackTests.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -749,6 +753,7 @@
 		7C0000000000000000000000 /* MixCutAppTests */ = {
 			isa = PBXGroup;
 			children = (
+				7A0000000000000000000001 /* ExportCanvasReadbackTests.swift */,
 				7B0000000000000000000000 /* VoiceCloneServiceTests.swift */,
 			);
 			path = MixCutAppTests;
@@ -857,6 +862,7 @@
 				AF000000000000000000002F /* NarrativeContinuity.swift */,
 				AF000000000000000000002E /* AIModelPricing.swift */,
 				AF0000000000000000000036 /* SegmentSplitRule.swift */,
+				AF000000000000000000003F /* DeliverySpec.swift */,
 				AF000000000000000000002D /* AIUsageRecord.swift */,
 				AF000000000000000000002C /* AIThinkingPolicy.swift */,
 				AD0000000000000000000024 /* CloneBranchDecider.swift */,
@@ -1515,6 +1521,7 @@
 				AE000000000000000000002D /* NarrativeContinuity.swift in Sources */,
 				AE000000000000000000002C /* AIModelPricing.swift in Sources */,
 				AE000000000000000000002E /* SegmentSplitRule.swift in Sources */,
+				AE000000000000000000002F /* DeliverySpec.swift in Sources */,
 				AE000000000000000000002B /* AIUsageRecord.swift in Sources */,
 				AE000000000000000000002A /* AIThinkingPolicy.swift in Sources */,
 				AE00000000000000000000A2 /* SegmentationPlanSettings.swift in Sources */,
@@ -1541,6 +1548,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				7D0000000000000000000000 /* ExportCanvasReadbackTests.swift in Sources */,
 				7A0000000000000000000000 /* VoiceCloneServiceTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;

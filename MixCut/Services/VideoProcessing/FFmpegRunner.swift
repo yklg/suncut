@@ -552,6 +552,29 @@ actor FFmpegRunner {
     }
 
     /// 探测视频文件是否包含音频轨道（异步，不阻塞 actor 线程）
+    /// 回读成片的**显示**宽高。返回 `nil` = 读不到（无 ffprobe / 没有视频流 / 文件损坏）。
+    ///
+    /// 为什么必须存在这一步：2026-10-19 整批 41 条成片被千川以「素材尺寸不符合规范」拒收，
+    /// 而导出链路此前只回读 `start_time` 与 `duration`，**从不回读宽高** —— 计划画布与落盘画布
+    /// 分叉时没有任何一处会发现。调用方（`ExportService` / `DubExportService`）拿它做后置断言。
+    ///
+    /// ⚠️ 取的是 `width`/`height`（显示尺寸），**不是** `coded_width`/`coded_height`：
+    /// H.264 按宏块对齐，编码面常比显示面大一圈（外部实测样本 854×480 的编码面是 864×480）。
+    /// 平台读哪一路尚未证伪，因此调用方只保证"等于计划值"，不假装知道平台看什么。
+    ///
+    /// 无视频流时 `-select_streams v:0` 会输出空串 ⇒ 这里返回 `nil` 而不是 `(0, 0)`，
+    /// 让调用方红掉。**空读数绝不能被读成"通过"**。
+    func probeCanvasSize(path: String) async -> DeliveryCanvas? {
+        let out = try? await runProbe(arguments: [
+            "-v", "error", "-select_streams", "v:0",
+            "-show_entries", "stream=width,height", "-of", "csv=p=0", path])
+        guard let line = out?.trimmingCharacters(in: .whitespacesAndNewlines).split(separator: "\n").first,
+              !line.isEmpty else { return nil }
+        let parts = line.split(separator: ",").compactMap { Int($0.trimmingCharacters(in: .whitespaces)) }
+        guard parts.count == 2, parts[0] > 0, parts[1] > 0 else { return nil }
+        return DeliveryCanvas(width: parts[0], height: parts[1])
+    }
+
     private func probeHasAudio(path: String) async -> Bool {
         let ffprobePath = resolveProbeBinary()
         guard FileManager.default.fileExists(atPath: ffprobePath) else {
@@ -603,7 +626,7 @@ actor FFmpegRunner {
     /// 使用 filter_complex concat 方式，自动处理不同分辨率/编码/帧率
     func concat(segments: [(path: String, start: Double, end: Double)],
                 outputPath: String,
-                resolution: String? = nil,
+                resolution: String,
                 crf: Int = 18,
                 codec: String = "libx264",
                 isHardware: Bool = false,
@@ -642,7 +665,10 @@ actor FFmpegRunner {
         args += ["-f", "lavfi", "-i", "anullsrc=r=44100:cl=stereo"]
 
         // 构建 filter_complex：统一缩放到目标分辨率 + concat
-        let targetScale = resolution ?? "1080:1920"  // 默认竖屏 1080x1920
+        // 目标尺寸由调用方从 `MixCutCore.DeliveryCanvas` 取，这里**不再兜底** ——
+        // 一个 `?? "1080:1920"` 会让"调用方忘了算尺寸"静默变成"按 1080 导出"，
+        // 而这次事故的形态恰恰是：整批产物是某个尺寸，却没有任何一处知道自己算出了什么。
+        let targetScale = resolution
         var filterParts: [String] = []
 
         for i in 0..<segments.count {

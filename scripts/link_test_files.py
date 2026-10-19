@@ -10,6 +10,10 @@
   形态完全照抄同文件里已有的 App 侧样例 ⇒ 不猜任何结构语义。
 
 幂等：已登记则 SKIP。
+
+用法：
+    python3 Scripts/link_test_files.py                      # 首批那颗（默认）
+    python3 Scripts/link_test_files.py ExportCanvasReadbackTests.swift
 """
 import io
 import os
@@ -47,6 +51,11 @@ def free_ids(used, n):
 
 
 def main():
+    global TEST_FILE
+    # 默认沿用首批那颗文件；`python3 Scripts/link_test_files.py <文件名.swift>` 登记后续新增的。
+    # 原先文件名写死在模块常量里，导致"给 App 测试目标加第二个文件"必须改脚本本体。
+    if len(sys.argv) > 1:
+        TEST_FILE = sys.argv[1]
     if not os.path.exists(PBX):
         die("找不到 %s" % PBX)
     src = os.path.join(TEST_DIR, TEST_FILE)

@@ -360,9 +360,15 @@ actor DubExportService {
         onProgress: (@Sendable (ExportProgress) -> Void)? = nil
     ) async throws {
         guard !input.segments.isEmpty else { throw ExportError.noSegments }
+        // 只能清理**本次导出自己创建**的文件：重导同名方案时目标路径上本来就有好文件，
+        // 无条件删除会连用户原有的成片一起毁掉（同 `ExportService.export` 那条纪律）。
+        let existedBefore = FileManager.default.fileExists(atPath: outputPath)
 
-        // 输出分辨率（9:16，偶数）
-        let (outW, outH) = Self.resolution(config: config, maxWidth: input.maxWidth, maxHeight: input.maxHeight)
+        // 输出分辨率（9:16，偶数）—— 换算与前置闸的唯一入口见 `Self.canvas`
+        let canvas = try Self.canvas(for: config,
+                                     sourceMaxWidth: input.maxWidth,
+                                     sourceMaxHeight: input.maxHeight)
+        let outW = canvas.width, outH = canvas.height
 
         // 临时工作目录
         let workDir = FileHelper.tempDirectory.appendingPathComponent("dubexport-\(UUID().uuidString)")
@@ -396,6 +402,10 @@ actor DubExportService {
             try await mixGlobalBGM(voicedPath: concatTarget, bgm: bgm, outputPath: outputPath)
         }
 
+        // 后置回读：证明"计划画布"真的等于"落盘画布"（与 `ExportService.performExport` 同一条腿）。
+        try await assertCanvasMatches(planned: canvas, outputPath: outputPath,
+                                      createdItself: !existedBefore)
+
         onProgress?(ExportProgress(phase: .completed, progress: 1.0, description: "配音导出完成"))
     }
 
@@ -409,12 +419,19 @@ actor DubExportService {
         outputPath: String,
         config: ExportConfig = ExportConfig()
     ) async throws {
-        let (outW, outH) = Self.resolution(config: config, maxWidth: videoWidth, maxHeight: videoHeight)
+        // 单分镜作业：这一段的自身尺寸就是"本批最大尺寸"，`.original` 下等价于整方案那条腿。
+        let canvas = try Self.canvas(for: config,
+                                     sourceMaxWidth: videoWidth,
+                                     sourceMaxHeight: videoHeight)
+        let outW = canvas.width, outH = canvas.height
         let workDir = FileHelper.tempDirectory.appendingPathComponent("dubseg-\(UUID().uuidString)")
+        let existedBefore = FileManager.default.fileExists(atPath: outputPath)
         try FileManager.default.createDirectory(at: workDir, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: workDir) }
         try await renderSegment(spec: spec, index: 0, outW: outW, outH: outH,
                                 workDir: workDir, config: config, outputPath: outputPath)
+        try await assertCanvasMatches(planned: canvas, outputPath: outputPath,
+                                      createdItself: !existedBefore)
     }
 
     // MARK: - 单分镜中间片
@@ -581,16 +598,45 @@ actor DubExportService {
     }
 
     // MARK: - 分辨率
+    //
+    // 原先这里有一份 `resolution(config:maxWidth:maxHeight:)`，与 `ExportService.performExport`
+    // 里那份是同一规则的两份抄本，且两份并不等价（那份认横屏）。2026-10-19 一并收敛到
+    // `MixCutCore.DeliveryCanvas.size` —— 唯一真源，App 侧不再留任何尺寸字面量。
 
-    private static func resolution(config: ExportConfig, maxWidth: Int, maxHeight: Int) -> (Int, Int) {
-        switch config.resolution {
-        case .original:
-            let w = maxWidth > 0 ? (maxWidth + 1) / 2 * 2 : 1080
-            let h = maxHeight > 0 ? (maxHeight + 1) / 2 * 2 : 1920
-            return (w, h)
-        case .p1080: return (1080, 1920)
-        case .p720:  return (720, 1280)
-        case .p480:  return (480, 854)
+    /// 档位 → 画布，并过导出前闸。整方案与单分镜两条腿共用这一处，
+    /// 免得又长出第三份各写各的抄本。
+    private static func canvas(for config: ExportConfig,
+                               sourceMaxWidth: Int,
+                               sourceMaxHeight: Int) throws -> DeliveryCanvas {
+        let canvas = DeliveryCanvas.size(tier: config.resolution,
+                                         sourceMaxWidth: sourceMaxWidth,
+                                         sourceMaxHeight: sourceMaxHeight)
+        if let blocked = DeliveryGate.rejectionMessage(for: .fallback,
+                                                       width: canvas.width,
+                                                       height: canvas.height) {
+            throw ExportError.deliveryBlocked(blocked)
+        }
+        return canvas
+    }
+
+    /// 回读落盘画布并与计划值比对。读不到 / 不符 ⇒ 抛错。
+    ///
+    /// 抛错时只有**本次自己创建**的文件才删 —— 一个画布不对的 mp4 留在用户目录里，
+    /// 双击能播、看着正常，只有拿到千川才会被发现；"看起来正常"是最坏的失败方式。
+    private func assertCanvasMatches(planned: DeliveryCanvas,
+                                     outputPath: String,
+                                     createdItself: Bool) async throws {
+        do {
+            guard let actual = await ffmpeg.probeCanvasSize(path: outputPath) else {
+                throw ExportError.canvasUnverifiable(outputPath)
+            }
+            guard actual == planned else {
+                throw ExportError.canvasMismatch(planned: planned.filterString,
+                                                 actual: "\(actual.width)×\(actual.height)")
+            }
+        } catch {
+            if createdItself { try? FileManager.default.removeItem(atPath: outputPath) }
+            throw error
         }
     }
 }
