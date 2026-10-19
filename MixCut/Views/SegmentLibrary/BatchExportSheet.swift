@@ -199,7 +199,7 @@ struct BatchExportSheet: View {
                 Image(systemName: "bolt.fill")
                     .font(DesignTokens.Typography.microRegular)
                     .foregroundStyle(.orange)
-                Text("原版流复制极快；变体走 H.264 硬件编码（克隆配音+BGM混音+烧录新字幕）")
+                Text("原版与变体都走 H.264 硬件编码（变体另加克隆配音+BGM混音+烧录新字幕）")
                     .font(DesignTokens.Typography.microRegular)
                     .foregroundStyle(.secondary)
             }

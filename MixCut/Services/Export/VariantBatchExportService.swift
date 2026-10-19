@@ -2,7 +2,7 @@ import Foundation
 
 /// 单个导出任务（值类型，可跨 actor 传递）。
 enum VariantExportJob: Sendable {
-    /// 原版：流复制切片。
+    /// 原版：按帧精确切出，**仍是 h264_videotoolbox 重编码**（不是流复制，见 cutSegment）。
     case original(sourcePath: String, startTime: Double, endTime: Double, fps: Double, fileName: String)
     /// 变体：dub 渲染（含 BGM）。
     case variant(spec: DubSegmentSpec, videoWidth: Int, videoHeight: Int, fileName: String)
@@ -100,7 +100,11 @@ enum VariantExportInput {
     }
 }
 
-/// 变体感知批量导出：原版走流复制，变体走 dub 渲染。
+/// 变体感知批量导出：原版走 `cutSegment`（重编码、不带 scale），变体走 dub 渲染。
+///
+/// ⚠️ 原版那条腿**绕过全部尺寸决策**：`cutSegment` 没有 scale/pad，输出=源尺寸原样，
+/// 所以素材库里 540×960、480×960、704×1248 这类不合千川区间的分镜会原样导出去。
+/// 这是台账 §六-2 那颗待拍的漏口（改走带区间的渲染要付重编码+帧率归一的代价）。
 actor VariantBatchExportService {
     private let ffmpeg: FFmpegRunner
     private let dubExport: DubExportService

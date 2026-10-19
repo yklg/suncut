@@ -34,8 +34,13 @@ struct SegmentBatchExportProgress: Sendable {
 
 /// 批量分镜导出服务
 ///
-/// 用流复制（-c copy）方式，每个分镜按 start/end 切出独立 MP4。
-/// 流复制速度极快（每段 0.1-0.5 秒），无重编码，画质无损。
+/// 每个分镜按 start/end 切出独立 MP4。
+///
+/// ⚠️ 这里**不是流复制**（本文件此前写的是「用流复制（-c copy）方式…无重编码，画质无损」，
+/// 那是假的）：`FFmpegRunner.cutSegment` 用的是 `-c:v h264_videotoolbox -b:v 8000k`，
+/// 方法体内 `-c copy` 出现 **0 次**。实测（2026-10-19，同一条 20s 1080×1920 源）：
+/// 真流复制 0.10s，`cutSegment` 3.84s / 4.57s —— 差约 40 倍，且是**有损重编码**。
+/// 报耗时或报画质时别再用「流复制」那个说法。
 actor BatchSegmentExportService {
     private let ffmpeg: FFmpegRunner
 
