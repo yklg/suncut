@@ -114,14 +114,67 @@ private func esIRequireBinaries(_ ffmpeg: FFmpegRunner) async throws {
     }
 }
 
+// MARK: - 跨 suite 的串行闸门（台架层，不属于产品代码）
+
+/// 本 test target 里**所有**会 spawn ffmpeg/ffprobe 的用例必须共用的这一道闸门。
+///
+/// 为什么 `.serialized` 不够（2026-10-20 对照实测，见本文件末的账）：`.serialized` 是
+/// **per-suite** 的，只约束同一 suite 内的顺序，不同 suite 之间照旧并行。实测：
+///   · ES-I 单独跑 ⇒ 5 条全绿；LC-I 单独跑 ⇒ 3 条全绿；
+///   · 两条 suite 并跑 ⇒ 红一次绿一次，且**失败集合会移动**；
+///   · 全目标跑（含 DG/LC-I/ES-I 三组渲染腿）⇒ 21 条里红 1~2 条，两次红都只在**一个**宿主实例内。
+/// 争的是机器的子进程/临时目录容量，不是某个 suite 的私有状态 ⇒ 闸门粒度必须等于争用粒度。
+///
+/// ⚠️ 闸门只在**进程内**有效：xcodebuild 有时会起多个宿主实例（子集跑时实测到 4 个），
+/// 那种情况下实例之间仍会互相压。全目标跑实测是单实例，所以这道闸对它够用。
+actor FfBenchGate {
+    static let shared = FfBenchGate()
+    private var occupied = false
+    private var waiting: [CheckedContinuation<Void, Never>] = []
+
+    func acquire() async {
+        // 醒来后必须重新查：从 resume 到自己抢到闸之间，闸可能又被别人拿走。
+        while occupied {
+            await withCheckedContinuation { (c: CheckedContinuation<Void, Never>) in waiting.append(c) }
+        }
+        occupied = true
+    }
+
+    func release() {
+        occupied = false
+        if !waiting.isEmpty { waiting.removeFirst().resume() }
+    }
+}
+
+/// 把一段会 spawn ffmpeg/ffprobe 的用例体放进全局串行域。
+///
+/// 顺带补上本目标欠了四轮的账：Swift Testing 对"抛出"**不打原因**，所以历史上每次红都是瞎红。
+/// 闸门生效后本不该再抛，真抛了要能一眼看见是哪一段、抛的是什么。
+func withFFmpegBench<T>(_ stage: String, _ body: () async throws -> T) async throws -> T {
+    await FfBenchGate.shared.acquire()
+    do {
+        let value = try await body()
+        await FfBenchGate.shared.release()
+        return value
+    } catch {
+        await FfBenchGate.shared.release()
+        Issue.record("台架段「\(stage)」抛错：\(type(of: error)) — \(error)")
+        throw error
+    }
+}
+
 // MARK: - ES-I-01 计划画布 == 落盘画布
 
-/// ⚠️ **必须 `.serialized`，不许并行**。本组每条用例都要 spawn 多个 ffmpeg/ffprobe 子进程，
-/// Swift Testing 默认并行跑 ⇒ 文件句柄/子进程压力一起上来，实测症状是**失败集合会移动**
-/// （一会儿红这 3 条、一会儿红那 2 条）、耗时读数 0.000 秒与 3~4 秒混杂，
+/// ⚠️ **必须 `.serialized` ＋ 每条体都要过 `withFFmpegBench`**。本组每条用例都要 spawn 多个
+/// ffmpeg/ffprobe 子进程，Swift Testing 默认并行跑 ⇒ 文件句柄/子进程压力一起上来，实测症状是
+/// **失败集合会移动**（一会儿红这 3 条、一会儿红那 2 条）、耗时读数 0.000 秒与 3~4 秒混杂，
 /// 且**绕开本文件所有诊断**（`esIRequireBinaries` 与 `esIRender` 的 `Issue.record` 一次都没触发），
 /// 因为抛点在它们之外的 `esIScratch()` 建目录那一步。Xcode 侧同期报过
 /// `mkstemp: fileSystemFailure`。串行化前 7 次跑红 3 次，串行化后连绿 3 次。
+/// 〔已修订 2026-10-20〕上面那句"串行化后连绿"只成立到本目标还只有这一组渲染腿为止：
+/// 加了 LC-I（第三组会 spawn 的 suite）之后全目标又红，症状一模一样。根因是
+/// **`.serialized` 的作用域是单个 suite，不管 suite 之间** —— 所以真正的闸是本文件里的
+/// `withFFmpegBench`（跨 suite、进程内串行）。`.serialized` 仍保留：它管组内顺序，是必要的但不充分。
 ///
 /// 已排除的原因（别再往这几个方向找）：冷构建取不到包内 ffmpeg（冷构建跑是绿的）、
 /// 宿主 App 正在重签名（4 次运行都有 codesign/RegisterWithLaunchServices，其中 3 次是绿的）、
@@ -131,25 +184,27 @@ private func esIRequireBinaries(_ ffmpeg: FFmpegRunner) async throws {
 struct ExportCanvasReadbackTests {
     @Test("ES-I-01 三块投放画布：真渲染后独立回读的宽高必须逐字等于计划值")
     func plannedCanvasIsWhatLands() async throws {
-        let ffmpeg = esIRunner()
-        try await esIRequireBinaries(ffmpeg)
-        let dir = try esIScratch()
-        defer { try? FileManager.default.removeItem(at: dir) }
+        try await withFFmpegBench("plannedCanvasIsWhatLands") {
+            let ffmpeg = esIRunner()
+            try await esIRequireBinaries(ffmpeg)
+            let dir = try esIScratch()
+            defer { try? FileManager.default.removeItem(at: dir) }
 
-        let src = dir.appendingPathComponent("src.mp4").path
-        try await esISynthesize(ffmpeg, size: "1080x1920", to: src)
+            let src = dir.appendingPathComponent("src.mp4").path
+            try await esISynthesize(ffmpeg, size: "1080x1920", to: src)
 
-        for tier in [DeliveryTier.p1080, .p720] {
-            let planned = DeliveryCanvas.size(tier: tier, sourceMaxWidth: 1080, sourceMaxHeight: 1920)
-            let out = dir.appendingPathComponent("\(tier.rawValue.replacingOccurrences(of: "p", with: "")).mp4").path
-            try await esIRender(ffmpeg, sourcePath: src, to: out, canvas: planned)
+            for tier in [DeliveryTier.p1080, .p720] {
+                let planned = DeliveryCanvas.size(tier: tier, sourceMaxWidth: 1080, sourceMaxHeight: 1920)
+                let out = dir.appendingPathComponent("\(tier.rawValue.replacingOccurrences(of: "p", with: "")).mp4").path
+                try await esIRender(ffmpeg, sourcePath: src, to: out, canvas: planned)
 
-            let m = try await esIMeasure(ffmpeg, out)
-            #expect(m["width"] == "\(planned.width)" && m["height"] == "\(planned.height)",
-                    "\(tier.rawValue) 档落盘 \(m["width"] ?? "?")×\(m["height"] ?? "?")，计划 \(planned.filterString)")
-            // 宽高对了还不算，显示比例藏在 SAR 里
-            #expect(m["sample_aspect_ratio"] == "1:1",
-                    "\(tier.rawValue) 档落盘 SAR = \(m["sample_aspect_ratio"] ?? "缺")，不是 1:1 ⇒ 画面被悄悄拉变形")
+                let m = try await esIMeasure(ffmpeg, out)
+                #expect(m["width"] == "\(planned.width)" && m["height"] == "\(planned.height)",
+                        "\(tier.rawValue) 档落盘 \(m["width"] ?? "?")×\(m["height"] ?? "?")，计划 \(planned.filterString)")
+                // 宽高对了还不算，显示比例藏在 SAR 里
+                #expect(m["sample_aspect_ratio"] == "1:1",
+                        "\(tier.rawValue) 档落盘 SAR = \(m["sample_aspect_ratio"] ?? "缺")，不是 1:1 ⇒ 画面被悄悄拉变形")
+            }
         }
     }
 
@@ -157,51 +212,55 @@ struct ExportCanvasReadbackTests {
 
     @Test("ES-I-02 生产侧 probeCanvasSize 必须与独立 ffprobe 读数一致（探针自己也要被验）")
     func productionProbeMatchesIndependentReading() async throws {
-        let ffmpeg = esIRunner()
-        try await esIRequireBinaries(ffmpeg)
-        let dir = try esIScratch()
-        defer { try? FileManager.default.removeItem(at: dir) }
+        try await withFFmpegBench("productionProbeMatchesIndependentReading") {
+            let ffmpeg = esIRunner()
+            try await esIRequireBinaries(ffmpeg)
+            let dir = try esIScratch()
+            defer { try? FileManager.default.removeItem(at: dir) }
 
-        let src = dir.appendingPathComponent("src.mp4").path
-        try await esISynthesize(ffmpeg, size: "720x1280", to: src)
-        let out = dir.appendingPathComponent("out.mp4").path
-        let planned = DeliveryCanvas.size(tier: .p1080, sourceMaxWidth: 720, sourceMaxHeight: 1280)
-        try await esIRender(ffmpeg, sourcePath: src, to: out, canvas: planned)
+            let src = dir.appendingPathComponent("src.mp4").path
+            try await esISynthesize(ffmpeg, size: "720x1280", to: src)
+            let out = dir.appendingPathComponent("out.mp4").path
+            let planned = DeliveryCanvas.size(tier: .p1080, sourceMaxWidth: 720, sourceMaxHeight: 1280)
+            try await esIRender(ffmpeg, sourcePath: src, to: out, canvas: planned)
 
-        let independent = try await esIMeasure(ffmpeg, out)
-        let viaProduction = await ffmpeg.probeCanvasSize(path: out)
+            let independent = try await esIMeasure(ffmpeg, out)
+            let viaProduction = await ffmpeg.probeCanvasSize(path: out)
 
-        #expect(viaProduction != nil, "生产探针读不到一块刚渲染出来的合法成片")
-        #expect(viaProduction?.width == Int(independent["width"] ?? "-1"),
-                "生产探针报宽 \(viaProduction?.width.description ?? "nil")，独立读数 \(independent["width"] ?? "?")")
-        #expect(viaProduction?.height == Int(independent["height"] ?? "-1"),
-                "生产探针报高 \(viaProduction?.height.description ?? "nil")，独立读数 \(independent["height"] ?? "?")")
-        // 明确它读的是显示尺寸而不是编码面：两者今天相等，所以这条靠"字段名+对照"而不是靠差异
-        #expect(independent["width"] != nil && independent["coded_width"] != nil)
+            #expect(viaProduction != nil, "生产探针读不到一块刚渲染出来的合法成片")
+            #expect(viaProduction?.width == Int(independent["width"] ?? "-1"),
+                    "生产探针报宽 \(viaProduction?.width.description ?? "nil")，独立读数 \(independent["width"] ?? "?")")
+            #expect(viaProduction?.height == Int(independent["height"] ?? "-1"),
+                    "生产探针报高 \(viaProduction?.height.description ?? "nil")，独立读数 \(independent["height"] ?? "?")")
+            // 明确它读的是显示尺寸而不是编码面：两者今天相等，所以这条靠"字段名+对照"而不是靠差异
+            #expect(independent["width"] != nil && independent["coded_width"] != nil)
+        }
     }
 
     // MARK: - ES-I-03 非 9:16 素材不得把画布带偏
 
     @Test("ES-I-03 480×960 与 704×1248 两块非 9:16 源进 1080×1920 画布：落盘仍是精确 9:16 且 SAR 1:1")
     func oddRatioSourceStillLandsOnExactCanvas() async throws {
-        let ffmpeg = esIRunner()
-        try await esIRequireBinaries(ffmpeg)
-        let dir = try esIScratch()
-        defer { try? FileManager.default.removeItem(at: dir) }
+        try await withFFmpegBench("oddRatioSourceStillLandsOnExactCanvas") {
+            let ffmpeg = esIRunner()
+            try await esIRequireBinaries(ffmpeg)
+            let dir = try esIScratch()
+            defer { try? FileManager.default.removeItem(at: dir) }
 
-        // 这两颗是素材库里真实存在的非 9:16 素材的尺寸（2026-10-19 ffprobe 实测）
-        for (i, srcSize) in ["480x960", "704x1248"].enumerated() {
-            let src = dir.appendingPathComponent("src\(i).mp4").path
-            try await esISynthesize(ffmpeg, size: srcSize, to: src)
-            let out = dir.appendingPathComponent("out\(i).mp4").path
-            let planned = DeliveryCanvas.size(tier: .p1080, sourceMaxWidth: 0, sourceMaxHeight: 0)
-            try await esIRender(ffmpeg, sourcePath: src, to: out, canvas: planned)
+            // 这两颗是素材库里真实存在的非 9:16 素材的尺寸（2026-10-19 ffprobe 实测）
+            for (i, srcSize) in ["480x960", "704x1248"].enumerated() {
+                let src = dir.appendingPathComponent("src\(i).mp4").path
+                try await esISynthesize(ffmpeg, size: srcSize, to: src)
+                let out = dir.appendingPathComponent("out\(i).mp4").path
+                let planned = DeliveryCanvas.size(tier: .p1080, sourceMaxWidth: 0, sourceMaxHeight: 0)
+                try await esIRender(ffmpeg, sourcePath: src, to: out, canvas: planned)
 
-            let m = try await esIMeasure(ffmpeg, out)
-            #expect(m["width"] == "1080" && m["height"] == "1920",
-                    "\(srcSize) 源把画布带偏成 \(m["width"] ?? "?")×\(m["height"] ?? "?")")
-            #expect(Int(m["width"]!)! * 16 == Int(m["height"]!)! * 9, "落盘不是精确 9:16")
-            #expect(m["sample_aspect_ratio"] == "1:1", "SAR 不是 1:1：\(m["sample_aspect_ratio"] ?? "缺")")
+                let m = try await esIMeasure(ffmpeg, out)
+                #expect(m["width"] == "1080" && m["height"] == "1920",
+                        "\(srcSize) 源把画布带偏成 \(m["width"] ?? "?")×\(m["height"] ?? "?")")
+                #expect(Int(m["width"]!)! * 16 == Int(m["height"]!)! * 9, "落盘不是精确 9:16")
+                #expect(m["sample_aspect_ratio"] == "1:1", "SAR 不是 1:1：\(m["sample_aspect_ratio"] ?? "缺")")
+            }
         }
     }
 
@@ -209,48 +268,52 @@ struct ExportCanvasReadbackTests {
 
     @Test("ES-I-04 同管道阳性对照：不带 setsar 的渲染 SAR 就不是 1:1 —— 否则 ES-I-01 那条 SAR 断言是空的")
     func sarAssertionHasTeeth() async throws {
-        let ffmpeg = esIRunner()
-        try await esIRequireBinaries(ffmpeg)
-        let dir = try esIScratch()
-        defer { try? FileManager.default.removeItem(at: dir) }
+        try await withFFmpegBench("sarAssertionHasTeeth") {
+            let ffmpeg = esIRunner()
+            try await esIRequireBinaries(ffmpeg)
+            let dir = try esIScratch()
+            defer { try? FileManager.default.removeItem(at: dir) }
 
-        let src = dir.appendingPathComponent("src.mp4").path
-        try await esISynthesize(ffmpeg, size: "1280x720", to: src)
-        // 刻意绕开生产链路：只 scale、不 setsar
-        let bare = dir.appendingPathComponent("bare.mp4").path
-        try await ffmpeg.run(arguments: [
-            "-y", "-v", "error", "-i", src,
-            "-vf", "scale=480:854", "-c:v", "libx264", "-pix_fmt", "yuv420p", "-an", bare,
-        ], totalDuration: nil, timeoutSeconds: 120, onProgress: nil)
+            let src = dir.appendingPathComponent("src.mp4").path
+            try await esISynthesize(ffmpeg, size: "1280x720", to: src)
+            // 刻意绕开生产链路：只 scale、不 setsar
+            let bare = dir.appendingPathComponent("bare.mp4").path
+            try await ffmpeg.run(arguments: [
+                "-y", "-v", "error", "-i", src,
+                "-vf", "scale=480:854", "-c:v", "libx264", "-pix_fmt", "yuv420p", "-an", bare,
+            ], totalDuration: nil, timeoutSeconds: 120, onProgress: nil)
 
-        let m = try await esIMeasure(ffmpeg, bare)
-        #expect(m["width"] == "480" && m["height"] == "854", "对照样本本身没造出来：\(m)")
-        #expect(m["sample_aspect_ratio"] != "1:1",
-                "不带 setsar 也读到 1:1 ⇒ 这台架测不出 SAR 漂移，ES-I-01 的 SAR 断言是恒真的假判据")
+            let m = try await esIMeasure(ffmpeg, bare)
+            #expect(m["width"] == "480" && m["height"] == "854", "对照样本本身没造出来：\(m)")
+            #expect(m["sample_aspect_ratio"] != "1:1",
+                    "不带 setsar 也读到 1:1 ⇒ 这台架测不出 SAR 漂移，ES-I-01 的 SAR 断言是恒真的假判据")
+        }
     }
 
     // MARK: - ES-I-05 空读数必须算失败
 
     @Test("ES-I-05 没有视频流 / 文件不存在 ⇒ 探针必须返回 nil，不能报 0×0 或旧值")
     func emptyReadingsAreNotSilentlyAccepted() async throws {
-        let ffmpeg = esIRunner()
-        try await esIRequireBinaries(ffmpeg)
-        let dir = try esIScratch()
-        defer { try? FileManager.default.removeItem(at: dir) }
+        try await withFFmpegBench("emptyReadingsAreNotSilentlyAccepted") {
+            let ffmpeg = esIRunner()
+            try await esIRequireBinaries(ffmpeg)
+            let dir = try esIScratch()
+            defer { try? FileManager.default.removeItem(at: dir) }
 
-        // ① 纯音频 mp4：`-select_streams v:0` 会选到空集
-        let audioOnly = dir.appendingPathComponent("audio.mp4").path
-        try await ffmpeg.run(arguments: [
-            "-y", "-v", "error", "-f", "lavfi", "-i", "sine=frequency=440:duration=1",
-            "-c:a", "aac", audioOnly,
-        ], totalDuration: nil, timeoutSeconds: 120, onProgress: nil)
-        let m = try await esIMeasure(ffmpeg, audioOnly)
-        #expect(m["width"] == nil, "纯音频文件居然读出了 width —— 独立测量这一腿也失效了")
-        #expect(await ffmpeg.probeCanvasSize(path: audioOnly) == nil,
-                "探针在纯音频上返回了非 nil ⇒ 后置回读会被空读数当成通过")
+            // ① 纯音频 mp4：`-select_streams v:0` 会选到空集
+            let audioOnly = dir.appendingPathComponent("audio.mp4").path
+            try await ffmpeg.run(arguments: [
+                "-y", "-v", "error", "-f", "lavfi", "-i", "sine=frequency=440:duration=1",
+                "-c:a", "aac", audioOnly,
+            ], totalDuration: nil, timeoutSeconds: 120, onProgress: nil)
+            let m = try await esIMeasure(ffmpeg, audioOnly)
+            #expect(m["width"] == nil, "纯音频文件居然读出了 width —— 独立测量这一腿也失效了")
+            #expect(await ffmpeg.probeCanvasSize(path: audioOnly) == nil,
+                    "探针在纯音频上返回了非 nil ⇒ 后置回读会被空读数当成通过")
 
-        // ② 文件根本不存在
-        #expect(await ffmpeg.probeCanvasSize(path: dir.appendingPathComponent("nope.mp4").path) == nil,
-                "不存在的文件必须读不到")
+            // ② 文件根本不存在
+            #expect(await ffmpeg.probeCanvasSize(path: dir.appendingPathComponent("nope.mp4").path) == nil,
+                    "不存在的文件必须读不到")
+        }
     }
 }
