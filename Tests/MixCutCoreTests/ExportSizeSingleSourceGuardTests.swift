@@ -258,9 +258,9 @@ struct ExportViewReadoutGuardTests {
     }
 }
 
-// MARK: - ES-07 闸口措辞与三条腿
+// MARK: - ES-07 闸口措辞与四条腿
 
-@Suite("ES · 闸口措辞唯一住所与三条导出腿")
+@Suite("ES · 闸口措辞唯一住所与四条导出腿")
 struct DeliveryGateWordingGuardTests {
 
     /// ⚠️ 这里**故意没有**"闸口措辞只许住 Core"那种文本扫描判据。
@@ -269,11 +269,11 @@ struct DeliveryGateWordingGuardTests {
     /// 而"Core 侧必须 ≥1"当场读出 0（2026-10-19 实测）。
     /// 措辞的唯一住所由**类型**保证：App 侧只能 `throw ExportError.deliveryBlocked(blocked)`，
     /// 拿到的是 Core 产出的字符串，没有构造权 ⇒ 想抄就得自己写一遍，而那条变异腿数的是标识符。
-    @Test("三条交付腿都必须调 durationRejectionMessage（少一条就是漏挂闸）")
+    @Test("四条交付腿都必须调 durationRejectionMessage（少一条就是漏挂闸）")
     func allDeliveryLegsCallTheDurationGate() {
         let n = esCount(["DeliveryGate.durationRejectionMessage"], inFiles: esSwiftFiles(under: "MixCut"))
-        #expect(n >= 3,
-                "只有 \(n) 处调用时长闸，少于三条腿（整方案配音 / 整方案普通 / 单分镜变体）⇒ 有一条漏挂")
+        #expect(n >= 4,
+                "只有 \(n) 处调用时长闸，少于四条腿（整方案普通 / 整方案配音 / 单分镜变体 / 单分镜原版）⇒ 有一条漏挂")
     }
 
     @Test("变异腿：摘掉其中一条腿的时长闸 ⇒ 计数守卫必须变红")
@@ -290,8 +290,8 @@ struct DeliveryGateWordingGuardTests {
             total += ExportSizeScan.count(in: TagRowHostScan.codeOnly(text),
                                           "DeliveryGate.durationRejectionMessage")
         }
-        #expect(total < 3,
-                "摘掉一条腿的闸之后计数仍是 \(total)，没跌破 3 ⇒ 那条守卫数的是别的东西")
+        #expect(total < 4,
+                "摘掉一条腿的闸之后计数仍是 \(total)，没跌破 4 ⇒ 那条守卫数的是别的东西")
     }
 }
 
@@ -342,5 +342,51 @@ struct ExportSizeMutationTests {
         let real = "let canvas = DeliveryCanvas(width: 480, height: 854)"
         #expect(!ExportSizeScan.bannedHits(file: "fixture", src: real).isEmpty,
                 "同形状的代码位写法没被抓到 ⇒ 这条阴性读数是假绿")
+    }
+}
+
+// MARK: - ES-08 面板导出偏好的唯一住所
+
+@Suite("ES · 面板导出偏好只住 @AppStorage")
+struct ExportPreferenceStorageGuardTests {
+    private let viewPath = "MixCut/Views/Export/ExportView.swift"
+
+    /// 四颗偏好键。键名活在**字符串字面量**里 ⇒ 本组一律扫**原文**，不走 `codeOnly`
+    /// （它剥字符串；ES-05 那条恒真假牙就是这么识破的，别再犯一次）。
+    private let keys = ["exportDeliveryTargetRaw", "exportResolutionRaw",
+                        "exportCodecRaw", "exportQualityRaw"]
+
+    private func rawCount(_ src: String, _ token: String) -> Int {
+        src.components(separatedBy: token).count - 1
+    }
+
+    @Test("四颗键都必须出现在面板里（少一颗就是那项选择又每次回默认）")
+    func allFourKeysAreWired() {
+        let src = esRead(viewPath)
+        #expect(src.count > 3000, "读不到导出面板 —— 判据没跑起来，不算通过")
+        for key in keys {
+            #expect(rawCount(src, key) >= 1, "「\(key)」不在面板里 ⇒ 这颗偏好没被持久化")
+        }
+    }
+
+    @Test("面板不许让第二处状态持有 ExportConfig：@State 那份必须不存在，派生那份必须恰好一处")
+    func configHasExactlyOneOwner() {
+        let src = esRead(viewPath)
+        #expect(rawCount(src, "@State private var exportConfig") == 0,
+                "面板又用 @State 存了一份导出配置 ⇒ 与 @AppStorage 各有一份真相")
+        #expect(rawCount(src, "private var exportConfig: ExportConfig {") == 1,
+                "exportConfig 必须是单一派生组装处（0 处＝没有组装点，>1 处＝又抄开）")
+    }
+
+    @Test("变异腿：把面板改回 @State 持有 ⇒ 上一条必须抓到")
+    func revivingStateTurnsItRed() {
+        let src = esRead(viewPath)
+        let mutated = src.replacingOccurrences(
+            of: "    @State private var isExporting = false",
+            with: "    @State private var exportConfig = ExportConfig()\n"
+                + "    @State private var isExporting = false")
+        #expect(mutated != src, "变异没落地，对照作废")
+        #expect(rawCount(mutated, "@State private var exportConfig") == 1,
+                "复活的 @State 抄本没被抓到 ⇒ configHasExactlyOneOwner 是恒绿的假牙")
     }
 }

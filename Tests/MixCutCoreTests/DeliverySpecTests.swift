@@ -495,3 +495,46 @@ struct DerivedMetricBasisTests {
         #expect(large > small, "\(basis.0)×\(basis.1) 基准上字号翻倍而下限没涨：\(small) → \(large)")
     }
 }
+
+// MARK: - DP · 界面偏好的还原规则（`init(persisted:fallback:)`）
+
+@Suite("DP · 持久化偏好还原")
+struct PersistedPreferenceTests {
+
+    @Test("认得的 rawValue 原样还原 —— 缺省故意给成另一颗，防「解析没发生也绿」",
+          arguments: DeliveryTier.allCases.map { $0.rawValue })
+    func knownRawRoundTrips(_ raw: String) {
+        let parsed = DeliveryTier(rawValue: raw)
+        #expect(parsed != nil, "allCases 里拿出来的串居然解析不了：\(raw)")
+        if let parsed {
+            let fallback = DeliveryTier.allCases.first(where: { $0 != parsed }) ?? parsed
+            #expect(DeliveryTier(persisted: raw, fallback: fallback) == parsed,
+                    "认得的串没还原成本值（缺省给的是 \(fallback.rawValue)）")
+        }
+    }
+
+    @Test("不认识的值回落到调用方给的那颗，而不是 allCases 第一个")
+    func unknownUsesGivenFallback() {
+        let firstCase = DeliveryTier.allCases.first
+        for junk in ["", "480p", "P1080", "1080p ", "原始分辨率 "] {
+            #expect(DeliveryTier(persisted: junk, fallback: .p720) == .p720,
+                    "「\(junk)」应回落到 720p")
+        }
+        // 牙齿：缺省那颗必须**不是**第一个 case，否则实现偷写成 allCases.first 也照样绿
+        #expect(firstCase != .p720, "对照失效：720p 恰好是第一个档位，这条抓不到偷写的实现")
+    }
+
+    @Test("交付目标读不出来时必须回落到带闸那颗，不得静默变成「不限」")
+    func targetFallbackKeepsTheGate() {
+        #expect(DeliveryTargetID(persisted: "unrestricted", fallback: .qianchuanVertical) == .unrestricted)
+        for junk in ["", "qianchuan", "千川", "QianchuanVertical"] {
+            let got = DeliveryTargetID(persisted: junk, fallback: .qianchuanVertical)
+            #expect(got == .qianchuanVertical, "「\(junk)」应回落到千川，实得 \(got.rawValue)")
+            #expect(!got.spec.provenRejected.isEmpty,
+                    "回落目标的拒收证据表是空的 ⇒ 它拦不住任何东西")
+        }
+        // 同管道阳性对照：证明「不限」确实是空表，否则上面那条牙齿是恒真的
+        #expect(DeliveryTargetID.unrestricted.spec.provenRejected.isEmpty,
+                "对照失效：「不限」目标已有拒收证据表，上一条断言不再有意义")
+    }
+}
