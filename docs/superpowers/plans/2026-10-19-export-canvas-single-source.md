@@ -111,6 +111,18 @@
 | 其余 9 支 `check_*_guards.sh` | 全 PASS |
 | `check_mcp_api_guards.sh` | **未跑完** —— 见 §六 |
 
+### 〔2026-10-20 这一轮的重取读数〕
+
+| 腿 | 结果 |
+|---|---|
+| `swift test` 全量 | **Test run with 1183 tests passed，4 known issues（仍是那四条故意红钉），非 known 失败 0**（上一轮 1171 → 新增 LC 6 ＋ DP 3 ＋ ES-08 3） |
+| `scripts/check_app_build.sh` | PASS（xcodebuild 全工程，258 编译单元） |
+| App 测试腿（全 `MixCutAppTests`，含闸） | **21 条 0 红，连跑两次**；两次都只有 1 个宿主实例（对照：无闸时同样单实例却红 1~2 条）。② 落地后新增 VB 组 3 条 ⇒ **24 条 0 红，再连跑两次**（头一版 VB 没收闸时立刻红 3 条，见"台架账"） |
+| 11 支守卫（`check_pbx_registration` ＋ 10 支 `check_*`） | **全 PASS**（② 落地后又复跑一遍，仍全 PASS） |
+| `check_mcp_api_guards.sh` | **`--preflight-only` 已跑绿**（U07 六处成对＋一处互斥、U01 产物含 DEBUG 假库开关、U05 产物 10-20 12:10 不早于任何输入、U03 端口 8787 空闲，用户实例已退出）。**完整跑仍待用户对本条命令的明示授权** —— 它会启动一个 Debug SunCut 实例并快照/还原用户偏好；这一腿被权限层拦下，未绕过 |
+| `check_mcp_api_guards.sh` | **仍未跑** —— 前提没变（要占 8787、起第二个 SunCut、快照/还原用户偏好），见 §六-5 |
+| 分界实测（App 真链路 ＋ 同形 shell） | 见文末「§六-9 的处置结果」两张表 |
+
 ### 过程中被守卫逮到的两件事（都是我的问题，不是误伤）
 
 1. **`MediaAvailabilityGuardTests` G-M01 红**：我在 `DubExportService` 新增 2 处 `fileExists`
@@ -149,6 +161,13 @@
 没有拿到 `esIScratch()` 抛出的错误原文（它在诊断范围外）。若哪天有人把这组改回并行，
 预期症状就是本段描述的样子。
 
+〔2026-10-20 补，这一环已钉上并换了正确的修法〕上面那句"串行化让它稳定"只撑到本目标
+还只有一组渲染腿为止：新增 LC-I（第三组会 spawn 的 suite）之后全目标又红，症状一模一样。
+**根因是 `.serialized` 的作用域只到单个 suite，不管 suite 之间** —— 所以组内串行从来只是
+必要条件。修法改在台架层：跨 suite 的进程内闸 `withFFmpegBench` ＋ 抛错必记具名原因，
+11 条渲染用例全部收进闸内；对照读数与作废的那次假绿（`-parallel-testing-enabled NO`
+把用例数收成 0 却报 TEST SUCCEEDED）见文末「台架账」。
+
 ## 五、行为变更清单（需知悉）
 
 | 变更 | 影响面 |
@@ -161,6 +180,8 @@
 | `ShotCompositionService.compose` 默认参数移除 | 1 个调用方（`ShotEditViewModel.swift:535`）已同批改 |
 | MCP `export_scheme` 结果 JSON 的 `exported` 由 `[路径]` 变成 `[{path,canvas,delivery_target}]` | 形状变更。实测无消费方（`mcp_api_guards.py` 不读它、`AgentToolCatalogTests` 只断 required 两键），但**外部 agent 若已按旧形状解析会断** |
 | MCP `export_scheme` 新增可选入参 `delivery_target` | 不传即千川。未知值硬报错（不静默回退）⇒ 传过拼错值的调用方会从"静默按默认跑"变成"报错" |
+| 〔2026-10-20〕含**不足 3s 纯数字静音分镜**的方案：以前整条 `rc=234` 失败，现在能导出来 | 那条短静音分镜的音轨改走静音支路（内容等价：全零采样归一后仍是全零）。**作用面已量死**：有电平 1.0s、−81dB 近静音 2.5s 均逐字节不变，各有对照腿 |
+| 〔2026-10-20〕导出面板四颗选择改为持久化 | 交付目标／档位／编码器／质量跨会话记住（以前每次进页面回默认）。副作用：上次选到一颗会被平台拦的档位，下次进来仍是那颗 —— 面板回显与导出前闸都还在，拦得住 |
 
 ## 六、还欠什么
 
@@ -226,6 +247,8 @@
      —— 那正是本次在修的东西，不做半吊子版本。
    - **屏上没看过**。要看得重启用户正开着的 SunCut（PID 21334），按 `CLAUDE.md` 的规矩
      杀用户实例前须先确认 ⇒ 已交由用户决定，不声称已验证。
+     〔2026-10-20：持久化这一半已按「单一来源」落地，`@State` 那份持有已删除并有守卫钉住，
+     见文末「§六-4 面板持久化的处置结果」。屏上实机看这一半**仍欠**，仍未重启用户实例。〕
 5. **`check_mcp_api_guards.sh` 未跑完**：端口 8787 被用户正开着的 SunCut（PID 21334）持有。
    该守卫会启动第二个实例并快照/还原用户偏好，而本轮改动与 MCP 零交集 ⇒ 未擅自执行。
    要跑需用户先退出 SunCut，或明示授权用 `MCP_PORT` 换端口跑。
@@ -255,6 +278,9 @@
    要修得先按产品链路重取分界，属独立一轮，本轮不动。
    `MixCutAppTests/ExportDurationGateTests.swift` 第三条因此**故意不断言"1 秒能导成功"**，
    只断"不是被时长闸拦的" —— 否则这条判据会被一个无关故障绑住。
+   〔2026-10-20：**分界已沿产品链路量出、缺陷已修**（成因是 `loudnorm` × 纯数字静音 × 不足 3s，
+   不是"短时长方案"这么笼统），处置与读数见文末「§六-9 的处置结果」。LC-I 那三条真渲染腿
+   已把"1 秒静音必须真导出来"钉成判据。〕
 
 ## 六-2 的处置结果（2026-10-19 晚，按推荐的「只拦变体」执行）
 
@@ -280,7 +306,184 @@
 拿到的是 Core 产出的字符串，没有构造权。留下的有效守卫是"三条腿都调
 `DeliveryGate.durationRejectionMessage`"（代码位标识符，`codeOnly` 保留）＋ 一条摘腿变异腿。
 
-## 七、改动文件（已分 11 笔提交，工作树干净、未推送）
+## §六-9 的处置结果（2026-10-20：分界已量出，缺陷已修）
+
+### 上一轮那条 shell 复现为什么作废，这一轮凭什么算数
+
+上一轮我在 shell 里扫 1.0/2.0/3.0/3.5/4.0s，**五个全红** ⇒ 复现命令与产品链路不同形，读数无效。
+这一轮改成**沿真产品链路扫**（`ExportService.export` → `FFmpegRunner.concat`，跑在 App 测试腿上，
+宿主就是包内 ffmpeg 8.1），再让 shell 台架**先复现出产品链路量到的那颗分界**，才允许它做消融：
+
+| 台架 | 2.5s | 3.0s | 凭什么可信 |
+|---|---|---|---|
+| App 测试腿（真链路） | **rc=234** | **rc=0** | 打的就是产品函数本身，一次跑测出整条分界 |
+| shell（按 `concat()` 逐参数复刻） | **rc=234** | **rc=0** | 与上一行同形，之后才拿它做消融与取值 |
+
+### 分界与成因：三因合取，缺一不炸
+
+| 条件 | 读数 |
+|---|---|
+| 纯数字静音 ＋ 2.5s / 2.9s | **rc=234**，stderr 有 `[aac] Input contains (near) NaN/+-Inf` |
+| 纯数字静音 ＋ 3.0s / 3.1s / 6.0s | rc=0 |
+| 有电平（440Hz）＋ 1.0s / 2.5s | rc=0 |
+| 近静音（实测 RMS −81.08 dB）＋ 2.5s | rc=0 |
+| **1s 静音分镜 ＋ 4s 有声分镜（总 5s）** | **rc=234** ⇒ 尺寸闸、4s 时长闸都过了仍整条死 |
+
+成因：ffmpeg 8.1 的 `loudnorm` 只剩线性模式（`-h filter=loudnorm` 实测已无 `duration`/
+`dynaudnorm`/`override` 等动态档开关），对**不足测量窗的纯数字静音**给出 NaN，
+aac 编码器拒收 ⇒ 整条导出失败。**中毒单位是单条分镜，不是成片总时长** —— 所以 §六-8 立的
+时长闸救不了它，两条管的是同一类东西却拦不住彼此。屏上此前只有一句
+「视频处理失败…（错误码 234）」，原因一个字都没说。
+
+### 修法与它的作用面
+
+规则落 Core：`Sources/MixCutCore/DubSegmentGraph.swift` 新增 `LoudnessChainPolicy`
+（`measurementWindowSeconds = 3.0` ＋ `needsSilenceProbe` ＋ `mustBypassLoudnorm`）。
+`FFmpegRunner.concat` 的音频支路判据从「有没有音轨」换成「**有没有可听的音频**」，
+新增 `probePureDigitalSilence`，取值口径是 `astats` 的 `RMS level dB: -inf`。
+
+判据只认 `-inf`（不是"够安静"）⇒ **作用面严格等于今天必然失败的那些**：
+有电平与近静音两条腿各钉了一条"必须仍走 loudnorm"的对照，滤镜串对这些片子逐字节不变。
+探测只在不足窗口时发起（长段不付这次解码），探测失败一律按"非静音"处理 ⇒ 不把"没读到"读成"是静音"。
+
+排除掉的路线（都实测过，不是推断）：
+- `loudnorm=…:linear=0` —— **不修**（2.5s 纯静音仍 rc=234），且对有电平音频增益无影响
+  （mean_volume 两写法都是 −15.3 dB）⇒ 这颗开关在 8.1 上是死的。
+- 把时长闸提到 3s 以上 —— 治不了它（M1 那格总时长 5s 已过闸），还会误伤合法短分镜。
+
+### 变异腿：把判据摘掉，红的恰好只有该红的那几条
+
+把 `LoudnessChainPolicy.mustBypassLoudnorm` 的实现临时改成恒 `false`（跑完按预读字节整份还原，
+md5 对回原值），两侧读数：
+
+| 腿 | 变异态结果 |
+|---|---|
+| Core `实测分界` | **红**，且逐参数报 `2.9 / 2.5 / 1.0` 三格 `bypass → false` |
+| Core `近静音不等于静音` / `零长负长` | **红**（各 1 issue） |
+| Core `有电平一律不绕开` / `达到窗口不绕开` | **绿** —— 它们断言的正是 false，摘掉判据当然不违反 |
+| App `LC-I-01 最小复现（1s 静音单段）` | **红** |
+| App `LC-I-02 真产品可达形态（1s 静音＋4s 有声）` | **红** |
+| App `LC-I-03 探测作用面` | **绿** —— 它测 `probePureDigitalSilence` 本身，与这条判据无关 |
+| App ES-I 5 条 / DG 3 条 | **绿** —— 它们的源是 `-an`（无音轨），根本不进这条支路 |
+
+⇒ 这条判据是**承重**的，且判据集对它的作用面判断是准的：只有依赖它的用例红，
+不该依赖的一条都没被牵连。
+
+### 族账：`loudnorm` 在仓库里有两处住所，本轮只修了有复现的那一处
+
+- `FFmpegRunner.concat` —— 整方案导出与分镜中间片合成（`ShotCompositionService`）两条腿都走它 ⇒
+  **已修**，并已真渲染取证。
+- `DubSegmentGraphBuilder.loudnorm` —— 配音中间片那条腿，输入是 TTS 配音 m4a，**未复现**该态 ⇒ 不凭空
+  改这里；已在代码就地留指针注释，要判得先给 builder 传"这条配音多长／是否纯静音"。
+
+### 同一条链上的另一处读数：产物音频落盘 96000 Hz，不是链上写的 44100
+
+`concat()` 的音频链写的是 `aresample=44100,loudnorm=…` —— 但 `loudnorm` 内部把采样率抬到 192kHz
+再输出，`aresample` 在它**之前**所以白做，aac 编码器上限 96k ⇒ **每一条成功导出的成片落盘都是
+96000 Hz**（产品链路 stderr 直读，另用 ffprobe 在 4 颗产物上复核）。把 `aresample=44100` 挪到
+`loudnorm` **之后**即可兑现链上写的那句话：
+
+| 量（真素材 `爆点2/…309.mp4`） | 现状（resample 在前） | 挪后 |
+|---|---|---|
+| mean_volume @6s / @12s | −18.5 / −21.5 dB | −18.5 / −21.5 dB |
+| max_volume | −2.9 dB | −3.0 dB |
+| 落盘采样率 | **96000** | **44100** |
+
+〔我第一版消融表里"输出采样率"整列读的"无音频流"是**台架故障** —— 我拿 ffmpeg 当 ffprobe 用了，
+`-show_entries` 它不认。上表是改对之后重取的。〕
+
+**未落地**，等拍：它改的是每一条交付件的音频采样率（影响面＝全量导出），而 96k 至今没有一条
+平台侧受害证据。要动只改一处滤镜顺序，对照数据已备好。
+
+## §六-4 面板持久化的处置结果（2026-10-20）
+
+四颗选择（交付目标／分辨率档／编码器／质量）现在**只住 `@AppStorage`**，
+`ExportView.exportConfig` 改成每次现组装的派生计算属性，`@State` 那份持有已删除 ——
+不是"再存一份到 UserDefaults 然后同步回 @State"（那正是本轮在修的形状）。
+
+- 键：`exportDeliveryTargetRaw` / `exportResolutionRaw` / `exportCodecRaw` / `exportQualityRaw`
+  （存枚举 `rawValue` 串，与本仓 `importDefaultSourceRaw`、`asrPreferenceRaw` 同形）。
+- 还原规则一份：`RawRepresentable` 扩展 `init(persisted:fallback:)`（Core，`swift test` 覆盖）。
+  读不认识的值 ⇒ 回落调用方给的缺省，**不**回落到 `allCases.first`。
+- 缺省值一份：只有 `ExportConfig` 那四行属性初值。面板初值与 `@AppStorage` 初值都从
+  `ExportConfig()` 现取，不另写缺省表。
+- 守卫 3 条（`ES · 面板导出偏好只住 @AppStorage`）：四颗键在场、`@State private var exportConfig`
+  必须为 0 且派生组装处恰好 1 处、以及"复活 @State 抄本必须被抓住"的变异腿。
+  这组**扫原文不扫 `codeOnly`** —— 键名活在字符串字面量里，走 `codeOnly` 会当场变成恒真判据
+  （同一个坑本轮踩过一次，见下面"我写了又删的判据"）。
+- **屏上仍未实机看过**：要看得重启用户正开着的 SunCut，按 `CLAUDE.md` 规矩杀用户实例前须先确认 ⇒
+  已交由用户决定，本轮不声称已验证。
+- 范围外并案（不是挂着，是判过不做）：BGM 选择与音量不落盘 —— 它是**内容选择**不是设备偏好，
+  且面板已有"文件还在不在"的复检；把它持久化会把"选过的 BGM 已被删"变成每次进页面都要处理的状态。
+
+## 台架账：跨 suite 的渲染腿必须共一道闸（2026-10-20，红→定位→绿）
+
+§四 末记的那颗未解释空抛，本轮**定位到了作用域并修在台架层**（生产码未动）：
+
+| 配置 | 结果 |
+|---|---|
+| ES-I 单独跑（5 条） | 绿 |
+| LC-I 单独跑（3 条） | 绿 |
+| ES-I ＋ LC-I 并跑 | 一次红 2 条、一次绿 ⇒ **失败集合会移动** |
+| 全目标（新增 LC-I 后，无闸） | 一次红 1 条、一次红 2 条，两次红都只在**一个**宿主实例内 |
+| 全目标 ＋ `withFFmpegBench` 闸 | **21 条全跑、0 红**，连跑两次 |
+| 全目标 ＋ 闸，但**新加的第四组渲染腿（VB 3 条）没收闸** | **又红 3 条**（`ES-I-01` ＋ VB 两条）⇒ 反向确认了因果：漏一组进闸＝等于没闸，症状与之前一模一样 |
+| 全目标 ＋ 14 条全收闸 | **24 条 0 红**（读数见 §四 补记） |
+
+根因：`.serialized` 的作用域是**单个 suite**，不管 suite 之间。加了第三组会 spawn 的渲染腿之后，
+suite 之间并行 ⇒ 子进程/临时目录压力一起上来，抛点在各文件 `Issue.record` 诊断之外，所以是"瞎红"。
+修法：`MixCutAppTests/ExportCanvasReadbackTests.swift` 里加进程内 FIFO 闸 `FfBenchGate` ＋
+`withFFmpegBench(_:_:)`，会 spawn 的用例体**全部**收进这道闸（ES-I 5 ＋ DG 3 ＋ LC-I 3 ＋ VB 3 ＝ 14 条），
+顺带把"抛出必须记具名原因"补上（本目标四轮瞎红都栽在不打原因上）。
+`.serialized` 保留 —— 它管组内顺序，是必要的但不充分；已把这段写进两处注释，别再当成已经修完。
+
+⚠️ 闸门只在**进程内**有效：实测跑子集时 xcodebuild 会起 2~4 个宿主实例（跑全目标起 1 个），
+实例之间仍会互相压。别用 `-parallel-testing-enabled NO` 去治 —— 实测它把用例数收成 0 却报
+**TEST SUCCEEDED**，是假绿（本轮抓到并作废过一次读数）。
+
+## §六-2 漏口 #7 的处置结果（2026-10-20，拍定「只拦不改」）
+
+### 当初记的两条路都不是该走的路
+
+(a)「给 `cutSegment` 加必填画布」与 (b)「交付腿改走 `exportSingleSegment`」都是**为了修尺寸不合而改掉产物**。
+而"原版"这个词的意思就是源片原样 —— 给它加 scale 等于把这个名字变成谎话。加上各自实测到的代价
+（(a) 三条中间片白付 +18~23%；(b) 顺带吃进 `fps=30` 归一 ⇒ 25fps 素材出帧复制），两条都否掉了。
+
+### 落的是第三条：切前按交付目标拦，切完回读
+
+`VariantBatchExportService.deliverOriginal`：
+
+- 切之前用**这颗文件自己的**宽高 ＋ 切片时长过一次现成的两条闸（`DeliveryGate.rejectionMessage` ＋
+  `durationRejectionMessage`），不合就整条不导、进失败清单，文案仍是 Core 那一处（没有第二条措辞）。
+- 切完回读一次落盘宽高并与切前值比对 —— **这条腿此前零回读**。
+- 为什么现读而不是取 `video.width/height`：`effectivePicture` 可能是**合成过的中间片**，
+  它的尺寸与源视频并不必然相同 ⇒ 拿源片数字当产物数字，等于闸白挂。读不到宽高即整条失败，
+  「没读到」不算"合格"。
+- 作用面：只在交付目标为千川时生效；选「不限（仅本地留档）」照常出原版 ⇒ 想留档的路径没被堵。
+
+屏上那句「原版按源片尺寸原样切出、**不做交付规格校验**」已改掉（继续写着就是假话），
+现在写的是"变体与原版都校验、不合规格的那条不导；区别只在变体缩放、原版不缩放"。
+
+### 三条真跑读数（`MixCutAppTests` 的 VB 组，打的是真 `exportAll`）
+
+| 用例 | 实测 |
+|---|---|
+| 480×960 源、切 5s（时长刻意合） | `succeeded=0 products=[]`，原因原文：**输出画布 480×960 不可投放（该尺寸已被实传证明拒收；2026-10-19…）…若确需该尺寸，请选「不限（仅本地留档）」交付目标** |
+| 1080×1920 源、切 2s（尺寸刻意合） | `succeeded=0 products=[]`，原因原文：**成片时长 2.0s 不可投放（时长须落在 4s ~ 300s 之间…）** |
+| 1080×1920 源、切 5s（两条都合，阳性对照） | `succeeded=1 products=["原版.mp4"]`，回读 1080×1920 |
+
+两条拦截用例各自**只让一条规则不满足**，所以"被拦下"能归到该归的那条上；
+阳性对照证明前两条的红不是台架坏了。守卫同步改口：ES-07 从"三条腿"改成**四条腿**
+（计数 3→4，含摘一条腿的变异腿），Core 里 `durationRejectionMessage` 文档中"三条导出腿"那句同轮一起改。
+
+### 族账（还剩一处未收，等拍）
+
+同一形状的还有 **MCP 的 `export_segments`**（`BatchSegmentExportService`，只有 MCP 在用、UI 不走它）：
+它也是按源片尺寸切、也没有任何闸与回读。**本轮没顺手改**，因为那是自动化调用方的契约变化
+（它的 `failed` 数组会多出尺寸/时长原因条目），属 §六-3 那条"MCP 档位口径"同一件事，等一起拍。
+改动只有一处调用 + 一次 ffprobe，判据可复用 VB 那三条的写法。
+
+## 七、改动文件（12 笔已提交；2026-10-20 这一轮尚未提交）
 
 - 新增：`Sources/MixCutCore/DeliverySpec.swift`、`Tests/MixCutCoreTests/DeliverySpecTests.swift`、
   `Tests/MixCutCoreTests/ExportSizeSingleSourceGuardTests.swift`、`MixCutAppTests/ExportCanvasReadbackTests.swift`、
@@ -291,3 +494,23 @@
   `Tests/MixCutCoreTests/MediaAvailabilityGuardTests.swift`（名册计数 6→8 ＋ 84→86）、
   `scripts/check_pbx_registration.py`（EXPECTED 追加）、`scripts/link_test_files.py`（文件名改为可传参）、
   `CLAUDE.md`、`PRODUCT_SPEC.md`、`docs/ROADMAP.md`、`MixCut.xcodeproj/project.pbxproj`（2 个新文件登记）
+- 〔上面这份名单停在 15 条那个状态，落后于实际。同日晚上又落了 3 个 App 测试文件与一批闸门，
+  已在 §三 与提交历史里记账；2026-10-20 这一轮的清单见下〕
+- **2026-10-20 这一轮**（时长闸之后的独立一轮，未提交）：
+  新增 `Tests/MixCutCoreTests/LoudnessChainPolicyTests.swift`；
+  修改 `Sources/MixCutCore/DubSegmentGraph.swift`（新增 `LoudnessChainPolicy` ＋ 配音腿的族账注释）、
+  `Sources/MixCutCore/DeliverySpec.swift`（新增 `init(persisted:fallback:)`）、
+  `MixCut/Services/VideoProcessing/FFmpegRunner.swift`（`probePureDigitalSilence` ＋ 音频支路改判据）、
+  `MixCut/Services/Export/ExportService.swift`（`ExportConfig` 的四串 rawValue 组装处）、
+  `MixCut/Views/Export/ExportView.swift`（四颗 `@AppStorage` ＋ 派生 `exportConfig`）、
+  `MixCutAppTests/ExportDurationGateTests.swift`（新增 LC-I 三条真渲染腿、删掉临时诊断腿、
+  `source()` 提到文件级并支持静音/有电平/近静音三种源）、
+  `MixCutAppTests/ExportCanvasReadbackTests.swift`（`FfBenchGate` ＋ `withFFmpegBench`，5 条收进闸）、
+  `Tests/MixCutCoreTests/DeliverySpecTests.swift`（DP 组 3 条）、
+  `Tests/MixCutCoreTests/ExportSizeSingleSourceGuardTests.swift`（ES-08 组 3 条）、`CLAUDE.md`、本台账
+- **同日第二批（② 只拦不改）**：修改 `MixCut/Services/Export/VariantBatchExportService.swift`
+  （新增 `deliverOriginal`：切前两条闸＋切后回读；文件头那条"绕过全部尺寸决策"的注释已改成现状）、
+  `MixCut/Views/SegmentLibrary/BatchExportSheet.swift`（屏上那句"原版不做交付规格校验"已成假话，改掉）、
+  `MixCutAppTests/ExportDurationGateTests.swift`（新增 VB 组 3 条真跑腿，并收进同一道闸）、
+  `Tests/MixCutCoreTests/ExportSizeSingleSourceGuardTests.swift`（ES-07 三条腿→四条腿）、
+  `Sources/MixCutCore/DeliverySpec.swift`（文档里"三条导出腿"那句同步改四条）、本台账、`docs/优化日志.md`
