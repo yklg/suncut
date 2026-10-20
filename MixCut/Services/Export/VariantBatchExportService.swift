@@ -100,11 +100,13 @@ enum VariantExportInput {
     }
 }
 
-/// 变体感知批量导出：原版走 `cutSegment`（重编码、不带 scale），变体走 dub 渲染。
+/// 变体感知批量导出：原版走 `cutSegment`（重编码、**不带 scale**），变体走 dub 渲染。
 ///
-/// ⚠️ 原版那条腿**绕过全部尺寸决策**：`cutSegment` 没有 scale/pad，输出=源尺寸原样，
-/// 所以素材库里 540×960、480×960、704×1248 这类不合千川区间的分镜会原样导出去。
-/// 这是台账 §六-2 那颗待拍的漏口（改走带区间的渲染要付重编码+帧率归一的代价）。
+/// 两条腿**都不许静默出规格外的交付件**，但收法不同（这是刻意的，别改成一样）：
+/// · 变体：算出目标画布 → 前置闸 → 渲染 → 回读（见 `DubExportService.exportSingleSegment`）；
+/// · 原版：**不缩放**（"原版"就是源片原样，加 scale 会把这个名字变成谎话）⇒ 前置闸判这颗文件
+///   自己的宽高＋切片时长，不合就**整条不导**，切完再回读一次（`deliverOriginal`）。
+/// 历史：原版腿曾是台账 §六-2 的漏口 #7（绕过全部尺寸决策），2026-10-20 按"只拦不改"收口。
 actor VariantBatchExportService {
     private let ffmpeg: FFmpegRunner
     private let dubExport: DubExportService
@@ -137,8 +139,8 @@ actor VariantBatchExportService {
             do {
                 switch job {
                 case let .original(sourcePath, startTime, endTime, fps, _):
-                    try await ffmpeg.cutSegment(from: sourcePath, start: startTime, end: endTime,
-                                                fps: fps, to: outURL.path)
+                    try await deliverOriginal(sourcePath: sourcePath, start: startTime, end: endTime,
+                                              fps: fps, to: outURL.path, config: config)
                 case let .variant(spec, w, h, _):
                     try await dubExport.exportSingleSegment(spec: spec, videoWidth: w, videoHeight: h,
                                                             outputPath: outURL.path, config: config)
@@ -163,6 +165,45 @@ actor VariantBatchExportService {
         await onProgress(VariantExportProgress(total: total, completed: succeeded + failed.count,
                                                currentName: nil, failed: failed))
         return (succeeded, failed)
+    }
+
+    /// 原版这条腿：**切之前先按交付目标校验，切完再回读一次落盘宽高**。
+    ///
+    /// 为什么是"只拦不改"：`cutSegment` 不带 scale，产物尺寸就是这颗文件自己的尺寸 ——
+    /// 而"原版"这个词的意思就是"按源片原样"，给它加缩放等于把这个名字变成谎话。
+    /// 所以这里判的是**实际会出片的那颗文件**，不合规格就一条不导（进失败清单，原因由 Core 的
+    /// 闸口给出），而不是把它缩成合规。
+    ///
+    /// 为什么现读而不是取 `video.width/height`：「当前生效画面」可能是**合成过的中间片**
+    /// （见 `effectivePicture`，分镜编辑后尺寸与源视频并不必然相同）⇒ 判错一份数字等于闸白挂。
+    ///
+    /// 读不到宽高即整条失败：「没读到」不能当成"合格"（与整方案导出那条腿同规）。
+    private func deliverOriginal(sourcePath: String, start: Double, end: Double, fps: Double,
+                                 to outputPath: String, config: ExportConfig) async throws {
+        let spec = config.deliveryTarget.spec
+        guard let planned = await ffmpeg.probeCanvasSize(path: sourcePath) else {
+            throw ExportError.canvasUnverifiable(sourcePath)
+        }
+        if let blocked = DeliveryGate.rejectionMessage(for: spec,
+                                                       width: planned.width,
+                                                       height: planned.height) {
+            throw ExportError.deliveryBlocked(blocked)
+        }
+        if let blocked = DeliveryGate.durationRejectionMessage(for: spec,
+                                                               seconds: max(0, end - start)) {
+            throw ExportError.deliveryBlocked(blocked)
+        }
+
+        try await ffmpeg.cutSegment(from: sourcePath, start: start, end: end, fps: fps, to: outputPath)
+
+        // 后置回读：这条腿此前**零回读** —— 计划与落盘分叉时，只有拿到文件的人才会发现。
+        guard let landed = await ffmpeg.probeCanvasSize(path: outputPath) else {
+            throw ExportError.canvasUnverifiable(outputPath)
+        }
+        if landed != planned {
+            throw ExportError.canvasMismatch(planned: "\(planned.width)×\(planned.height)",
+                                             actual: "\(landed.width)×\(landed.height)")
+        }
     }
 
     /// 同名冲突 → 加 (1)(2)（与 BatchSegmentExportService 同策略）。
