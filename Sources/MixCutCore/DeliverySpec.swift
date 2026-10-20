@@ -399,6 +399,20 @@ public struct DeliverySpec: Sendable, Equatable {
     }
 }
 
+/// 从落盘的那串 rawValue 还原枚举 —— 界面偏好的唯一还原规则。
+///
+/// 为什么写成 `RawRepresentable` 扩展而不是每颗类型各抄一份：这条规则同时服务
+/// 交付目标 / 档位 / 编码器 / 质量四颗枚举。抄四份"读不出来就随便给一个"，
+/// 就是 2026-10-19 导出尺寸那次的形状（一条规则七个住所，改一处忘六处）。
+///
+/// ⚠️ 读不认识的值必须**显式回落**到调用方给的 `fallback`，不许写成 `allCases.first` 那种猜：
+/// 枚举改过名、或有人手改过 defaults 时，"面板显示 A、实际导出 B"正是这样产生的。
+public extension RawRepresentable where RawValue == String {
+    init(persisted raw: String, fallback: Self) {
+        self = Self(rawValue: raw) ?? fallback
+    }
+}
+
 /// 交付目标的可持久化标识（面板选择器与 `@AppStorage` 存的就是这颗）。
 ///
 /// 为什么不让 `@AppStorage` 直接存 `DeliverySpec`：它是带两张证据表的 struct，
@@ -444,8 +458,8 @@ public enum DeliveryGate {
              + "请改用其它分辨率档位；若确需该尺寸，请选「不限（仅本地留档）」交付目标。"
     }
 
-    /// 时长闸的文案 —— **同样只住这一处**。三条导出腿（整方案配音、整方案普通、单分镜变体）
-    /// 都调它；上一版我在两个文件里各写了一遍同样的话，那正是本轮在修的"同一句话多处抄"。
+    /// 时长闸的文案 —— **同样只住这一处**。四条导出腿（整方案配音、整方案普通、单分镜变体、
+    /// 单分镜原版）都调它；上一版我在两个文件里各写了一遍同样的话，那正是本轮在修的"同一句话多处抄"。
     public static func durationRejectionMessage(for spec: DeliverySpec, seconds: Double) -> String? {
         guard case .rejected(let reason) = spec.verdict(durationSeconds: seconds) else { return nil }
         let record = reason.evidence

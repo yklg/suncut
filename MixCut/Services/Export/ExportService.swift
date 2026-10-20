@@ -111,6 +111,25 @@ struct ExportConfig {
     }
 }
 
+extension ExportConfig {
+
+    /// 从落盘的四串 rawValue 还原本次导出配置 —— **唯一**的还原处。
+    ///
+    /// 缺省值只有属性初值那四行这一份：读不认识的值（枚举改过名、或有人手改过 defaults）
+    /// 就保持初值，这里不再另写一张缺省表 —— 否则"面板显示的缺省"和"导出的缺省"会分叉。
+    /// 面板那四颗 `@AppStorage` 的初值也一律从 `ExportConfig()` 现取（见 `ExportView`）。
+    init(deliveryTargetRaw: String, resolutionRaw: String,
+         codecRaw: String, qualityRaw: String) {
+        let base = ExportConfig()
+        self.init(deliveryTarget: DeliveryTargetID(persisted: deliveryTargetRaw,
+                                                   fallback: base.deliveryTarget),
+                  resolution: DeliveryTier(persisted: resolutionRaw,
+                                           fallback: base.resolution),
+                  codec: ExportCodec(persisted: codecRaw, fallback: base.codec),
+                  quality: ExportQuality(persisted: qualityRaw, fallback: base.quality))
+    }
+}
+
 /// 导出进度
 struct ExportProgress: Sendable {
     let phase: Phase

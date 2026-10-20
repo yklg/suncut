@@ -7,7 +7,25 @@ struct ExportView: View {
     @Environment(\.modelContext) private var modelContext
     @State private var dubVM = DubbingViewModel()
 
-    @State private var exportConfig = ExportConfig()
+    /// 导出设置的四颗选择：**只住在 `@AppStorage` 里**，`exportConfig` 是它们的派生视图。
+    ///
+    /// 为什么不是"存一份到 UserDefaults 再同步回 `@State`"：那等于同一份选择在两处各存一份，
+    /// 而同步迟早会漏一处 —— 2026-10-19 整批 41 条被千川拒收的成因形状就是"一条规则七个住所，
+    /// 改一处忘六处"。这里让 `@State` 彻底不持有这份状态，面板与导出读的是同一个住所。
+    /// 初值一律从 `ExportConfig()` 现取（缺省值的唯一住所是那四行属性初值，见 `ExportService`）。
+    @AppStorage("exportDeliveryTargetRaw") private var deliveryTargetRaw: String = ExportConfig().deliveryTarget.rawValue
+    @AppStorage("exportResolutionRaw") private var resolutionRaw: String = ExportConfig().resolution.rawValue
+    @AppStorage("exportCodecRaw") private var codecRaw: String = ExportConfig().codec.rawValue
+    @AppStorage("exportQualityRaw") private var qualityRaw: String = ExportConfig().quality.rawValue
+
+    /// 派生值：每次读都从上面那四颗现组装，自己不持有任何状态。
+    private var exportConfig: ExportConfig {
+        ExportConfig(deliveryTargetRaw: deliveryTargetRaw,
+                     resolutionRaw: resolutionRaw,
+                     codecRaw: codecRaw,
+                     qualityRaw: qualityRaw)
+    }
+
     @State private var isExporting = false
     @State private var exportProgress: BatchExportProgress?
     @State private var exportedFolder: String?
@@ -406,15 +424,16 @@ struct ExportView: View {
             }
 
             VStack(spacing: DesignTokens.Spacing.compact) {
-                Picker("交付目标", selection: $exportConfig.deliveryTarget) {
+                // selection 直接绑到 @AppStorage 那棵（String rawValue），面板与落盘同一份
+                Picker("交付目标", selection: $deliveryTargetRaw) {
                     ForEach(DeliveryTargetID.allCases) { target in
-                        Text(target.label).tag(target)
+                        Text(target.label).tag(target.rawValue)
                     }
                 }
 
-                Picker("分辨率", selection: $exportConfig.resolution) {
+                Picker("分辨率", selection: $resolutionRaw) {
                     ForEach(ExportConfig.ExportResolution.allCases) { res in
-                        Text(res.rawValue).tag(res)
+                        Text(res.rawValue).tag(res.rawValue)
                     }
                 }
 
@@ -426,15 +445,15 @@ struct ExportView: View {
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, alignment: .leading)
 
-                Picker("编码器", selection: $exportConfig.codec) {
+                Picker("编码器", selection: $codecRaw) {
                     ForEach(ExportConfig.ExportCodec.allCases) { codec in
-                        Text(codec.rawValue).tag(codec)
+                        Text(codec.rawValue).tag(codec.rawValue)
                     }
                 }
 
-                Picker("质量", selection: $exportConfig.quality) {
+                Picker("质量", selection: $qualityRaw) {
                     ForEach(ExportConfig.ExportQuality.allCases) { q in
-                        Text(q.rawValue).tag(q)
+                        Text(q.rawValue).tag(q.rawValue)
                     }
                 }
 
