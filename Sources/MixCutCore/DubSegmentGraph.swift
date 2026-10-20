@@ -43,6 +43,9 @@ public struct VocalsSource: Sendable, Equatable {
 /// 逐句字幕：每句一个 overlay + `enable='between(t,起,止)'`（t=分镜内 0 起，由 trim/setpts 保证）。
 /// 旧数据/整段兜底：调用方传 1 条 [0, 分镜时长] 的 CaptionOverlay 即等价整段全程。
 public enum DubSegmentGraphBuilder {
+    /// ⚠️ 这条链同样吃 `loudnorm`，因此理论上有同一颗雷（见 `LoudnessChainPolicy` 的实测）。
+    /// 但本腿的输入是配音 m4a，**未复现**该态 ⇒ 不凭空改这里的音轨；要判得先给 builder
+    /// 传进"这条配音有多长、是不是纯静音"。
     private static let loudnorm = "loudnorm=I=-16:TP=-1.5:LRA=11"
     /// trailingSilence 视为 0 的阈值（秒）
     private static let silenceEpsilon = 0.001
@@ -157,5 +160,40 @@ public enum DubSegmentGraphBuilder {
         return DubSegmentGraph(filterComplex: parts.joined(separator: ";"),
                                videoMapLabel: "[vout]",
                                audioMapLabel: "[aout]")
+    }
+}
+
+/// 「这段音频能不能喂给 `loudnorm`」的唯一判据。
+///
+/// 为什么必须存在（2026-10-20 沿产品链路实测）：包内 ffmpeg 8.1 的 `loudnorm` 在
+/// **纯数字静音 + 时长不足它的测量窗**时吐出 NaN 采样，aac 编码器随即拒收，
+/// 整条导出以 `rc=234 / Error submitting audio frame to the encoder` 失败，
+/// 而屏上只剩一句「视频处理失败（错误码 234）」——原因一个字都没说。
+///
+/// 实测分界（同一颗静音源、同一条滤镜链，只差时长）：
+/// 2.5s 与 2.9s ⇒ rc=234 且 stderr 有 `Input contains (near) NaN/+-Inf`；
+/// 3.0s、3.1s、6.0s ⇒ rc=0。**只有纯静音会中**：−81 dB 级近静音 2.5s、
+/// 440Hz 有电平 1.0s 都是 rc=0。
+/// 中毒单位是**单条分镜**不是成片总时长：1s 静音分镜 + 4s 有声分镜（总 5s，
+/// 过千川时长闸）照样整条红 —— 所以光靠时长闸拦不住它。
+///
+/// 判据为什么是「恰好 -inf」而不是「足够安静」：`astats` 对纯数字静音报
+/// `RMS level dB: -inf`，对 −81 dB 报有限值，实测只有前者触发 NaN。
+/// 于是本判据的作用面严格等于「今天必然失败的那些」，对现在能导的片子逐字节不变。
+public enum LoudnessChainPolicy {
+
+    /// ffmpeg 8.1 `loudnorm` 的测量窗（秒）。R128 短时响度窗同为 3s，与实测分界吻合。
+    public static let measurementWindowSeconds: Double = 3.0
+
+    /// 要不要为「是不是纯静音」花一次探测。
+    /// 够长的音频今天就不中毒 ⇒ 不为它付那一次解码，探测成本只摊在短段上。
+    public static func needsSilenceProbe(durationSeconds: Double) -> Bool {
+        durationSeconds < measurementWindowSeconds
+    }
+
+    /// `true` ⇒ 这一段必须走静音支路，不许喂给 `loudnorm`。
+    public static func mustBypassLoudnorm(durationSeconds: Double,
+                                         isPureDigitalSilence: Bool) -> Bool {
+        needsSilenceProbe(durationSeconds: durationSeconds) && isPureDigitalSilence
     }
 }

@@ -622,6 +622,31 @@ actor FFmpegRunner {
         })
     }
 
+    /// 这一段切片是不是**纯数字静音**（每个采样都为 0）。
+    ///
+    /// 为什么需要它：`loudnorm` 吃到不足测量窗的纯静音会吐 NaN，aac 编码器拒收 ⇒
+    /// 整条导出 `rc=234`（实测与判据见 `MixCutCore.LoudnessChainPolicy`）。
+    /// 调用方只在"短到需要判"时才调它，所以这里不必再设门槛。
+    ///
+    /// 判据取 `RMS level dB: -inf` 而不是「低于某个 dB」：实测 −81 dB 级近静音走原链
+    /// 完全正常，只有 -inf（全零）会触发 NaN ⇒ 用阈值就会把今天能导的片子一起改道。
+    ///
+    /// 探测失败 / 读不到那行 ⇒ 返回 `false`（保持现有行为）。
+    /// ⚠️ 这里「没读到」绝不能读成「是静音」：那会把一条有声分镜悄悄换成静音交付。
+    func probePureDigitalSilence(path: String, start: Double, end: Double) async -> Bool {
+        let args = ["-v", "info",
+                    "-ss", String(format: "%.3f", max(0, start)),
+                    "-to", String(format: "%.3f", end),
+                    "-i", path,
+                    "-af", "astats=measure_perchannel=none",
+                    "-f", "null", "-"]
+        guard let text = try? await runForStderr(arguments: args) else {
+            MixLog.error("[FF] 静音探测未跑成（astats），按「非静音」处理以维持现有行为")
+            return false
+        }
+        return text.contains("RMS level dB: -inf")
+    }
+
     /// 拼接多个视频片段为一个 MP4（统一编码，确保多源视频可混剪）
     /// 使用 filter_complex concat 方式，自动处理不同分辨率/编码/帧率
     func concat(segments: [(path: String, start: Double, end: Double)],
@@ -634,17 +659,37 @@ actor FFmpegRunner {
                 onProgress: (@Sendable (FFmpegProgress) -> Void)? = nil) async throws {
         guard !segments.isEmpty else { return }
 
-        // 并行探测每个输入是否有音频轨道
-        let hasAudio: [Bool] = await withTaskGroup(of: (Int, Bool).self) { group in
+        // 并行决定每个输入的音频走哪条支路：源音轨（过 loudnorm）还是补静音。
+        //
+        // 这里原先只问「有没有音轨」，而正确的问法是「有没有**可听的**音频」——
+        // 一条有音轨但整段是纯数字静音的分镜，喂进 loudnorm 会让它吐 NaN、
+        // aac 编码器拒收，整条导出以 rc=234 失败（判据与实测见 `MixCutCore.LoudnessChainPolicy`）。
+        // 中毒单位是单条分镜，不是成片总时长，所以千川时长闸拦不住它。
+        let useSourceAudio: [Bool] = await withTaskGroup(of: (Int, Bool).self) { group in
             for (i, seg) in segments.enumerated() {
                 group.addTask { [self] in
-                    let has = await self.probeHasAudio(path: seg.path)
-                    return (i, has)
+                    guard await self.probeHasAudio(path: seg.path) else { return (i, false) }
+                    let segSeconds = max(0, seg.end - seg.start)
+                    // 只有不足测量窗的短段才值得花这次探测：长段今天就不会中毒。
+                    guard LoudnessChainPolicy.needsSilenceProbe(durationSeconds: segSeconds) else {
+                        return (i, true)
+                    }
+                    let pureSilence = await self.probePureDigitalSilence(path: seg.path,
+                                                                        start: seg.start,
+                                                                        end: seg.end)
+                    guard LoudnessChainPolicy.mustBypassLoudnorm(durationSeconds: segSeconds,
+                                                                 isPureDigitalSilence: pureSilence) else {
+                        return (i, true)
+                    }
+                    MixLog.info("[FF] 分镜\(i) 是不足 " +
+                               "\(LoudnessChainPolicy.measurementWindowSeconds)s 的纯数字静音，" +
+                               "改走静音支路（否则 loudnorm 吐 NaN ⇒ 整条导出 rc=234）")
+                    return (i, false)
                 }
             }
             var results = Array(repeating: true, count: segments.count)
-            for await (i, has) in group {
-                results[i] = has
+            for await (i, ok) in group {
+                results[i] = ok
             }
             return results
         }
@@ -678,15 +723,15 @@ actor FFmpegRunner {
                 "pad=\(targetScale):(ow-iw)/2:(oh-ih)/2:black," +
                 "setsar=1,fps=30[v\(i)]"
             )
-            // 音频处理：有音轨使用原始音频 + loudnorm；无音轨使用沉默源裁切
+            // 音频处理：可听的音轨走原始音频 + loudnorm；无音轨**或纯数字静音**走沉默源裁切
             let segDuration = segments[i].end - segments[i].start
             let durStr = String(format: "%.6f", segDuration)
-            if hasAudio[i] {
+            if useSourceAudio[i] {
                 filterParts.append(
                     "[\(i):a]aresample=44100,loudnorm=I=-16:TP=-1.5:LRA=11,apad=whole_dur=\(durStr)[a\(i)]"
                 )
             } else {
-                // 无音轨：从沉默源裁切出对应时长的静音
+                // 走静音支路：无音轨，或整段是纯数字静音（后者不能喂 loudnorm，见上面的说明）
                 filterParts.append(
                     "[\(silenceInputIndex):a]atrim=0:\(durStr),asetpts=PTS-STARTPTS[a\(i)]"
                 )
