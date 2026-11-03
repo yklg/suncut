@@ -379,22 +379,9 @@ final class MCPToolHandlers {
             }
         }
 
-        let project = Project(name: trimmed)
-        project.product = product
-        context.insert(project)
-        // 与 UI 的 ProjectViewModel.createProject 保持一致：同步创建「自定义组合」策略容器
-        let customGroup = MixStrategy(
-            name: "自定义组合",
-            style: "",
-            description: "手动挑选分镜组合的方案",
-            targetAudience: "",
-            narrativeStructure: "",
-            targetDuration: 0
-        )
-        customGroup.isCustomGroup = true
-        customGroup.project = project
-        project.strategies.append(customGroup)
-        context.insert(customGroup)
+        // 「建项目 + 挂自定义组合容器」的唯一动作口（与 UI 的 ProjectViewModel 同一颗，
+        // 不再是"照抄一份并注释说保持一致"）
+        let project = Project.makeWithName(trimmed, product: product, in: context)
         context.safeSave()
         Self.notifyUIReload()
         return success(["id": project.id.uuidString,
@@ -601,9 +588,17 @@ final class MCPToolHandlers {
                     let canvas = DeliveryCanvas.size(tier: exportConfig.resolution,
                                                      sourceMaxWidth: task.input.maxWidth,
                                                      sourceMaxHeight: task.input.maxHeight)
-                    exported.append(["path": task.outputPath,
-                                     "canvas": "\(canvas.width)x\(canvas.height)",
-                                     "delivery_target": target.rawValue])
+                    var record: [String: String] = ["path": task.outputPath,
+                                                    "canvas": "\(canvas.width)x\(canvas.height)",
+                                                    "delivery_target": target.rawValue]
+                    // Step 7 收口：丢段必须对外可见。这里**只新增**可选键，不动任何既有键的语义
+                    // —— 这个返回体是 Agent 可见的工具契约，改形状等于破坏对外接口（计划 R15）。
+                    if !task.input.droppedDescriptions.isEmpty {
+                        record["planned_segments"] = String(task.input.plannedSegmentCount)
+                        record["exported_segments"] = String(task.input.segments.count)
+                        record["dropped_segments"] = task.input.droppedDescriptions.joined(separator: "；")
+                    }
+                    exported.append(record)
                 } catch {
                     failures.append(["scheme": task.name, "reason": FriendlyError.reason(for: error)])
                 }

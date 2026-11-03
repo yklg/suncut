@@ -221,7 +221,7 @@ private let probeRoster: [ProbeRosterEntry] = [
     // FileHelper 的 `exempt: true` 与空 `reason` 一起带进来，反而触发「豁免条目缺理由」；
     // 第二张表生成物里那句 `reason: "FILL_ME"` 也说明它是脚手架、不是成品）。
     // 2026-10-19 变动：`DubExportService.swift` 6 → 8 —— 导出后置回读新增两处
-    // `existedBefore` 裸问（只清理本次自己创建的文件），与 `ExportService.swift:190` 同族。
+    // `existedBefore` 裸问（只清理本次自己创建的文件），与 `ExportService.swift:223` 同族。
     .init(file: #"MixCut/App/DebugSelfTest.swift"#, count: 4, exempt: false, reason: ""),
     .init(file: #"MixCut/App/MixCutApp.swift"#, count: 6, exempt: false, reason: ""),
     .init(file: #"MixCut/App/SchemaGuard.swift"#, count: 3, exempt: false, reason: ""),

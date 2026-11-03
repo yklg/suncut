@@ -146,7 +146,95 @@ private final class OutputBox: @unchecked Sendable {
 
 /// ASR 语音识别服务
 /// 支持 Python openai-whisper CLI 和 whisper.cpp
+/// whisper.cpp `--output-json-full` 输出的解码结构。
+///
+/// 从前是 `parseWhisperCppOutput` 里的一个局部 struct ⇒ **测试够不着**。
+/// 提到文件作用域（`@testable` 可达）才可能写那对判据：
+/// 真 JSON 读得到逐 token 概率（阳性腿）＋ 旧/缺键 JSON 不炸（负腿）。
+/// 留在函数里就只能"读代码觉得它没问题"，而本仓纪律是静态核对 ≠ 跑过。
+///
+/// ⚠️ **键名册是从包内二进制真跑出来的，不是设想**（2026-10-26，三份样本一致）：
+///   段级 = `['offsets','text','timestamps','tokens']`
+///   token 级 = `['id','offsets','p','t_dtw','text','timestamps']`
+/// 段级**没有** `no_speech_prob` / `avg_logprob` / `compression_ratio_prob` ——
+/// 那三颗是 Python openai-whisper 的形态。想加之前先重跑取证，别照着"whisper 应该有"写。
+struct WhisperCppOutput: Decodable {
+    struct Segment: Decodable {
+        struct Token: Decodable {
+            let text: String
+            let timestamps: Timestamps?
+
+            /// 该 token 的置信度（0…1）。whisper.cpp 一直在输出，原先本结构没声明 ⇒ 被丢弃。
+            /// Optional：缺键＝没这项证据，与"置信度是 0"是两回事，不许合并。
+            let p: Double?
+
+            struct Timestamps: Decodable {
+                let from: String
+                let to: String
+            }
+        }
+        let text: String
+        let tokens: [Token]?
+        let timestamps: TokenTimestamps?
+
+        struct TokenTimestamps: Decodable {
+            let from: String
+            let to: String
+        }
+    }
+    let transcription: [Segment]
+}
+
+/// Python openai-whisper CLI `--output_format json` 输出的解码结构（`ASRService` 的另一条引擎分支，
+/// 由 `detectWhisperType` 按可执行文件头部是否含 "python" 现场裁定 —— 用户自装的 python-whisper 会走到这）。
+struct PythonWhisperOutput: Decodable {
+    let text: String
+    let segments: [Segment]
+    let language: String?
+
+    struct Segment: Decodable {
+        let start: Double
+        let end: Double
+        let text: String
+        let words: [PythonWhisperWord]?
+    }
+}
+
+struct PythonWhisperWord: Decodable {
+    let word: String
+    let start: Double
+    let end: Double
+    /// 逐词置信度（0…1）。Optional 的理由同 cpp 侧的 `p`：缺键＝没这项证据。
+    let probability: Double?
+}
+
 actor ASRService {
+
+    /// whisper.cpp 的 `tokens[].p` → 概率层证据（C 块）。
+    ///
+    /// 单立成一个 `nonisolated static` 是因为这一步**同时**决定两件事：哪几颗 token 算数
+    /// （`cleanWhisperToken` 的口径：特殊标记 `[_BEG_]`/`[_TT_*]`/`<|…|>` 与纯空白都要剔掉）
+    /// 和取哪颗值（`p`，缺键的跳过）。留在私有实例方法里，判据就只能喂我自己编的
+    /// signals，抓不到"少剔了一颗特殊标记 ⇒ 黄金值整体漂移"这类错。
+    /// 输入是**逐字取自包内二进制真输出**的 JSON 时，判据能复现手算的
+    /// 8 颗 / mean 0.7227629500000001 / min 0.0124856 / 低置信占比 0.125。
+    nonisolated static func probabilityLayer(fromCppTokens tokens: [WhisperCppOutput.Segment.Token]?) -> EmptyLensSignals {
+        let probs = (tokens ?? []).compactMap { tok -> Double? in
+            guard !cleanWhisperToken(tok.text).isEmpty else { return nil }
+            return tok.p
+        }
+        return EmptyLensSignals.probabilityLayer(from: probs)
+    }
+
+    /// Python openai-whisper 的 `segments[].words[].probability` → 同一条概率层。
+    /// 两个引擎的形态不同、语义同族 ⇒ 都汇到 `EmptyLensSignals.probabilityLayer` 一处算术。
+    nonisolated static func probabilityLayer(fromPythonWords words: [PythonWhisperWord]?) -> EmptyLensSignals {
+        let probs = (words ?? []).compactMap { w -> Double? in
+            guard !cleanWhisperToken(w.word).isEmpty else { return nil }
+            return w.probability
+        }
+        return EmptyLensSignals.probabilityLayer(from: probs)
+    }
 
     private let ffmpeg: FFmpegRunner
 
@@ -341,26 +429,8 @@ actor ASRService {
         // Python whisper JSON 格式:
         // { "text": "...", "segments": [{ "start": 0.0, "end": 5.0, "text": "...",
         //   "words": [{"word": "...", "start": 0.0, "end": 0.5, "probability": 0.99}] }] }
-        struct PythonWhisperOutput: Decodable {
-            let text: String
-            let segments: [Segment]
-            let language: String?
-
-            struct Segment: Decodable {
-                let start: Double
-                let end: Double
-                let text: String
-                let words: [Word]?
-            }
-
-            struct Word: Decodable {
-                let word: String
-                let start: Double
-                let end: Double
-                let probability: Double?
-            }
-        }
-
+        // 解码结构住在文件作用域的 `PythonWhisperOutput`（同 WhisperCppOutput 的理由：
+        // 留在函数体内是个局部类型 ⇒ `probabilityLayer(fromPythonWords:)` 的签名引用不到它，测试也够不着）
         let output = try JSONDecoder().decode(PythonWhisperOutput.self, from: jsonData)
 
         // 提取字级时间戳
@@ -380,13 +450,18 @@ actor ASRService {
         }
 
         // 保存 Whisper 原生 segments 作为句子（这才是准确的句子划分）
+        //
+        // 概率层：python-whisper 给的是 `segments[].words[].probability`（形态与
+        // whisper.cpp 的 `tokens[].p` 不同，但语义同族）⇒ 两个解析器都汇到
+        // `EmptyLensSignals.probabilityLayer` 这**一处**算术口径，不许各写一套均值。
         let rawSentences = output.segments.compactMap { seg -> ASRSentence? in
             let cleaned = Self.cleanWhisperText(seg.text)
             guard !cleaned.isEmpty else { return nil }
             return ASRSentence(
                 text: cleaned,
                 start: seg.start,
-                end: seg.end
+                end: seg.end,
+                emptyLensSignals: Self.probabilityLayer(fromPythonWords: seg.words)
             )
         }
 
@@ -569,28 +644,7 @@ actor ASRService {
 
     /// 解析 whisper.cpp JSON 输出
     private func parseWhisperCppOutput(jsonData: Data, language: String) throws -> TranscriptionResult {
-        struct WhisperCppOutput: Decodable {
-            struct Segment: Decodable {
-                struct Token: Decodable {
-                    let text: String
-                    let timestamps: Timestamps?
-
-                    struct Timestamps: Decodable {
-                        let from: String
-                        let to: String
-                    }
-                }
-                let text: String
-                let tokens: [Token]?
-                let timestamps: TokenTimestamps?
-
-                struct TokenTimestamps: Decodable {
-                    let from: String
-                    let to: String
-                }
-            }
-            let transcription: [Segment]
-        }
+        // 解码结构住在文件作用域的 `WhisperCppOutput`（提出来是为了让 T15 那对判据够得着）
 
         // whisper.cpp 输出可能包含非 UTF-8 字节（中文分词截断），需要先清洗
         let cleanedData: Data
@@ -624,20 +678,31 @@ actor ASRService {
         }
 
         // whisper.cpp 的 transcription 段也作为原生句子
+        //
+        // 概率层证据**逐段挂在句子上**（`ASRSentence.emptyLensSignals`），不另开数组：
+        // 实测空镜幻觉出来的是**非空**文本（2s 纯正弦音 → 「字幕志愿者 杨茜茜」，
+        // 2s 数字零静音 → 「优优独播剧场——YoYo Television Series Exclusive」），
+        // 所以下面那句 `guard !cleaned.isEmpty` 的空段过滤器**根本挡不住**要拦的东西 ——
+        // 把证据只挂在空段上，等于挂在一个实测不会命中的分支里。
+        //
+        // "哪几颗 token 算数"复用 `cleanWhisperToken` 这一处既有口径（特殊标记 / 纯标点判空），
+        // 不在这里另立一套剔除规则；算术口径则只住在 `EmptyLensSignals.probabilityLayer`。
         let rawSentences = output.transcription.compactMap { seg -> ASRSentence? in
             let cleaned = Self.cleanWhisperText(seg.text)
             guard !cleaned.isEmpty else { return nil }
             return ASRSentence(
                 text: cleaned,
                 start: parseTimestamp(seg.timestamps?.from ?? "00:00:00.000"),
-                end: parseTimestamp(seg.timestamps?.to ?? "00:00:00.000")
+                end: parseTimestamp(seg.timestamps?.to ?? "00:00:00.000"),
+                emptyLensSignals: Self.probabilityLayer(fromCppTokens: seg.tokens)
             )
         }
 
         let fullText = rawSentences.map(\.text).joined()
         let duration = words.last?.end ?? 0
 
-        return TranscriptionResult(text: fullText, words: words, rawSentences: rawSentences, language: language, duration: duration)
+        return TranscriptionResult(text: fullText, words: words, rawSentences: rawSentences,
+                                   language: language, duration: duration)
     }
 
     // MARK: - 文本清洗
@@ -646,7 +711,7 @@ actor ASRService {
     /// - 过滤特殊控制标记（[_BEG_], [BLANK_AUDIO], <|endoftext|> 等）
     /// - 移除前后空白
     /// - 移除 U+FFFD 替换字符
-    private static func cleanWhisperToken(_ raw: String) -> String {
+    nonisolated private static func cleanWhisperToken(_ raw: String) -> String {
         let trimmed = raw.trimmingCharacters(in: .whitespaces)
         // 过滤 whisper.cpp 特殊 token
         if trimmed.hasPrefix("[") || trimmed.hasPrefix("<|") { return "" }

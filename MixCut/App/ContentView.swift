@@ -70,6 +70,9 @@ enum NavigationItem: String, Hashable, CaseIterable, Identifiable {
     case schemes = "混剪方案"
     case bgmLibrary = "BGM 库"
     case export = "导出"
+    /// 文件夹混剪：放「工作区」列表**末尾**、快捷键 ⌘8，既有 ⌘1–⌘7 不动（D18）。
+    /// 它排在最后是因为 `SidebarView` 直接按 `allCases` 的顺序渲染，枚举顺序就是侧栏顺序。
+    case folderMix = "文件夹混剪"
 
     var id: String { rawValue }
 
@@ -82,6 +85,7 @@ enum NavigationItem: String, Hashable, CaseIterable, Identifiable {
         case .schemes: return "list.bullet.clipboard"
         case .bgmLibrary: return "music.note.list"
         case .export: return "square.and.arrow.up"
+        case .folderMix: return "folder.badge.plus"
         }
     }
 }
@@ -93,6 +97,10 @@ struct ContentView: View {
     @State private var importVM = ImportViewModel()
     @State private var segmentLibraryVM = SegmentLibraryViewModel()
     @State private var schemeVM = SchemeViewModel()
+    /// 混剪页的会话状态**提在这里**，不放页面自己的 `@State`：
+    /// 页面 `@State` 会随侧栏切页或选中项目变化整页销毁重建 ⇒ 刚抽好的预览凭空清空、
+    /// 类别勾选与条数全部回零（上一轮实测到的那条"入库后左侧啥也不是"就是这个）。
+    @State private var folderMixVM = FolderMixViewModel()
 
     @State private var selectedNavItem: NavigationItem? = .overview
 
@@ -120,7 +128,13 @@ struct ContentView: View {
             // 关键：不用 .id() 强制重建，否则每次切换都从零构造大量 NSView/AVPlayer，
             // 直接慢 500-1000ms。让 SwiftUI 自然 diff 重用就好。
             VStack(spacing: 0) {
-                if let project = projectVM.selectedProject {
+                // ⚠ 分支顺序是承重的：`.folderMix` 必须在 `if let project` **之前**。
+                // 这一页自己建产品与项目（D1/D12），一个项目都没有时也得进得去；
+                // 而若它排在后面，用户在页上选中/取消某个项目时分支会翻面 ⇒ 同一页面被
+                // 当成两个不同视图重建，@State 全丢（刚抽好的预览卡片会凭空清空）。
+                if selectedNavItem == .folderMix {
+                    FolderMixView(projectVM: projectVM, schemeVM: schemeVM, vm: folderMixVM)
+                } else if let project = projectVM.selectedProject {
                     ProjectProductCrumb(project: project, moduleName: selectedNavItem?.rawValue)
                     detailView(for: project)
                 } else {
@@ -266,7 +280,12 @@ struct ContentView: View {
         case .bgmLibrary:
             BGMLibraryView()
         case .export:
-            ExportView(project: project, schemeVM: schemeVM)
+            ExportView(project: project, schemeVM: schemeVM, projectVM: projectVM)
+        case .folderMix:
+            // 这一页由上面的路由直接接住（它自己建产品与项目，不依赖已选中的 project），
+            // 这里只是让 switch 保持穷尽。**不要**在这里再实例化一次同一个视图：
+            // 两处实例化就是两个视图身份，选中项目一变就会重建整页、丢掉刚抽好的预览。
+            EmptyView()
         case .none:
             ProjectOverviewView(project: project, projectVM: projectVM, selectedNavItem: $selectedNavItem)
         }

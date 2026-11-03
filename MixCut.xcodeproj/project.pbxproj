@@ -45,6 +45,7 @@
 		3EA6C43C9B543AAD48FE5416 /* ad_styles.md in Resources */ = {isa = PBXBuildFile; fileRef = 901C23DFF0236F31144F05FC /* ad_styles.md */; };
 		40545E19D3DAE813CE38DFC0 /* CaptionBoundaryEditor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 00BB297E748A24807AAFAB9D /* CaptionBoundaryEditor.swift */; };
 		42934F7D29D492CA10829B25 /* ProjectViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = FD09EFBAFD23D44FB86BE80C /* ProjectViewModel.swift */; };
+		AF000000000000000000005F /* LogoOverlayViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF0000000000000000000066 /* LogoOverlayViewModel.swift */; };
 		442DB34CB4AF607DFB365D1C /* SegmentCardCompact.swift in Sources */ = {isa = PBXBuildFile; fileRef = F6760400393A474358D56B7E /* SegmentCardCompact.swift */; };
 		482B53A3145BDB33561480E9 /* LaunchStepLedger.swift in Sources */ = {isa = PBXBuildFile; fileRef = B6E8F3F81CE43079735661B7 /* LaunchStepLedger.swift */; };
 		49505D7B9C93AB97795DAD97 /* PendingDeletionCenter.swift in Sources */ = {isa = PBXBuildFile; fileRef = B9989E690AD7737E922DDAE5 /* PendingDeletionCenter.swift */; };
@@ -58,6 +59,7 @@
 		56C8FC6396E2466C84870DA4 /* SegmentVariantInspector.swift in Sources */ = {isa = PBXBuildFile; fileRef = BDA81666C0EF4C52A4518514 /* SegmentVariantInspector.swift */; };
 		56FD408676D75ECD18215EC3 /* BGMLibraryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5765EAB38F93E4B85AC4D0BA /* BGMLibraryView.swift */; };
 		5BFA9102727193F3F303530C /* ImportViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 37CBDDB5E3AF7A43A34F86EF /* ImportViewModel.swift */; };
+		AF000000000000000000004C /* FolderMixViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF000000000000000000004D /* FolderMixViewModel.swift */; };
 		5C374946C2A12A8F7D12587D /* UniqueFileNamer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 19A0FB7E22D2DDEF87274BB2 /* UniqueFileNamer.swift */; };
 		5C37778E86144BA7923334E9 /* VariantSelector.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4562C1C2A6CE4CD7B4F426D1 /* VariantSelector.swift */; };
 		60CCF84622A785C381FEA3FF /* segment_types_definition.md in Resources */ = {isa = PBXBuildFile; fileRef = B01A3AFBDC1142901A3947DF /* segment_types_definition.md */; };
@@ -124,6 +126,12 @@
 		AB02C0A2E5E04B2A9C020004 /* SegmentSource.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB02C0A2E5E04B2A9C020003 /* SegmentSource.swift */; };
 		AB02C0A2E5E04B2A9C020006 /* ProductCatalogDefaults.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB02C0A2E5E04B2A9C020005 /* ProductCatalogDefaults.swift */; };
 		AB02C0A2E5E04B2A9C020008 /* SegmentPickerCatalog.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB02C0A2E5E04B2A9C020007 /* SegmentPickerCatalog.swift */; };
+		AF000000000000000000004A /* WholeClipShape.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF000000000000000000004B /* WholeClipShape.swift */; };
+		AF0000000000000000000048 /* DiskSpaceBudget.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF0000000000000000000049 /* DiskSpaceBudget.swift */; };
+		AF0000000000000000000046 /* FolderMixPicker.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF0000000000000000000047 /* FolderMixPicker.swift */; };
+		AF0000000000000000000055 /* FolderMixOrchestration.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF0000000000000000000056 /* FolderMixOrchestration.swift */; };
+		AF0000000000000000000044 /* FolderMixScanner.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF0000000000000000000045 /* FolderMixScanner.swift */; };
+		AF0000000000000000000050 /* FolderMixSessionState.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF0000000000000000000051 /* FolderMixSessionState.swift */; };
 		AB02C0A2E5E04B2A9C02000A /* ProductOwnershipBackfill.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB02C0A2E5E04B2A9C020009 /* ProductOwnershipBackfill.swift */; };
 		AB02C0A2E5E04B2A9C02000C /* SegmentSourceBadge.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB02C0A2E5E04B2A9C02000B /* SegmentSourceBadge.swift */; };
 		AB03C0A3E5E04B2A9C030002 /* SidebarProductGrouping.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB03C0A3E5E04B2A9C030001 /* SidebarProductGrouping.swift */; };
@@ -148,6 +156,8 @@
 		AC0000000000000000000010 /* KnowledgeLibraryViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = AD0000000000000000000010 /* KnowledgeLibraryViewModel.swift */; };
 		AC0000000000000000000011 /* KnowledgeLibraryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AD0000000000000000000011 /* KnowledgeLibraryView.swift */; };
 		AC0000000000000000000012 /* AudioTrackPolicy.swift in Sources */ = {isa = PBXBuildFile; fileRef = AD0000000000000000000012 /* AudioTrackPolicy.swift */; };
+		AC0000000000000000000026 /* EmptyLensPolicy.swift in Sources */ = {isa = PBXBuildFile; fileRef = AD0000000000000000000025 /* EmptyLensPolicy.swift */; };
+		AC0000000000000000000025 /* DubRatePolicy.swift in Sources */ = {isa = PBXBuildFile; fileRef = AD0000000000000000000026 /* DubRatePolicy.swift */; };
 		AC0000000000000000000013 /* BM25Index.swift in Sources */ = {isa = PBXBuildFile; fileRef = AD0000000000000000000013 /* BM25Index.swift */; };
 		AC0000000000000000000014 /* VectorIndex.swift in Sources */ = {isa = PBXBuildFile; fileRef = AD0000000000000000000014 /* VectorIndex.swift */; };
 		AC0000000000000000000015 /* HybridRetrievalEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = AD0000000000000000000015 /* HybridRetrievalEngine.swift */; };
@@ -209,12 +219,18 @@
 		AE0000000000000000000035 /* RawAudioCacheStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF0000000000000000000035 /* RawAudioCacheStore.swift */; };
 		AE0000000000000000000040 /* VoicePreferences.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF0000000000000000000040 /* VoicePreferences.swift */; };
 		AE0000000000000000000041 /* VoiceAuditionPlayer.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF0000000000000000000041 /* VoiceAuditionPlayer.swift */; };
+		AE000000000000000000003C /* FolderMixContentKeyReader.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF0000000000000000000054 /* FolderMixContentKeyReader.swift */; };
+		AE000000000000000000003B /* FolderMixDurationReader.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF0000000000000000000053 /* FolderMixDurationReader.swift */; };
+		AE000000000000000000003A /* FolderMixResolve.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF0000000000000000000052 /* FolderMixResolve.swift */; };
 		AE0000000000000000000042 /* VoicePickerSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF0000000000000000000042 /* VoicePickerSheet.swift */; };
 		AE0000000000000000000043 /* SheetContainerLayout.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF0000000000000000000043 /* SheetContainerLayout.swift */; };
 		B0D1A2E3C4F5061728394A5B /* BoundaryAlignmentEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1C2E3D4F5061728394A5B6C /* BoundaryAlignmentEngine.swift */; };
 		B111386C5FD3E945A44D4584 /* ExportView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 79C5325DA9D797B618DF1F22 /* ExportView.swift */; };
+		AF0000000000000000000067 /* LogoOverlayPanel.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF0000000000000000000068 /* LogoOverlayPanel.swift */; };
 		B1DFB11FBFFAEC5B94951276 /* BoundaryOptimizerService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0C7DF6C8FF5155B793E2F9B3 /* BoundaryOptimizerService.swift */; };
 		AE1D0C0F1234567890ABCDE1 /* SegmentCommitter.swift in Sources */ = {isa = PBXBuildFile; fileRef = AE1D0C0F1234567890ABCDEF /* SegmentCommitter.swift */; };
+		AE0000000000000000000038 /* ClipIngestService.swift in Sources */ = {isa = PBXBuildFile; fileRef = AE0000000000000000000039 /* ClipIngestService.swift */; };
+		AE0000000000000000000036 /* MaterialFolderScanner.swift in Sources */ = {isa = PBXBuildFile; fileRef = AE0000000000000000000037 /* MaterialFolderScanner.swift */; };
 		B2C10E4D5A671829304B6002 /* PlaybackCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2C10E4D5A671829304B6001 /* PlaybackCoordinator.swift */; };
 		B6847040AD0E4C4E1CFC2D19 /* ConcurrencyPolicy.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5E38824D4DD571ED6A70E3AB /* ConcurrencyPolicy.swift */; };
 		AF000000000000000000002A /* LocalWhisperGate.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF000000000000000000002B /* LocalWhisperGate.swift */; };
@@ -237,6 +253,7 @@
 		CC00DD11EE22FF3344AA55BB /* CharBudget.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC00DD11EE22FF3344AA55BC /* CharBudget.swift */; };
 		D1525DA154D48574BF5326EA /* SegmentLibraryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 055695DBC79101AF660DD82B /* SegmentLibraryView.swift */; };
 		D1A500B2DBC5DA3822C922CF /* DubSegmentGraph.swift in Sources */ = {isa = PBXBuildFile; fileRef = 68E1E2F7BFD4E8F44AD8F5B5 /* DubSegmentGraph.swift */; };
+		AF0000000000000000000059 /* LogoOverlay.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF000000000000000000005A /* LogoOverlay.swift */; };
 		D3CCFFEA75ECA965A70C1FB1 /* ShotPartitionEditor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1479513EB995B5318C68A3F7 /* ShotPartitionEditor.swift */; };
 		D4E31A6F7C892A31405D8002 /* SegmentHeaderLayout.swift in Sources */ = {isa = PBXBuildFile; fileRef = D4E31A6F7C892A31405D8001 /* SegmentHeaderLayout.swift */; };
 		D51C93306155EAD3C004668E /* ScriptRewriteService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 59AF8B47EBE91540EB5E2803 /* ScriptRewriteService.swift */; };
@@ -252,6 +269,8 @@
 		E17F20BCEC4DF2B07BE00B0D /* ArrangeOrderSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 92FD76A2EA40E7657398EBF1 /* ArrangeOrderSheet.swift */; };
 		E18E7E305CCDE2594BE16E4B /* AIProviderManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 59EA48C6FF4B7C3BB4DC3122 /* AIProviderManager.swift */; };
 		E1EC0B5D18794055B8BF870A /* DubExportService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3B477790861845FC805F9052 /* DubExportService.swift */; };
+		AF000000000000000000005D /* LogoOverlayPresets.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF000000000000000000005E /* LogoOverlayPresets.swift */; };
+		AF000000000000000000005B /* LogoOverlayAssetStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF000000000000000000005C /* LogoOverlayAssetStore.swift */; };
 		E3ECCB0684CD1D391F8513A4 /* ShotSlicerService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 77CA28231685089542B82539 /* ShotSlicerService.swift */; };
 		E45A697280C04799918959ED /* CosyVoiceTTSClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7DD8F10E220C49CFB4D2DBDA /* CosyVoiceTTSClient.swift */; };
 		E69FFB15EE2531224CC4704F /* Wan25VideoEditClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = C5C4AADB275716722B31E747 /* Wan25VideoEditClient.swift */; };
@@ -270,6 +289,7 @@
 		F0A1B2C3D4E5F60718293E02 /* SegmentPropertiesSection.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0A1B2C3D4E5F60718293E01 /* SegmentPropertiesSection.swift */; };
 		F222BEF23816F38B3B961083 /* ShotCompositionService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 57155C2AF9E313323FEE4038 /* ShotCompositionService.swift */; };
 		F79DA3913A7E11BF687E2C9E /* ImportView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7ACB561B3C5222BAF199821E /* ImportView.swift */; };
+		AF000000000000000000004E /* FolderMixView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF000000000000000000004F /* FolderMixView.swift */; };
 		F7C1B9CE70319A8280BAF21D /* ExportService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0C8B3017F3E84B095B78933B /* ExportService.swift */; };
 		F81E113EDEFB06D35FCC108C /* SchemaVersions.swift in Sources */ = {isa = PBXBuildFile; fileRef = EF59AD68D657C47FEE65194C /* SchemaVersions.swift */; };
 		FA6F04366C4DEB5E60A2229B /* InsertGapButton.swift in Sources */ = {isa = PBXBuildFile; fileRef = C16DFD07ED592109D034C02B /* InsertGapButton.swift */; };
@@ -279,8 +299,13 @@
 		FF66AA77BB88CC99DD00EE11 /* SubtitleFontSizePopover.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF66AA77BB88CC99DD00EE12 /* SubtitleFontSizePopover.swift */; };
 		FF77AA88BB99CC0011DD22EE /* RewriteResultMapper.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF77AA88BB99CC0011DD22EF /* RewriteResultMapper.swift */; };
 7D0000000000000000000000 /* ExportCanvasReadbackTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7A0000000000000000000001 /* ExportCanvasReadbackTests.swift */; };
+AF000000000000000000006B /* LogoOverlayAssetStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF000000000000000000006C /* LogoOverlayAssetStoreTests.swift */; };
+AF0000000000000000000069 /* LogoOverlayExportTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF000000000000000000006A /* LogoOverlayExportTests.swift */; };
 7B0000000000000000000001 /* ExportDeliveryTargetParsingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7C0000000000000000000001 /* ExportDeliveryTargetParsingTests.swift */; };
 7D0000000000000000000001 /* ExportDurationGateTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7A0000000000000000000002 /* ExportDurationGateTests.swift */; };
+AF0000000000000000000057 /* FolderMixIngestJoinTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF0000000000000000000058 /* FolderMixIngestJoinTests.swift */; };
+7B0000000000000000000002 /* DubFixedRateRenderLaneTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7C0000000000000000000002 /* DubFixedRateRenderLaneTests.swift */; };
+7D0000000000000000000002 /* WhisperEvidenceDecodeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7A0000000000000000000003 /* WhisperEvidenceDecodeTests.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -304,6 +329,8 @@
 		0B9979BFB126617C6473DCA2 /* ShotEditSheet.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = ShotEditSheet.swift; sourceTree = "<group>"; };
 		0C7DF6C8FF5155B793E2F9B3 /* BoundaryOptimizerService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BoundaryOptimizerService.swift; sourceTree = "<group>"; };
 		AE1D0C0F1234567890ABCDEF /* SegmentCommitter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SegmentCommitter.swift; sourceTree = "<group>"; };
+		AE0000000000000000000039 /* ClipIngestService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClipIngestService.swift; sourceTree = "<group>"; };
+		AE0000000000000000000037 /* MaterialFolderScanner.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MaterialFolderScanner.swift; sourceTree = "<group>"; };
 		0C8B3017F3E84B095B78933B /* ExportService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExportService.swift; sourceTree = "<group>"; };
 		0E1A7D058E5D3BEA366EA579 /* ProjectVideo.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProjectVideo.swift; sourceTree = "<group>"; };
 		0E48A40ECEECC19FD7C8100A /* FrameCountAligner.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = FrameCountAligner.swift; path = Sources/MixCutCore/FrameCountAligner.swift; sourceTree = "<group>"; };
@@ -334,7 +361,10 @@
 		36131931CC8DA93B33B740F3 /* HardwareProfile.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HardwareProfile.swift; sourceTree = "<group>"; };
 		366DA1F6DE45567983ECE0A4 /* OnboardingView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OnboardingView.swift; sourceTree = "<group>"; };
 		37CBDDB5E3AF7A43A34F86EF /* ImportViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ImportViewModel.swift; sourceTree = "<group>"; };
+		AF000000000000000000004D /* FolderMixViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FolderMixViewModel.swift; sourceTree = "<group>"; };
 		3B477790861845FC805F9052 /* DubExportService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DubExportService.swift; sourceTree = "<group>"; };
+		AF000000000000000000005E /* LogoOverlayPresets.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LogoOverlayPresets.swift; sourceTree = "<group>"; };
+		AF000000000000000000005C /* LogoOverlayAssetStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LogoOverlayAssetStore.swift; sourceTree = "<group>"; };
 		3B99051CE888828756AFF18E /* ProjectOverviewView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProjectOverviewView.swift; sourceTree = "<group>"; };
 		3BFE7DC5D64922CCD47A8936 /* BatchSegmentExportService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BatchSegmentExportService.swift; sourceTree = "<group>"; };
 		3C4D5E6F708192A3B4C5D6E7 /* WhisperModelCatalog.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = WhisperModelCatalog.swift; path = Sources/MixCutCore/WhisperModelCatalog.swift; sourceTree = "<group>"; };
@@ -367,6 +397,7 @@
 		668A584A73936DE0EF82FDDE /* PromptPresets.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = PromptPresets.swift; path = ../../../ShotEdit/PromptPresets.swift; sourceTree = "<group>"; };
 		685BFF64A6DC4F662738E239 /* SchemeSegment.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SchemeSegment.swift; sourceTree = "<group>"; };
 		68E1E2F7BFD4E8F44AD8F5B5 /* DubSegmentGraph.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = DubSegmentGraph.swift; path = Sources/MixCutCore/DubSegmentGraph.swift; sourceTree = "<group>"; };
+		AF000000000000000000005A /* LogoOverlay.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = LogoOverlay.swift; path = Sources/MixCutCore/LogoOverlay.swift; sourceTree = "<group>"; };
 		6F89CF4721859EA73133C224 /* AgentJobRegistry.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = AgentJobRegistry.swift; path = MixCut/Services/MCP/AgentJobRegistry.swift; sourceTree = "<group>"; };
 		7354C6311897B46CFBF4D03D /* AIResponseEvidence.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = AIResponseEvidence.swift; path = Sources/MixCutCore/AIResponseEvidence.swift; sourceTree = "<group>"; };
 		73BE9F6808EABC327D229003 /* recombination_principles.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = recombination_principles.md; sourceTree = "<group>"; };
@@ -377,8 +408,10 @@
 		77CA28231685089542B82539 /* ShotSlicerService.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = ShotSlicerService.swift; path = ../../../ShotEdit/ShotSlicerService.swift; sourceTree = "<group>"; };
 		77F93B7C1DE045DA9A8F371B /* VocalSeparationService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VocalSeparationService.swift; sourceTree = "<group>"; };
 		79C5325DA9D797B618DF1F22 /* ExportView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExportView.swift; sourceTree = "<group>"; };
+		AF0000000000000000000068 /* LogoOverlayPanel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LogoOverlayPanel.swift; sourceTree = "<group>"; };
 		7A7548D82451414AA15EA629 /* SpeechRatePlanner.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = SpeechRatePlanner.swift; path = Sources/MixCutCore/SpeechRatePlanner.swift; sourceTree = "<group>"; };
 		7ACB561B3C5222BAF199821E /* ImportView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ImportView.swift; sourceTree = "<group>"; };
+		AF000000000000000000004F /* FolderMixView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FolderMixView.swift; sourceTree = "<group>"; };
 		7B0000000000000000000000 /* VoiceCloneServiceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoiceCloneServiceTests.swift; sourceTree = "<group>"; };
 		7DD8F10E220C49CFB4D2DBDA /* CosyVoiceTTSClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CosyVoiceTTSClient.swift; sourceTree = "<group>"; };
 		7E8212A6A3C180B93AC5AD93 /* BrandResidueScanner.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = BrandResidueScanner.swift; path = Sources/MixCutCore/BrandResidueScanner.swift; sourceTree = "<group>"; };
@@ -422,6 +455,12 @@
 		AB02C0A2E5E04B2A9C020003 /* SegmentSource.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = SegmentSource.swift; path = Sources/MixCutCore/SegmentSource.swift; sourceTree = "<group>"; };
 		AB02C0A2E5E04B2A9C020005 /* ProductCatalogDefaults.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = ProductCatalogDefaults.swift; path = Sources/MixCutCore/ProductCatalogDefaults.swift; sourceTree = "<group>"; };
 		AB02C0A2E5E04B2A9C020007 /* SegmentPickerCatalog.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = SegmentPickerCatalog.swift; path = Sources/MixCutCore/SegmentPickerCatalog.swift; sourceTree = "<group>"; };
+		AF000000000000000000004B /* WholeClipShape.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = WholeClipShape.swift; path = Sources/MixCutCore/WholeClipShape.swift; sourceTree = "<group>"; };
+		AF0000000000000000000049 /* DiskSpaceBudget.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = DiskSpaceBudget.swift; path = Sources/MixCutCore/DiskSpaceBudget.swift; sourceTree = "<group>"; };
+		AF0000000000000000000047 /* FolderMixPicker.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = FolderMixPicker.swift; path = Sources/MixCutCore/FolderMixPicker.swift; sourceTree = "<group>"; };
+		AF0000000000000000000056 /* FolderMixOrchestration.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = FolderMixOrchestration.swift; path = Sources/MixCutCore/FolderMixOrchestration.swift; sourceTree = "<group>"; };
+		AF0000000000000000000045 /* FolderMixScanner.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = FolderMixScanner.swift; path = Sources/MixCutCore/FolderMixScanner.swift; sourceTree = "<group>"; };
+		AF0000000000000000000051 /* FolderMixSessionState.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = FolderMixSessionState.swift; path = Sources/MixCutCore/FolderMixSessionState.swift; sourceTree = "<group>"; };
 		AB02C0A2E5E04B2A9C020009 /* ProductOwnershipBackfill.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = ProductOwnershipBackfill.swift; path = Sources/MixCutCore/ProductOwnershipBackfill.swift; sourceTree = "<group>"; };
 		AB02C0A2E5E04B2A9C02000B /* SegmentSourceBadge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SegmentSourceBadge.swift; sourceTree = "<group>"; };
 		AB03C0A3E5E04B2A9C030001 /* SidebarProductGrouping.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = SidebarProductGrouping.swift; path = Sources/MixCutCore/SidebarProductGrouping.swift; sourceTree = "<group>"; };
@@ -449,6 +488,8 @@
 		AD0000000000000000000010 /* KnowledgeLibraryViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KnowledgeLibraryViewModel.swift; sourceTree = "<group>"; };
 		AD0000000000000000000011 /* KnowledgeLibraryView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KnowledgeLibraryView.swift; sourceTree = "<group>"; };
 		AD0000000000000000000012 /* AudioTrackPolicy.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = AudioTrackPolicy.swift; path = Sources/MixCutCore/AudioTrackPolicy.swift; sourceTree = "<group>"; };
+		AD0000000000000000000025 /* EmptyLensPolicy.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = EmptyLensPolicy.swift; path = Sources/MixCutCore/EmptyLensPolicy.swift; sourceTree = "<group>"; };
+		AD0000000000000000000026 /* DubRatePolicy.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = DubRatePolicy.swift; path = Sources/MixCutCore/DubRatePolicy.swift; sourceTree = "<group>"; };
 		AD0000000000000000000013 /* BM25Index.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = BM25Index.swift; path = Sources/MixCutCore/BM25Index.swift; sourceTree = "<group>"; };
 		AD0000000000000000000014 /* VectorIndex.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = VectorIndex.swift; path = Sources/MixCutCore/VectorIndex.swift; sourceTree = "<group>"; };
 		AD0000000000000000000015 /* HybridRetrievalEngine.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = HybridRetrievalEngine.swift; path = Sources/MixCutCore/HybridRetrievalEngine.swift; sourceTree = "<group>"; };
@@ -507,6 +548,9 @@
 		AF0000000000000000000035 /* RawAudioCacheStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RawAudioCacheStore.swift; sourceTree = "<group>"; };
 		AF0000000000000000000040 /* VoicePreferences.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = VoicePreferences.swift; sourceTree = "<group>"; };
 		AF0000000000000000000041 /* VoiceAuditionPlayer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoiceAuditionPlayer.swift; sourceTree = "<group>"; };
+		AF0000000000000000000054 /* FolderMixContentKeyReader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FolderMixContentKeyReader.swift; sourceTree = "<group>"; };
+		AF0000000000000000000053 /* FolderMixDurationReader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FolderMixDurationReader.swift; sourceTree = "<group>"; };
+		AF0000000000000000000052 /* FolderMixResolve.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = FolderMixResolve.swift; path = Sources/MixCutCore/FolderMixResolve.swift; sourceTree = "<group>"; };
 		AF0000000000000000000042 /* VoicePickerSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoicePickerSheet.swift; sourceTree = "<group>"; };
 		AF0000000000000000000043 /* SheetContainerLayout.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SheetContainerLayout.swift; sourceTree = "<group>"; };
 		B01A3AFBDC1142901A3947DF /* segment_types_definition.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = segment_types_definition.md; sourceTree = "<group>"; };
@@ -563,14 +607,20 @@
 		F6ACE8F180DF070B5BE8FCE3 /* MixScheme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MixScheme.swift; sourceTree = "<group>"; };
 		F8BEF73BC53AA8F9435A240E /* SunCut.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = SunCut.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		FD09EFBAFD23D44FB86BE80C /* ProjectViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProjectViewModel.swift; sourceTree = "<group>"; };
+		AF0000000000000000000066 /* LogoOverlayViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LogoOverlayViewModel.swift; sourceTree = "<group>"; };
 		FF00BB11CC22DD3344EE55AA /* DubStaleness.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = DubStaleness.swift; path = Sources/MixCutCore/DubStaleness.swift; sourceTree = "<group>"; };
 		FF66AA77BB88CC99DD00EE12 /* SubtitleFontSizePopover.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SubtitleFontSizePopover.swift; sourceTree = "<group>"; };
 		FF77AA88BB99CC0011DD22EF /* RewriteResultMapper.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = RewriteResultMapper.swift; path = Sources/MixCutCore/RewriteResultMapper.swift; sourceTree = "<group>"; };
 		FF88AA99BB00CC1122DD33EE /* QwenVoice.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = QwenVoice.swift; path = Sources/MixCutCore/QwenVoice.swift; sourceTree = "<group>"; };
 		FFC59912B0CFE892506831DB /* ShotEditRules.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = ShotEditRules.swift; path = Sources/MixCutCore/ShotEditRules.swift; sourceTree = "<group>"; };
 7A0000000000000000000001 /* ExportCanvasReadbackTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExportCanvasReadbackTests.swift; sourceTree = "<group>"; };
+AF000000000000000000006C /* LogoOverlayAssetStoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LogoOverlayAssetStoreTests.swift; sourceTree = "<group>"; };
+AF000000000000000000006A /* LogoOverlayExportTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LogoOverlayExportTests.swift; sourceTree = "<group>"; };
 7C0000000000000000000001 /* ExportDeliveryTargetParsingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExportDeliveryTargetParsingTests.swift; sourceTree = "<group>"; };
 7A0000000000000000000002 /* ExportDurationGateTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExportDurationGateTests.swift; sourceTree = "<group>"; };
+AF0000000000000000000058 /* FolderMixIngestJoinTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FolderMixIngestJoinTests.swift; sourceTree = "<group>"; };
+7C0000000000000000000002 /* DubFixedRateRenderLaneTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DubFixedRateRenderLaneTests.swift; sourceTree = "<group>"; };
+7A0000000000000000000003 /* WhisperEvidenceDecodeTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WhisperEvidenceDecodeTests.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -648,6 +698,8 @@
 				99FB6534276046849D735315 /* VariantBatchExportService.swift */,
 				0C8B3017F3E84B095B78933B /* ExportService.swift */,
 				3B477790861845FC805F9052 /* DubExportService.swift */,
+				AF000000000000000000005E /* LogoOverlayPresets.swift */,
+				AF000000000000000000005C /* LogoOverlayAssetStore.swift */,
 			);
 			path = Export;
 			sourceTree = "<group>";
@@ -656,7 +708,9 @@
 			isa = PBXGroup;
 			children = (
 				37CBDDB5E3AF7A43A34F86EF /* ImportViewModel.swift */,
+				AF000000000000000000004D /* FolderMixViewModel.swift */,
 				FD09EFBAFD23D44FB86BE80C /* ProjectViewModel.swift */,
+				AF0000000000000000000066 /* LogoOverlayViewModel.swift */,
 				9747A5EC55B7AB12BE78AA02 /* SchemeViewModel.swift */,
 				4C4CC2EDACAE4BFBA8750741 /* DubbingViewModel.swift */,
 				AF0000000000000000000026 /* VoiceCloneViewModel.swift */,
@@ -750,6 +804,7 @@
 			isa = PBXGroup;
 			children = (
 				79C5325DA9D797B618DF1F22 /* ExportView.swift */,
+				AF0000000000000000000068 /* LogoOverlayPanel.swift */,
 			);
 			path = Export;
 			sourceTree = "<group>";
@@ -757,9 +812,14 @@
 		7C0000000000000000000000 /* MixCutAppTests */ = {
 			isa = PBXGroup;
 			children = (
+				7A0000000000000000000003 /* WhisperEvidenceDecodeTests.swift */,
+				7C0000000000000000000002 /* DubFixedRateRenderLaneTests.swift */,
 				7A0000000000000000000002 /* ExportDurationGateTests.swift */,
+				AF0000000000000000000058 /* FolderMixIngestJoinTests.swift */,
 				7C0000000000000000000001 /* ExportDeliveryTargetParsingTests.swift */,
 				7A0000000000000000000001 /* ExportCanvasReadbackTests.swift */,
+				AF000000000000000000006C /* LogoOverlayAssetStoreTests.swift */,
+				AF000000000000000000006A /* LogoOverlayExportTests.swift */,
 				7B0000000000000000000000 /* VoiceCloneServiceTests.swift */,
 			);
 			path = MixCutAppTests;
@@ -800,6 +860,13 @@
 				AB02C0A2E5E04B2A9C020003 /* SegmentSource.swift */,
 				AB02C0A2E5E04B2A9C020005 /* ProductCatalogDefaults.swift */,
 				AB02C0A2E5E04B2A9C020007 /* SegmentPickerCatalog.swift */,
+				AF000000000000000000004B /* WholeClipShape.swift */,
+				AF0000000000000000000049 /* DiskSpaceBudget.swift */,
+				AF0000000000000000000047 /* FolderMixPicker.swift */,
+				AF0000000000000000000056 /* FolderMixOrchestration.swift */,
+				AF0000000000000000000045 /* FolderMixScanner.swift */,
+				AF0000000000000000000051 /* FolderMixSessionState.swift */,
+				AF0000000000000000000052 /* FolderMixResolve.swift */,
 				AC0700000000000000000002 /* KnowledgeDocumentFilter.swift */,
 				AB02C0A2E5E04B2A9C020009 /* ProductOwnershipBackfill.swift */,
 				AB03C0A3E5E04B2A9C030001 /* SidebarProductGrouping.swift */,
@@ -822,6 +889,7 @@
 				EE66FF7788AA99BB00CC11DE /* RewritePromptBuilder.swift */,
 				FF77AA88BB99CC0011DD22EF /* RewriteResultMapper.swift */,
 				68E1E2F7BFD4E8F44AD8F5B5 /* DubSegmentGraph.swift */,
+				AF000000000000000000005A /* LogoOverlay.swift */,
 				FF88AA99BB00CC1122DD33EE /* QwenVoice.swift */,
 				3108511ECD4A45969CC17227 /* CosyVoiceCatalog.swift */,
 				7A7548D82451414AA15EA629 /* SpeechRatePlanner.swift */,
@@ -844,6 +912,8 @@
 				AD0000000000000000000006 /* ScriptTypes.swift */,
 				AD0000000000000000000007 /* ScriptFlowPhase.swift */,
 				AD0000000000000000000012 /* AudioTrackPolicy.swift */,
+				AD0000000000000000000025 /* EmptyLensPolicy.swift */,
+				AD0000000000000000000026 /* DubRatePolicy.swift */,
 				AD0000000000000000000013 /* BM25Index.swift */,
 				AD0000000000000000000014 /* VectorIndex.swift */,
 				AD0000000000000000000015 /* HybridRetrievalEngine.swift */,
@@ -1083,6 +1153,10 @@
 			isa = PBXGroup;
 			children = (
 				AE1D0C0F1234567890ABCDEF /* SegmentCommitter.swift */,
+				AE0000000000000000000039 /* ClipIngestService.swift */,
+				AF0000000000000000000053 /* FolderMixDurationReader.swift */,
+				AF0000000000000000000054 /* FolderMixContentKeyReader.swift */,
+				AE0000000000000000000037 /* MaterialFolderScanner.swift */,
 				AF00000000000000000000A2 /* SegmentationPlanSettings.swift */,
 			);
 			path = Import;
@@ -1117,6 +1191,7 @@
 			isa = PBXGroup;
 			children = (
 				7ACB561B3C5222BAF199821E /* ImportView.swift */,
+				AF000000000000000000004F /* FolderMixView.swift */,
 			);
 			path = Import;
 			sourceTree = "<group>";
@@ -1313,6 +1388,9 @@
 				C8D4E5F60A1B27C93E8D4A15 /* QwenTTSClient.swift in Sources */,
 				E45A697280C04799918959ED /* CosyVoiceTTSClient.swift in Sources */,
 				AE0000000000000000000041 /* VoiceAuditionPlayer.swift in Sources */,
+				AE000000000000000000003C /* FolderMixContentKeyReader.swift in Sources */,
+				AE000000000000000000003B /* FolderMixDurationReader.swift in Sources */,
+				AE000000000000000000003A /* FolderMixResolve.swift in Sources */,
 				AE0000000000000000000027 /* VoiceCloneRemoteService.swift in Sources */,
 				AE0000000000000000000028 /* KeyFingerprint.swift in Sources */,
 				AE0000000000000000000026 /* VoiceCloneViewModel.swift in Sources */,
@@ -1334,10 +1412,14 @@
 				C1633D8EFDD046447BBE6803 /* ASRService.swift in Sources */,
 				B1DFB11FBFFAEC5B94951276 /* BoundaryOptimizerService.swift in Sources */,
 				AE1D0C0F1234567890ABCDE1 /* SegmentCommitter.swift in Sources */,
+				AE0000000000000000000038 /* ClipIngestService.swift in Sources */,
+				AE0000000000000000000036 /* MaterialFolderScanner.swift in Sources */,
 				84D13408434CF8CD59AF65E6 /* BatchSegmentExportService.swift in Sources */,
 				9CFD3CF6C7194508A041D7CC /* VariantBatchExportService.swift in Sources */,
 				F7C1B9CE70319A8280BAF21D /* ExportService.swift in Sources */,
 				E1EC0B5D18794055B8BF870A /* DubExportService.swift in Sources */,
+				AF000000000000000000005D /* LogoOverlayPresets.swift in Sources */,
+				AF000000000000000000005B /* LogoOverlayAssetStore.swift in Sources */,
 				EAEBD3EFDDCE9AB391E64B89 /* SceneDetectionService.swift in Sources */,
 				9908BA8988CA083B76DA43CD /* SchemeGenerationService.swift in Sources */,
 				B6D377C9EA1F522F8341954B /* FFmpegRunner.swift in Sources */,
@@ -1346,7 +1428,9 @@
 				0578007877B0EC7F0E74F700 /* KeychainHelper.swift in Sources */,
 				EBBCDD8B9B156B547FDCBC8F /* ModelContextExtension.swift in Sources */,
 				5BFA9102727193F3F303530C /* ImportViewModel.swift in Sources */,
+				AF000000000000000000004C /* FolderMixViewModel.swift in Sources */,
 				42934F7D29D492CA10829B25 /* ProjectViewModel.swift in Sources */,
+				AF000000000000000000005F /* LogoOverlayViewModel.swift in Sources */,
 				23944C9C060858AC2E094047 /* SchemeViewModel.swift in Sources */,
 				FD08F64BC77F45B281D55094 /* DubbingViewModel.swift in Sources */,
 				7D5E9015AEE9E02EE8211DFF /* SegmentLibraryViewModel.swift in Sources */,
@@ -1354,7 +1438,9 @@
 				311C1EA134CAAC716A27A254 /* InlineVideoPlayer.swift in Sources */,
 				A1B2C3D4000000000000A008 /* DubbingProgressView.swift in Sources */,
 				B111386C5FD3E945A44D4584 /* ExportView.swift in Sources */,
+				AF0000000000000000000067 /* LogoOverlayPanel.swift in Sources */,
 				F79DA3913A7E11BF687E2C9E /* ImportView.swift in Sources */,
+				AF000000000000000000004E /* FolderMixView.swift in Sources */,
 				24AFC03D4A4D6DBEADD606EB /* OnboardingView.swift in Sources */,
 				1D93F909F2863466F91445A0 /* ProjectOverviewView.swift in Sources */,
 				55D680392E127983C43366C3 /* WelcomeView.swift in Sources */,
@@ -1416,6 +1502,12 @@
 				AB02C0A2E5E04B2A9C020004 /* SegmentSource.swift in Sources */,
 				AB02C0A2E5E04B2A9C020006 /* ProductCatalogDefaults.swift in Sources */,
 				AB02C0A2E5E04B2A9C020008 /* SegmentPickerCatalog.swift in Sources */,
+				AF000000000000000000004A /* WholeClipShape.swift in Sources */,
+				AF0000000000000000000048 /* DiskSpaceBudget.swift in Sources */,
+				AF0000000000000000000046 /* FolderMixPicker.swift in Sources */,
+				AF0000000000000000000055 /* FolderMixOrchestration.swift in Sources */,
+				AF0000000000000000000044 /* FolderMixScanner.swift in Sources */,
+				AF0000000000000000000050 /* FolderMixSessionState.swift in Sources */,
 				AC0700000000000000000001 /* KnowledgeDocumentFilter.swift in Sources */,
 				AB02C0A2E5E04B2A9C02000A /* ProductOwnershipBackfill.swift in Sources */,
 				AB03C0A3E5E04B2A9C030002 /* SidebarProductGrouping.swift in Sources */,
@@ -1446,6 +1538,7 @@
 				EE66FF7788AA99BB00CC11DD /* RewritePromptBuilder.swift in Sources */,
 				FF77AA88BB99CC0011DD22EE /* RewriteResultMapper.swift in Sources */,
 				D1A500B2DBC5DA3822C922CF /* DubSegmentGraph.swift in Sources */,
+				AF0000000000000000000059 /* LogoOverlay.swift in Sources */,
 				AA11BB22CC33DD44EE55FF66 /* DubEnums.swift in Sources */,
 				DD44EE55FF6611AA22BB33CC /* SegmentDub.swift in Sources */,
 				49505D7B9C93AB97795DAD97 /* PendingDeletionCenter.swift in Sources */,
@@ -1490,6 +1583,8 @@
 				AC0000000000000000000006 /* ScriptTypes.swift in Sources */,
 				AC0000000000000000000007 /* ScriptFlowPhase.swift in Sources */,
 				AC0000000000000000000012 /* AudioTrackPolicy.swift in Sources */,
+				AC0000000000000000000026 /* EmptyLensPolicy.swift in Sources */,
+				AC0000000000000000000025 /* DubRatePolicy.swift in Sources */,
 				AC0000000000000000000013 /* BM25Index.swift in Sources */,
 				AC0000000000000000000014 /* VectorIndex.swift in Sources */,
 				AC0000000000000000000015 /* HybridRetrievalEngine.swift in Sources */,
@@ -1554,9 +1649,14 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				7D0000000000000000000002 /* WhisperEvidenceDecodeTests.swift in Sources */,
+				7B0000000000000000000002 /* DubFixedRateRenderLaneTests.swift in Sources */,
 				7D0000000000000000000001 /* ExportDurationGateTests.swift in Sources */,
+				AF0000000000000000000057 /* FolderMixIngestJoinTests.swift in Sources */,
 				7B0000000000000000000001 /* ExportDeliveryTargetParsingTests.swift in Sources */,
 				7D0000000000000000000000 /* ExportCanvasReadbackTests.swift in Sources */,
+				AF000000000000000000006B /* LogoOverlayAssetStoreTests.swift in Sources */,
+				AF0000000000000000000069 /* LogoOverlayExportTests.swift in Sources */,
 				7A0000000000000000000000 /* VoiceCloneServiceTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;

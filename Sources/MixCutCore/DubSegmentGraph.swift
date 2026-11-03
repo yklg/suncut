@@ -63,7 +63,8 @@ public enum DubSegmentGraphBuilder {
         freezePadFrames: Int,
         trailingSilence: Double,
         bgmInputIndex: Int? = nil,
-        vocalsSource: VocalsSource? = nil
+        vocalsSource: VocalsSource? = nil,
+        logo: LogoOverlayStage? = nil
     ) -> DubSegmentGraph {
         let w = outputWidth, h = outputHeight
         let fpsInt = Int(fps.rounded())
@@ -115,15 +116,22 @@ public enum DubSegmentGraphBuilder {
             videoBeforePad = "capped"
         }
 
-        // 4) 末尾定格补帧 → [vout]
+        // 4) 末尾定格补帧 → [voutBase]（有 logo）/ [vout]（无 logo ⇒ 既有串逐字节不变）
+        let hasLogo = !(logo?.layers.isEmpty ?? true)
+        let finalVideoLabel = hasLogo ? "voutBase" : "vout"
         if freezePadFrames > 0 {
             let dur = Double(freezePadFrames) / fps
-            parts.append("[\(videoBeforePad)]tpad=stop_mode=clone:stop_duration=\(String(format: "%.3f", dur))[vout]")
+            parts.append("[\(videoBeforePad)]tpad=stop_mode=clone:stop_duration=\(String(format: "%.3f", dur))[\(finalVideoLabel)]")
         } else {
-            parts.append("[\(videoBeforePad)]null[vout]")
+            parts.append("[\(videoBeforePad)]null[\(finalVideoLabel)]")
         }
 
-        // 5) 音频 → [aout]
+        // 5) logo 链接在最终画面之后 ⇒ 品牌永远压在字幕/mask 之上
+        if hasLogo, let logo {
+            LogoOverlayGraph.append(to: &parts, stage: logo, from: "voutBase", to: "vout")
+        }
+
+        // 6) 音频 → [aout]
         if keepOriginalAudio {
             if let vs = vocalsSource {
                 // 全局 BGM 模式：原声段只留纯口播（整轨 vocals.wav 按原视频时间轴切片）

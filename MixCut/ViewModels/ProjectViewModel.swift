@@ -96,7 +96,7 @@ final class ProjectViewModel {
         let t0 = Date()
         let allVideos = project.videos
         let realVideos = allVideos.filter { !$0.isUserUploaded }            // 成片视频（自建分镜不算「视频」，只在分镜库出现）
-        let segCount = allVideos.reduce(0) { $0 + $1.segments.count }       // 分镜计数含自建分镜
+        let segCount = allVideos.reduce(0) { $0 + $1.displayableSegmentCount }  // 分镜计数含自建分镜、不含混剪补建的内部整片段（决议 K9）
         overviewSnapshot = OverviewSnapshot(videos: realVideos,
                                             videoCount: realVideos.count,
                                             segmentCount: segCount,
@@ -126,6 +126,16 @@ final class ProjectViewModel {
     func setProjectVoiceOverride(raw: String?, project: Project) {
         guard let modelContext else { return }
         project.preferredVoiceChoiceRaw = raw
+        modelContext.safeSave()
+    }
+
+    // MARK: - Logo 角标（项目级唯一写入收口）
+
+    /// 设置/清除项目级 logo 角标配置（LogoOverlayCoder 串；nil=关闭）。
+    /// 视图不直写 Project.logoOverlayRaw——守卫 G-LO-01 守此收口函数名。
+    func setProjectLogoOverlay(raw: String?, project: Project) {
+        guard let modelContext else { return }
+        project.logoOverlayRaw = raw
         modelContext.safeSave()
     }
 
@@ -211,10 +221,12 @@ final class ProjectViewModel {
     }
 
     /// 创建新项目（同步创建"自定义组合"策略容器），归属到弹窗选定的产品。
+    ///
+    /// UI 入口：只负责"从弹窗状态取名字与产品 + 建完收尾"，**建的动**作在 `createProject(named:in:)`。
     func createProject() {
-        guard let context = modelContext else { return }
-        let name = newProjectName.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !name.isEmpty else { return }
+        // 项目名先判空再动产品：原实现就是这个顺序。反过来写的话，
+        // "填了产品名、忘了填项目名"会白白建出一个孤儿产品。
+        guard !newProjectName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
 
         // 产品归属：内联新输入的产品名优先（重名时 UI 已让用户拍板）；否则用选中产品；兜底默认产品。
         let product: Product?
@@ -226,36 +238,62 @@ final class ProjectViewModel {
         } else {
             product = effectiveNewProjectProduct ?? ensureDefaultProduct()
         }
+
+        guard let project = createProject(named: newProjectName, in: product) else { return }
+
         if let pid = product?.id {
             UserDefaults.standard.set(pid.uuidString, forKey: "lastSelectedProductID")
         }
-
-        let project = Project(name: name)
-        project.product = product
-        context.insert(project)
-
-        let customGroup = MixStrategy(
-            name: "自定义组合",
-            style: "",
-            description: "手动挑选分镜组合的方案",
-            targetAudience: "",
-            narrativeStructure: "",
-            targetDuration: 0
-        )
-        customGroup.isCustomGroup = true
-        customGroup.project = project
-        project.strategies.append(customGroup)
-        context.insert(customGroup)
-
-        context.safeSave()
-
         newProjectName = ""
         newProductName = ""
         newProjectProductID = product?.id
         isCreatingProject = false
+        selectedProject = project
+    }
+
+    /// 程序化建项目（**不读弹窗 UI state**）：建 Project ＋ 挂「自定义组合」容器 ＋ 归属产品 ＋ 落盘。
+    /// 名字口径与 UI 逐字相同（trim 后为空就不建）—— UI 那颗现在只是它的适配器，
+    /// 所以"建一个可用项目"在仓里只有一份动作。
+    @discardableResult
+    func createProject(named rawName: String, in product: Product?) -> Project? {
+        guard let context = modelContext else { return nil }
+        let name = rawName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty else { return nil }
+
+        let project = Project.makeWithName(name, product: product, in: context)
+        context.safeSave()
+
         fetchProducts()
         fetchProjects()
-        selectedProject = project
+        return project
+    }
+
+    /// 按名查项目 —— **本期新写的入口**。Product 侧早有 `product(named:)`，Project 侧没有对应物
+    /// （计划 Step 4 实测：`ProjectViewModel.swift` 里 `func project(named` 与 `name == ` 零命中），
+    /// 于是 D12「同名合并复用」在 Project 这一半根本没有可复用的实现可接。
+    /// 匹配口径与 `createProject` 的 trim **逐字相同**：不折叠大小写、不做第三种规范化
+    /// —— 近名（`Hook` / `hook`）因此不会被静默并成一个类别，它由扫描结果负责提示。
+    func project(named rawName: String, in product: Product?) -> Project? {
+        let trimmed = rawName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        return projects.first { candidate in
+            candidate.name.trimmingCharacters(in: .whitespacesAndNewlines) == trimmed
+                && candidate.product?.id == product?.id
+        }
+    }
+
+    /// 存在即复用，不存在才建（D12「同名 Product/Project 合并复用，不加后缀」）。
+    /// 文件夹混剪的类别项目与汇总项目都走这颗 ⇒ 重扫同一目录不会造出副本产品/副本项目（验收 7）。
+    /// ⚠ 它读的是 `projects` 这份内存投影，调用方必须先 `fetchProjects()`（混剪 VM 在建库前做）。
+    @discardableResult
+    func ensureProject(named rawName: String, in product: Product?) -> Project? {
+        project(named: rawName, in: product) ?? createProject(named: rawName, in: product)
+    }
+
+    /// 产品侧的同名合并（D12 的另一半）：有则复用，无则建。空名 ⇒ nil（`createProduct` 自己也会拒）。
+    @discardableResult
+    func ensureProduct(named rawName: String) -> Product? {
+        product(named: rawName) ?? createProduct(name: rawName)
     }
 
     /// 删除项目：界面立刻隐藏（不真删），宽限期到点才走咽喉。

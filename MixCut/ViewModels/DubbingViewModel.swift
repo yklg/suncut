@@ -931,38 +931,48 @@ final class DubbingViewModel {
                                         voiceID: String,
                                         text: String,
                                         targetDuration: Double,
-                                        bias: Double,
+                                        rate: Double,
+                                        policy: DubAlignmentPolicy,
                                         cloned: Bool,
                                         skipCacheProbe: Bool,
                                         cacheSpec: (engine: RawAudioCacheKey.Engine,
                                                     model: String,
                                                     sampleRate: Int,
                                                     format: String)?) async throws -> TTSResult {
-        let firstRate = 1.0
         let cacheable = skipCacheProbe ? nil : cacheSpec
         let result: TTSResult
         if cloned {
             // qwen克隆 TTS 间歇性"续读参考内容/跑飞"(音频比台词长，混进下一段)：
             // 干净版必然最短 → 重试取最短，看着干净(时长≤字数×阈值)即提前采用。
             result = try await synthesizeCloneRobust(client: client, text: text, voiceId: voiceID)
+        } else if policy == .fixedRate {
+            // 新口径：**只合成一次**，rate 就是方案解析出来那颗值，全程不变。
+            // 刻意不再走 SpeechRatePlanner.retargetRate —— 那颗按分镜画面时长反推 rate，
+            // 每个分镜算出的 rate 各不相同，正是"语速逐段跳变"的来源（计划 §一 根因）。
+            // 省掉二次合成也顺带把这一腿的 TTS 成本减半。
+            result = try await client.synthesize(text: text, voiceId: voiceID,
+                                                 languageType: "Chinese", rate: rate)
         } else {
+            // 旧口径原样保留：基准 1.0 合成一次，再按画面时长反推 rate 二次合成。
+            let firstRate = DubRateResolution.neutralRate
             var r = try await client.synthesize(text: text, voiceId: voiceID,
                                                 languageType: "Chinese", rate: firstRate)
             if let retarget = SpeechRatePlanner.retargetRate(
                 targetDuration: targetDuration, measuredDuration: r.rawDuration,
-                measuredAtRate: firstRate, bias: bias) {
+                measuredAtRate: firstRate, bias: rate) {
                 r = try await client.synthesize(text: text, voiceId: voiceID,
                                                 languageType: "Chinese", rate: retarget)
             }
             result = r
         }
-        // 存入缓存（键用 rate=1.0 —— 与下次查询用的键严格一致；命中率靠分桶保证）。
-        // ⚠️ 读侧在「该分镜此前已合成过同文案」时会绕过缓存（skipCacheProbe），
-        // 写侧**同样**要绕过 —— 否则刚绕过脏缓存、转头又把这次的新结果盖进去，
-        // 下次那条路径又会命中。两边必须同一把尺子。
+        // 存入缓存。
+        // ⚠️ 缓存键里的 rate 必须是**实际发给引擎的那颗值**：新口径下 rate 不再恒为 1.0，
+        // 继续写死 1.0 会让 0.9 与 1.2 两种语速的音频互相命中 —— 那是一次静默的错播，
+        // 而且读侧（`cachedDuration` 那颗 key）必须用同一个值，两边同一把尺子。
+        let cacheRate = cloned ? DubRateResolution.neutralRate : rate
         if let cacheable {
             let key = RawAudioCacheStore.key(engine: cacheable.engine, model: cacheable.model,
-                                             voiceID: voiceID, text: text, rate: firstRate,
+                                             voiceID: voiceID, text: text, rate: cacheRate,
                                              sampleRate: cacheable.sampleRate, format: cacheable.format)
             await RawAudioCacheStore.shared.store(key: key,
                                                   audioURL: URL(fileURLWithPath: result.wavPath),
@@ -1130,11 +1140,35 @@ final class DubbingViewModel {
         let cloned = choice.engine == .qwenVC
         busyDubIDs.insert(dub.id)
         defer { busyDubIDs.remove(dub.id) }
+
+        // ── A 块：语速固定口径 ─────────────────────────────────────────────
+        // 新生成的配音一律走 `.fixedRate`；存量件靠各自落库的 `alignmentPolicyRaw`
+        // 复现（缺省 `.unknownLegacy` ⇒ 按落库的 atempoFactor/trailingSilence 原样重渲）。
+        let policy: DubAlignmentPolicy = .fixedRate
+        let rate = DubRateResolution.resolve(explicit: nil, videoPreference: video.dubSpeechRate)
+        let pictureSeconds = segment.duration
+
+        // **作业闸门**：估算超字就在发 TTS 请求之前拒掉 —— 派单一旦发起就是云端计费，
+        // 拒回它已经来不及（同 U07 判"顺序"的理由）。
+        // 放在 busyDubIDs.insert 之后、任何 client 调用之前。
+        if case .reject(let reason) = DubLengthGate.preCheck(text: dub.rewrittenText,
+                                                             pictureSeconds: pictureSeconds) {
+            let rejected = DubLengthRejected(reason)
+            MixLog.info("[DubGate] 估算超字拒合成 dub=\(dub.id) segment=\(segment.segmentIndex)：\(rejected)")
+            dub.status = .pending
+            try? context.save()
+            if !silent {
+                errorState = .init(message: rejected.description, kind: .generic)
+            }
+            lastDubErrors[dub.id] = rejected.description
+            return false
+        }
+
         do {
-            let target = segment.duration
-            let bias = video.dubSpeechRate
-            // qwen-vc 引擎（逐视频克隆）无数值语速，靠 atempo 对齐 + 健壮重试；
-            // CosyVoice 引擎（预置/全局复刻）走 rate 对齐。客户端按音色身份路由。
+            let target = pictureSeconds
+            // qwen-vc 引擎（逐视频克隆）无数值语速可调 —— 新口径下它只能 atempo 恒 1.0，
+            // 超字同样被上面那道闸拒掉，绝不靠变速把话压进画面。
+            // CosyVoice 引擎走 rate，但**不再逐段反推**：全程用 `rate` 这一颗值。
             let client = synthesisClient(for: choice)
             let synthVoiceID = choice.voiceID
 
@@ -1158,11 +1192,14 @@ final class DubbingViewModel {
             // 后者 Swift 无法证明所有路径都已初始化（silgen 腿实测报
             // "variable 'result' used before being initialized"，而 typecheck 放行）。
             let hitURL = Self.ttsTempURL(prefix: "cachhit")
+            // ⚠️ 缓存键的 rate 读写两侧必须同一把尺子：新口径下 rate 不再恒 1.0，
+            // 若读侧继续写死 1.0，0.9 与 1.2 两种语速的音频会互相命中 —— 一次静默错播。
+            let cacheRate = cloned ? DubRateResolution.neutralRate : rate
             let cachedDuration: Double? = if let cacheSpec, !regeneratedSameText {
                 await RawAudioCacheStore.shared.hit(
                     key: RawAudioCacheStore.key(engine: cacheSpec.engine, model: cacheSpec.model,
                                                voiceID: synthVoiceID, text: dub.rewrittenText,
-                                               rate: 1.0, sampleRate: cacheSpec.sampleRate,
+                                               rate: cacheRate, sampleRate: cacheSpec.sampleRate,
                                                format: cacheSpec.format),
                     copyingTo: hitURL)
             } else {
@@ -1170,7 +1207,7 @@ final class DubbingViewModel {
             }
             let result: TTSResult
             if let cachedDuration {
-                MixLog.info("[TTSCache] 命中 raw=\(String(format: "%.2f", cachedDuration))s voice=\(synthVoiceID)")
+                MixLog.info("[TTSCache] 命中 raw=\(String(format: "%.2f", cachedDuration))s voice=\(synthVoiceID) rate=\(String(format: "%.2f", cacheRate))")
                 result = TTSResult(wavPath: hitURL.path, rawDuration: cachedDuration)
             } else {
                 if regeneratedSameText {
@@ -1178,19 +1215,44 @@ final class DubbingViewModel {
                 }
                 result = try await Self.synthesizeFresh(
                     client: client, voiceID: synthVoiceID, text: dub.rewrittenText,
-                    targetDuration: target, bias: bias, cloned: cloned,
+                    targetDuration: target, rate: rate, policy: policy, cloned: cloned,
                     skipCacheProbe: regeneratedSameText, cacheSpec: cacheSpec)
             }
+
+            // **质量闸（非作业闸）**：实测超字 ⇒ 丢弃音频、dub 回 pending。
+            // 这道天然在花钱之后（实测值只有合成完才有），刻意**不进** U07 的名册 ——
+            // U07 查的是 ensureNoActiveJob 与 jobs.begin 的先后，与本闸不是同一对。
+            // 理由与代价写在这里，别只留在计划文档里：见 DubRatePolicy.swift 的文件头。
+            if case .reject(let reason) = DubLengthGate.postCheck(audioSeconds: result.rawDuration,
+                                                                  pictureSeconds: target) {
+                let rejected = DubLengthRejected(reason)
+                MixLog.info("[DubGate] 实测超字丢弃 dub=\(dub.id) segment=\(segment.segmentIndex)：\(rejected)")
+                try? FileManager.default.removeItem(atPath: result.wavPath)   // 别把 wav 留在临时目录
+                dub.status = .pending
+                dub.audioFilePath = nil
+                try? context.save()
+                if !silent {
+                    errorState = .init(message: rejected.description, kind: .generic)
+                }
+                lastDubErrors[dub.id] = rejected.description
+                return false
+            }
+
             let finalized = try await finalizer.finalize(
                 tts: result, targetDuration: target, fps: video.fps > 0 ? video.fps : 30,
+                policy: policy,
                 videoHash: video.contentHash ?? video.id.uuidString,
                 segmentId: segment.id, voiceId: dub.voiceId, textVariantIndex: dub.textVariantIndex)
             dub.audioFilePath = finalized.m4aPath
             dub.atempoFactor = finalized.plan.atempoFactor
             dub.freezePadFrames = finalized.plan.freezePadFrames
             dub.trailingSilence = finalized.plan.trailingSilence
-            // 对齐后实际音频时长（atempo 变速后），用于在变体池展示
+            // 对齐后实际音频时长（atempo 变速后），用于在变体池展示。
+            // 新口径下 atempoFactor 恒 1.0 ⇒ 这一项就是 rawDuration 本身，不用再除。
             dub.audioDuration = result.rawDuration / max(0.0001, finalized.plan.atempoFactor)
+            // 语速与口径当场戳死：dub 早于方案存在，事后再从方案读就读不到"当时用的什么"。
+            dub.speechRate = rate
+            dub.alignmentPolicy = policy
             dub.generatedForStartFrame = segment.startFrame
             dub.generatedForEndFrame = segment.endFrame
             dub.generatedForTextHash = DubStaleness.textHash(of: dub.rewrittenText)

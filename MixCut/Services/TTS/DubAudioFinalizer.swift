@@ -6,19 +6,24 @@ struct FinalizedDub: Sendable {
     let plan: AlignmentPlan
 }
 
-/// 把 TTS 原始 wav 按对齐方案做 atempo 变速 + 转 AAC/m4a，写到全局 Dubs 目录。
+/// 把 TTS 原始 wav 按对齐方案做处理 + 转 AAC/m4a，写到全局 Dubs 目录。
 /// 定格补帧 / 末尾静音不在此处烧入音频——它们随 plan 落库，由导出阶段（P4）拼接时处理。
+///
+/// ⚠️ `policy` **刻意不给默认值**：默认值会把"没决定口径"悄悄变成"用了某一套行为"。
+/// 调用方必须显式选一套，与 `DubAlignmentPolicy.unknownLegacy` 的"未记录"语义区分开。
 actor DubAudioFinalizer {
     func finalize(tts: TTSResult,
                   targetDuration: Double,
                   fps: Double,
+                  policy: DubAlignmentPolicy,
                   videoHash: String,
                   segmentId: UUID,
                   voiceId: String,
                   textVariantIndex: Int) async throws -> FinalizedDub {
         let plan = AudioAligner.plan(targetDuration: targetDuration,
                                      audioDuration: tts.rawDuration,
-                                     fps: fps)
+                                     fps: fps,
+                                     policy: policy)
 
         let dest = FileHelper.dubAudioURL(videoHash: videoHash, segmentId: segmentId,
                                           voiceId: voiceId, textVariantIndex: textVariantIndex)
@@ -31,8 +36,11 @@ actor DubAudioFinalizer {
             .appendingPathComponent("\(dest.deletingPathExtension().lastPathComponent).tmp.m4a")
         try? FileManager.default.removeItem(at: tmp)
 
-        // atempo filter 单段只接受 0.5~2.0；大于 2.0 的加速（台词写很多时）需链式拆成多段相乘，
-        // 这样不管多少字都能把配音压进画面、绝不超过。
+        // 旧口径才变速：atempo filter 单段只接受 0.5~2.0，大于 2.0 的加速（台词写很多时）
+        // 需链式拆成多段相乘，这样不管多少字都能把配音压进画面。
+        // 新口径 `.fixedRate` 下 plan.atempoFactor 恒 1.0 → atempoChain 返回空 → 不加这个 filter，
+        // 语速就是音色本身的语速。超长不该走到这里（DubLengthGate 已在合成前后拒掉）；
+        // 万一走到，这里也**不会**悄悄把它压进画面 —— 宁可出片偏长，也不破坏语速一致。
         let filters = Self.atempoChain(plan.atempoFactor)
 
         let runner = FFmpegRunner()

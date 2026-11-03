@@ -71,7 +71,7 @@ extension ModelContext {
     /// 批量删除 —— **第一件事就是快照**。
     ///
     /// `for x in model.someToMany { context.delete(x) }` 是在遍历一条活的 to-many 关系的同时改它，
-    /// 本仓 `ImportViewModel.swift:277` 早就把这条写成「必须先 `Array(...)` 快照，直接迭代行为未定义」，
+    /// 本仓 `ImportViewModel.swift:329` 早就把这条写成「必须先 `Array(...)` 快照，直接迭代行为未定义」，
     /// 但那是靠人记的注释；这颗 API 让「忘记快照」构造不出来：传进来的关系数组在进入函数那一行就已经是值拷贝。
     ///
     /// ⚠️ 刻意不用官方的 `delete(model:where:)`：那是存储层批量删，不会动内存里已 materialize 的对象，
@@ -130,7 +130,7 @@ extension ModelContext {
     /// `MCPToolHandlers.deleteProject` 那**两份复制粘贴实现**（后者 `:613` 的注释自己都写着"与前者逻辑一致"）。
     ///
     /// 顺序全部写死在这里，调用方无从倒置：
-    /// 1. **先结算入边** —— 必须早于 `delete`：`projectVideos` 是 cascade 删的（`Project.swift:28`），
+    /// 1. **先结算入边** —— 必须早于 `delete`：`projectVideos` 是 cascade 删的（`Project.swift:28-29`），
     ///    删完就再也查不出"还有哪些项目共享这颗 Video"，重选归属的输入集就空了。
     /// 2. 再 `delete(project)`（级联带走 `ProjectVideo`/`MixStrategy`/`MixScheme`/`SchemeSegment`）。
     /// 3. 补删没有任何其它引用的 `Video` 与它的 `Segment`（这条判定只能在**cascade 落盘之后**做，故中间那次 save 不能省）。

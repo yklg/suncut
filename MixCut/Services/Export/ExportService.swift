@@ -150,6 +150,15 @@ struct ExportInput: Sendable {
     let segments: [(path: String, start: Double, end: Double)]
     let maxWidth: Int
     let maxHeight: Int
+    /// 方案里**计划**有几段（`scheme.orderedSegments` 的条数）。
+    /// 与 `segments.count` 不等 = 有段被静默丢掉，调用方必须出声（Step 7 收口的就是这件事）。
+    /// ⚠ 这里用非 Optional 而不是 `Int?`：`ExportInput` 只在内存里跨 actor 传，
+    ///   全仓既不 Codable 也不落盘（实测：构造点只有 `from(scheme:)` 一处，消费点两处）。
+    ///   「给已落盘的 Codable 加字段必须 Optional」那条纪律适用于落盘结构体，套到这里是凭空
+    ///   给两个调用方各加一次永不成立的 nil 分支 —— 计划的 Step 7 原文按后者写，已按实测改判（R23）。
+    let plannedSegmentCount: Int
+    /// 被丢掉的段，逐条带原因（第几段、为什么）。空 = 一段没丢。
+    let droppedDescriptions: [String]
 
     /// 从 MixScheme 提取导出数据（必须在 @MainActor 上调用）
     @MainActor
@@ -158,20 +167,32 @@ struct ExportInput: Sendable {
         guard !orderedSegments.isEmpty else { return nil }
 
         var segments: [(path: String, start: Double, end: Double)] = []
+        // 第九节定档：**部分丢 = 放行 + 标记，全丢 = 拒绝**。
+        // 以前这两处 `continue` 是纯静默的 —— 后果是一部短了一截、却没有任何地方说少了几段的 mp4。
+        var dropped: [String] = []
         var maxWidth = 0
         var maxHeight = 0
-        for schemeSeg in orderedSegments {
+        for (offset, schemeSeg) in orderedSegments.enumerated() {
+            let position = offset + 1
             guard let segment = schemeSeg.segment,
-                  let video = segment.video else { continue }
+                  let video = segment.video else {
+                dropped.append("第 \(position) 段：分镜已不在库里（素材或分镜被删过）")
+                continue
+            }
             // 走"当前生效画面"（替换版=合成片整段；原版=源视频帧区间）
             let ep = segment.effectivePicture
-            guard !ep.videoPath.isEmpty, FileHelper.isMaterialFilePresent(path: ep.videoPath) else { continue }
+            guard !ep.videoPath.isEmpty, FileHelper.isMaterialFilePresent(path: ep.videoPath) else {
+                dropped.append("第 \(position) 段（\(video.name)）：画面文件不在盘上")
+                continue
+            }
             segments.append((path: ep.videoPath, start: ep.startTime, end: ep.endTime))
             maxWidth = max(maxWidth, video.width)
             maxHeight = max(maxHeight, video.height)
         }
         guard !segments.isEmpty else { return nil }
-        return ExportInput(segments: segments, maxWidth: maxWidth, maxHeight: maxHeight)
+        return ExportInput(segments: segments, maxWidth: maxWidth, maxHeight: maxHeight,
+                           plannedSegmentCount: orderedSegments.count,
+                           droppedDescriptions: dropped)
     }
 }
 

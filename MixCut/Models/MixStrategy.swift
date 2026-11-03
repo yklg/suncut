@@ -73,3 +73,44 @@ final class MixStrategy: Identifiable {
         schemes.sorted { $0.variationIndex < $1.variationIndex }
     }
 }
+
+// MARK: - 「自定义组合」容器的唯一构造口
+
+extension MixStrategy {
+
+    /// 系统容器的名字与元信息 —— 全仓只许在这里写一遍。
+    ///
+    /// 为什么要收成一颗（计划 Step 4「修族不修点」）：`MixStrategy(name: "自定义组合", …)`
+    /// ＋ `isCustomGroup = true` ＋ `project = …` ＋ `strategies.append` ＋ `context.insert`
+    /// 这一整套动作，实测有 **4 份逐字拷贝**：
+    ///   ① `ProjectViewModel.createProject()`（UI 新建项目）
+    ///   ② `MCPToolHandlers` 的建项工具（那里的注释自己写着「与 UI 的 createProject 保持一致」
+    ///      —— 靠人记着抄对，就是最脆的那种一致性）
+    ///   ③ `MixCutApp.ensureCustomGroupStrategy`（给老项目补建的一次性数据修复）
+    ///   ④ `SchemeViewModel.createCustomScheme`（"理论上一定有，双保险"那段）
+    /// 文件夹混剪是第 5 个要建项目的通路，不能再抄第 5 份：每多一份，就多一处
+    /// "将来给容器加一个必备字段时只改了被调到的那份"的静默分歧点。
+    @discardableResult
+    static func attachCustomGroup(to project: Project, in context: ModelContext) -> MixStrategy {
+        let group = MixStrategy(name: "自定义组合",
+                                style: "",
+                                description: "手动挑选分镜组合的方案",
+                                targetAudience: "",
+                                narrativeStructure: "",
+                                targetDuration: 0)
+        group.isCustomGroup = true
+        group.project = project
+        project.strategies.append(group)
+        context.insert(group)
+        return group
+    }
+
+    /// 幂等版：已有容器就返回既有那一份，绝不补第二份（重复容器会让方案页出现两个同名分组）。
+    @discardableResult
+    static func customGroup(for project: Project, in context: ModelContext) -> MixStrategy {
+        if let existing = project.strategies.first(where: { $0.isCustomGroup }) {
+            return existing
+        }
+        return attachCustomGroup(to: project, in: context)
+    }
+}

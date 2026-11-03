@@ -27,6 +27,9 @@ import Foundation
 /// 而真正决定音频内容的是「语速档位」——同一档内的 rate 差异人耳不可辨，
 /// 复合成结果在工程上等价。故按 `rateBucket` 分档（0.05 一档），
 /// 命中后**用命中档的音频**喂finalize，由 finalize 的 atempo 把时长对齐到各自目标。
+/// ⚠️ 最后一句只对**旧口径**成立：`.fixedRate`（A 块）下 finalize 不变速，
+/// 命中档的音频就是最终音频；而该口径下 rate 是"一条视频一颗固定值"，
+/// 档位数比逐段 retarget 时更少 ⇒ 分桶只会更容易命中，不会更差。
 ///
 /// ## sampleRate / format 为什么进键
 ///

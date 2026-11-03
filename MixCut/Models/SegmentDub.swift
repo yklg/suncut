@@ -17,6 +17,26 @@ final class SegmentDub {
     var freezePadFrames: Int = 0
     var trailingSilence: Double = 0
 
+    // MARK: 语速口径（A 块）
+    /// 这条配音**实际用的**语速（CosyVoice 原生 `rate`；克隆腿引擎不认，恒记解析出的那颗值）。
+    ///
+    /// 为什么戳在 dub 上而不是只放方案级：分镜配音链里 dub **早于方案存在**
+    /// （`generateAllAudio` 的注释「一键改写后自动调用」，入参只有 segments + videoID；
+    ///  方案是 `SchemeViewModel.swift:550` 那样事后 `selectedSegmentDubId = nil` 再绑的）。
+    /// 所以"方案级语速"在这条链上无从读取 —— 生成时解析、当场戳死，才是能审计的真值。
+    /// 带默认值属轻量迁移。
+    var speechRate: Double = 1.0
+    /// 对齐口径判别位。**不许用 nil 或"看 atempoFactor 是不是 1.0"来推** ——
+    /// 新口径下 atempoFactor 恒 1.0，存量里也有正好 1.0 的，一颗数值两用会把两套口径判成同形。
+    /// 缺省档只许是 `.unknownLegacy`（防默认值冒充数据，同 `TextProvenance` TC-92b 口径）。
+    var alignmentPolicyRaw: String = DubAlignmentPolicy.unknownLegacy.rawValue
+
+    /// 对齐口径。认不出的 raw 一律落 `.unknownLegacy`，绝不落进 `.fixedRate`。
+    var alignmentPolicy: DubAlignmentPolicy {
+        get { DubAlignmentPolicy(rawValue: alignmentPolicyRaw) ?? .unknownLegacy }
+        set { alignmentPolicyRaw = newValue.rawValue }
+    }
+
     // 失效追踪（DubStaleness 生成那一刻快照）
     var generatedForStartFrame: Int = -1
     var generatedForEndFrame: Int = -1
@@ -24,7 +44,7 @@ final class SegmentDub {
     /// 配音生成那一刻，**分镜原台词**（`Segment.text`）的哈希。
     /// 改写版没动但原台词被重听/搬字换掉了，这条配音也已经对不上画面里的话 —— 以前只追踪改写版，
     /// 那种失效是无声的。默认 `""` = 旧数据（无从判起，不报 stale，只报"未记录"）。
-    /// ⚠️ 注意 `generatedForStartFrame/EndFrame` 另兼**时长**职责（`MCPSegmentToolHandlers.swift:375` 用它俩算时长），
+    /// ⚠️ 注意 `generatedForStartFrame/EndFrame` 另兼**时长**职责（`MCPSegmentToolHandlers.swift:381` 用它俩算时长），
     ///    本轮只加这一个 hash 字段，不动那两字段的语义。
     var generatedForSourceTextHash: String = ""
 

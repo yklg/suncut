@@ -133,7 +133,7 @@ final class SegmentLibraryViewModel {
 
         var allSegments: [Segment] = []
         for video in project.videos {
-            allSegments.append(contentsOf: video.segments)
+            allSegments.append(contentsOf: video.displayableSegments)   // 决议 K9 那颗唯一出口
         }
         segments = allSegments
         applyFilter()   // applyFilter 内部会调用 recomputeAllDerived
@@ -603,7 +603,11 @@ final class SegmentLibraryViewModel {
             },
             undo: { [weak self] in
                 guard let self else { return }
-                self.segments.append(segment)   // 放回（applyFilter 会按质量/时间重新排序，与顺序无关）
+                // 撤销这条腿是**绕过装载口的第二次写入**（计划第十节：只挂 loadSegments 会漏）。
+                // 内部段本来就不该上屏 ⇒ 撤销时「少塞一条」是正确行为，不是丢数据。
+                if !segment.mixInternalWholeClip {
+                    self.segments.append(segment)   // 放回（applyFilter 会按质量/时间重新排序，与顺序无关）
+                }
                 self.applyFilter()
             }
         )
@@ -657,7 +661,7 @@ final class SegmentLibraryViewModel {
             },
             undo: { [weak self] in
                 guard let self else { return }
-                self.segments.append(contentsOf: segs)
+                self.segments.append(contentsOf: segs.filter { !$0.mixInternalWholeClip })
                 self.applyFilter()
             }
         )

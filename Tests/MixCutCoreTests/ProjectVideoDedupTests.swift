@@ -305,9 +305,9 @@ struct ProjectVideoDedupTests {
             // pvID 由行号唯一化 ⇒ 不会偶然撞出同一个 pvID 让断言失去意义（撞车概率曾约 4.5%）
             rows.append(ProjectVideoAssociation(
                 pvID: id(i + 1),
-                projectID: id(100 + Int(rng.next() % 4) + 1),
-                videoID: id(200 + Int(rng.next() % 30) + 1),
-                addedAt: Date(timeIntervalSinceReferenceDate: t0 + Double(rng.next() % 10_000) / 1000.0)))
+                projectID: id(100 + Int(rng.nextUInt64() % 4) + 1),
+                videoID: id(200 + Int(rng.nextUInt64() % 30) + 1),
+                addedAt: Date(timeIntervalSinceReferenceDate: t0 + Double(rng.nextUInt64() % 10_000) / 1000.0)))
         }
         // 夹具自检：必须有重复组，否则整条用例空过（假绿）
         let inputGroups = groups(rows)
@@ -339,7 +339,7 @@ struct ProjectVideoDedupTests {
         var rng2 = SplitMix64(seed: 0x1234_5678_9ABC_DEF0)
         var shuffled = rows
         for i in stride(from: shuffled.count - 1, through: 1, by: -1) {
-            let j = Int(rng2.next() % UInt64(i + 1))
+            let j = Int(rng2.nextUInt64() % UInt64(i + 1))
             shuffled.swapAt(i, j)
         }
         let out2 = ProjectVideoDedup.deduplicate(shuffled)
@@ -437,15 +437,8 @@ private func scaleRows(count: Int) -> [ProjectVideoAssociation] {
     return rows
 }
 
-/// 测试内部的确定性随机源（不引外部依赖，保证可复现）
-private struct SplitMix64 {
-    private var state: UInt64
-    init(seed: UInt64) { state = seed }
-    mutating func next() -> UInt64 {
-        state = state &+ 0x9E37_79B9_7F4A_7C15
-        var z = state
-        z = (z ^ (z >> 30)) &* 0xBF58_476D_1CE4_E5B9
-        z = (z ^ (z >> 27)) &* 0x94D0_49BB_1331_11EB
-        return z ^ (z >> 31)
-    }
-}
+// 确定性随机源已收进 `Sources/MixCutCore/FolderMixPicker.swift` 的 public `SplitMix64`。
+// 这里原先有一份逐字相同的 private 副本 —— 文件夹混剪把它变成产品依赖后，两份定义就是
+// 「第二份真源」（`OrphanFileFinderTests.swift:121` 与 `WhisperModelCatalogTests.swift:38`
+// 都记过这条裁定）。迁移不改变任何读数：`FolderMixPickerTests.P12` 用四条 golden 值
+// 钉住了这份算法的输出序列，与本副本历史输出逐字相同（含 `next()` → `nextUInt64()` 的改名）。

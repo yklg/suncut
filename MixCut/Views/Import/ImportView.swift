@@ -471,9 +471,9 @@ struct ImportView: View {
         return lines.joined(separator: "；")
     }
 
+    /// 白名单真源在 Core 的 `VideoFileFormat`（守卫 G-i 数扩展名字面量，不许在这里再抄一份）。
     private func isVideoFile(_ url: URL) -> Bool {
-        let videoExtensions = ["mp4", "mov", "avi", "m4v", "mkv"]
-        return videoExtensions.contains(url.pathExtension.lowercased())
+        VideoFileFormat.isVideoExtension(url.pathExtension)
     }
 
     /// 错误提示 banner（显示在视频列表上方）
@@ -836,7 +836,9 @@ struct ImportedVideoCard: View {
                 // 白名单：只在「孤立 imported（未排队也未在跑）」或「明确 failed」时显示重试按钮
                 // 防御性约束 — 即使未来 isProcessing 实现被改坏，queued/processing 状态也绝不会出按钮
                 let canShowRetry = (video.status == .imported || video.status == .failed)
-                                   && video.segments.isEmpty
+                                   // 决议 K9：这条界线问的是「用户有没有分镜可退」，混剪补建的内部段
+                                   // 不是用户内容 ⇒ 读可显示那颗，别读裸关系（覆盖评估时补的第 19 处）。
+                                   && video.displayableSegments.isEmpty
                                    && !isRetrying
                                    && !isProcessing
                 if canShowRetry {
@@ -899,7 +901,7 @@ struct ImportedVideoCard: View {
             }
 
             // 分镜标签
-            if !video.segments.isEmpty {
+            if !video.displayableSegments.isEmpty {
                 segmentTags
             }
         }
@@ -1141,7 +1143,7 @@ struct ImportedVideoCard: View {
     // MARK: - 分镜标签
     private var segmentTags: some View {
         var typeCounts: [SemanticType: Int] = [:]
-        for seg in video.segments {
+        for seg in video.displayableSegments {
             for t in seg.semanticTypes { typeCounts[t, default: 0] += 1 }
         }
         let sorted = typeCounts.sorted { $0.value > $1.value }

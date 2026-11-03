@@ -3,9 +3,11 @@ import SwiftUI
 struct ExportView: View {
     let project: Project
     @Bindable var schemeVM: SchemeViewModel
+    @Bindable var projectVM: ProjectViewModel
 
     @Environment(\.modelContext) private var modelContext
     @State private var dubVM = DubbingViewModel()
+    @State private var logoVM = LogoOverlayViewModel()
 
     /// 导出设置的四颗选择：**只住在 `@AppStorage` 里**，`exportConfig` 是它们的派生视图。
     ///
@@ -141,6 +143,7 @@ struct ExportView: View {
         }
         .onAppear {
             schemeVM.loadSchemes(for: project)
+            logoVM.load(project: project)
             selectAll()
         }
         .task {
@@ -166,6 +169,7 @@ struct ExportView: View {
             errorMessage = nil
             exportFailures = []
             schemeVM.loadSchemes(for: project)
+            logoVM.load(project: project)
             selectAll()
         }
         .navigationTitle("导出")
@@ -514,6 +518,11 @@ struct ExportView: View {
                         Spacer()
                     }
                 }
+
+                Divider().padding(.vertical, 4)
+
+                LogoOverlayPanel(logoVM: logoVM, project: project, projectVM: projectVM,
+                                 schemes: selectedSchemes, config: exportConfig)
             }
             .controlSize(.regular)
         }
@@ -525,6 +534,7 @@ struct ExportView: View {
     private var exportButton: some View {
         let count = selectedSchemeIDs.count
         let isDisabled = selectedSchemeIDs.isEmpty || isExporting || schemeVM.schemes.isEmpty
+            || (logoVM.config.enabled && !logoVM.isReadyForExport)
         let totalClips = totalComboCount()
 
         // 配音组合导出：每个选中方案按「每镜 原声 + 各改写版」的全部排列组合，逐条导出
@@ -771,6 +781,9 @@ struct ExportView: View {
                 let concurrency = 1   // 导出一律串行（用户要求，不再并发）
 
                 var exportTasks: [(input: ExportInput, outputPath: String, name: String)] = []
+                // Step 7 收口：`ExportInput.from` 以前对"少了几段"是纯静默的（两处 continue），
+                // 后果是一部短了一截、却没有任何地方说少了段的 mp4。现在它把账带出来，这里出声。
+                var shortfallNotes: [String] = []
                 for scheme in allSchemes {
                     let strategyName = scheme.strategy?.name ?? "未分组"
                     let sanitized = sanitizeFilename("\(strategyName)_\(scheme.variationIndex)_\(scheme.name)")
@@ -778,7 +791,18 @@ struct ExportView: View {
 
                     if let input = ExportInput.from(scheme: scheme) {
                         exportTasks.append((input: input, outputPath: outputPath, name: scheme.name))
+                        if !input.droppedDescriptions.isEmpty {
+                            shortfallNotes.append("\(scheme.name)：计划 \(input.plannedSegmentCount) 段、"
+                                                  + "实得 \(input.segments.count) 段"
+                                                  + "（\(input.droppedDescriptions.prefix(2).joined(separator: "；"))）")
+                        }
                     }
+                }
+                if !shortfallNotes.isEmpty {
+                    ToastCenter.shared.show(
+                        "\(shortfallNotes.count) 个方案有素材已不存在，成片会比方案短："
+                        + shortfallNotes.prefix(3).joined(separator: " ｜ "),
+                        icon: "exclamationmark.triangle.fill", style: .warning, duration: 8)
                 }
 
                 guard !exportTasks.isEmpty else {
@@ -944,6 +968,12 @@ struct ExportView: View {
         exportedFolder = nil
         errorMessage = nil
 
+        let logo = logoVM.config
+        if let problem = logoVM.preflightProblem() {
+            errorMessage = problem
+            return
+        }
+
         // 全局 BGM：导出前先验证所选文件还在（可能刚在 BGM 库里被删）
         let globalBGM: GlobalBGMSpec? = selectedBGMPath.map { GlobalBGMSpec(audioPath: $0, volume: bgmVolume) }
         if let bgm = globalBGM, !FileManager.default.fileExists(atPath: bgm.audioPath) {
@@ -990,6 +1020,13 @@ struct ExportView: View {
                 isExporting = true
                 defer { isExporting = false; exportTask = nil }
                 let config = exportConfig
+                if logo.enabled {
+                    let sourcePaths = DubExportService.uniqueSourcePaths(for: plans.map { $0.scheme })
+                    if let hdr = await DubExportService.firstHDRSource(paths: sourcePaths) {
+                        errorMessage = "「\((hdr as NSString).lastPathComponent)」是 HDR（PQ/HLG）素材，暂不支持品牌角标。请换 SDR 素材或关闭品牌角标。"
+                        return
+                    }
+                }
                 let maxConcurrency = 1   // 导出一律串行（用户要求，不再并发）
                 // 每次导出从空清单开始：这条路径原先从不清空 exportFailures，
                 // 多次导出会把上一轮的失败记录一直累积显示
@@ -1124,6 +1161,8 @@ struct ExportView: View {
                                 try await service.export(
                                     input: job.input, outputPath: job.outputPath, config: config,
                                     globalBGM: globalBGM,
+                                    logo: logo.enabled ? logo : nil,
+                                    stripMetadata: logo.enabled,
                                     onProgress: { p in
                                         Task { @MainActor in
                                             guard isExporting else { return }

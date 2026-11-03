@@ -435,7 +435,7 @@ struct VideoCard: View {
                     Text(video.resolution)
                     Text("·")
                         .foregroundStyle(.tertiary)
-                    Text("\(video.segments.count) 分镜")
+                    Text("\(video.displayableSegmentCount) 分镜")
                 }
                 .font(DesignTokens.Typography.microRegular)
                 .foregroundStyle(.secondary)

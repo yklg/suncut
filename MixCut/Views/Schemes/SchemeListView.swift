@@ -289,7 +289,7 @@ struct SchemeListView: View {
                 HStack(spacing: DesignTokens.Spacing.tight) {
                     Image(systemName: "checkmark.circle")
                         .font(DesignTokens.Typography.microRegular)
-                    Text("\(project.videoCount) 个视频, \(project.segmentCount) 个分镜可用")
+                    Text("\(project.videoCount) 个视频, \(project.displayableSegmentCount) 个分镜可用")
                         .font(DesignTokens.Typography.caption)
                 }
                 .foregroundStyle(.blue)
@@ -325,7 +325,7 @@ struct SchemeListView: View {
     // MARK: - 生成设置弹窗
 
     private var generateSheet: some View {
-        let allSegments = project.videos.flatMap(\.segments)
+        let allSegments = project.displayableSegments
         let totalDuration = allSegments.reduce(0.0) { $0 + $1.duration }
 
         return VStack(spacing: DesignTokens.Spacing.generous) {

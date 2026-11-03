@@ -36,6 +36,26 @@ final class SchemeViewModel {
         pruneSignals.note(ids)
     }
 
+    /// 方案加载时记下的「这条方案原来引用了哪些分镜」，只用于下面那份剪枝账。
+    /// 为什么必须在加载时记：真删之后 `schemeSeg.segment` 已经是 nil，那一刻问不出
+    /// "少的是哪条方案的第几段"。索引建在 VM 侧（不是视图侧）—— 视图层裸读模型关系
+    /// 正是本案那一族 SIGTRAP 的成因（`TombstoneReadGuardTests` G08b 钉着那条门）。
+    private var segmentIDsByScheme: [UUID: Set<UUID>] = [:]
+
+    /// 会话内每条方案被剪掉了几段素材（Step 7 收口之一）。
+    /// 归属只有这一份：方案详情头部与选素材抽屉都读它，不许各自再数一遍 ——
+    /// 两处各数一次就会打架，而"少了几段"这件事过去在界面上根本没有数字。
+    var prunedCountByScheme: [UUID: Int] {
+        let gone = pruneSignals.ids
+        guard !gone.isEmpty else { return [:] }
+        var out: [UUID: Int] = [:]
+        for (schemeID, segIDs) in segmentIDsByScheme {
+            let n = segIDs.intersection(gone).count
+            if n > 0 { out[schemeID] = n }
+        }
+        return out
+    }
+
     private var modelContext: ModelContext?
     private let schemeService = SchemeGenerationService()
 
@@ -73,6 +93,15 @@ final class SchemeViewModel {
         let focus = pendingFocusSchemeID
 
         strategies = project.strategies.sorted { $0.createdAt < $1.createdAt }
+
+        // 剪枝账的索引每次加载重建：方案会增删，留着旧索引就会报出根本不存在的"少了 N 段"。
+        var pruneIndex: [UUID: Set<UUID>] = [:]
+        for strategy in strategies {
+            for scheme in strategy.schemes {
+                pruneIndex[scheme.id] = Set(scheme.schemeSegments.compactMap { $0.segment?.id })
+            }
+        }
+        segmentIDsByScheme = pruneIndex
 
         // 选中树必须覆盖 UI 上全部可选容器：AI → 产品脚本成片（含内存占位）→ 自定义组合，
         // 再并底部「自定义结构」分组——否则叙事结构变体的选中在同项目 keep 时会定位不到。
@@ -319,7 +348,7 @@ final class SchemeViewModel {
         var persistedStrategyCount = 0
 
         do {
-            let allSegments = project.videos.flatMap(\.segments)
+            let allSegments = project.displayableSegments
             guard !allSegments.isEmpty else {
                 errorMessage = "没有可用的分镜素材，请先导入并分析视频"
                 project.status = .ready
@@ -336,7 +365,7 @@ final class SchemeViewModel {
             let descriptorByID = Dictionary(uniqueKeysWithValues:
                 project.videos.flatMap { video in
                     let key = "video:\(video.id.uuidString)"
-                    return video.segments.map { SegmentDescriptor(from: $0, sourceKey: key) }
+                    return video.displayableSegments.map { SegmentDescriptor(from: $0, sourceKey: key) }
                 }.map { ($0.id, $0) })
             var aliasToDescriptor: [String: SegmentDescriptor] = [:]
             for (alias, seg) in catalog.idMap {
@@ -735,7 +764,7 @@ final class SchemeViewModel {
 
     /// 当前项目库内"真实有分镜"的标签集合（供编辑器只列可选标签）
     func availableTags(in project: Project) -> [SemanticType] {
-        let present = Set(project.videos.flatMap { $0.segments }.flatMap { $0.semanticTypes })
+        let present = Set(project.displayableSegments.flatMap { $0.semanticTypes })
         return SemanticType.allCases.filter { present.contains($0) }
     }
 
@@ -803,7 +832,7 @@ final class SchemeViewModel {
         defer { isNarrativeGenerating = false }
 
         // 1. 把项目下所有 Segment 映射为 SegmentDescriptor + 别名映射（沿用 V{n}_{nn} 规则）
-        let allSegments = project.videos.flatMap(\.segments)
+        let allSegments = project.displayableSegments
         guard !allSegments.isEmpty else {
             ToastCenter.shared.show("没有可用的分镜素材，请先导入并分析视频", icon: "exclamationmark.circle.fill")
             return false
@@ -818,7 +847,7 @@ final class SchemeViewModel {
 
         let descriptors: [SegmentDescriptor] = project.videos.flatMap { video in
             let key = "video:\(video.id.uuidString)"
-            return video.segments.map { SegmentDescriptor(from: $0, sourceKey: key) }
+            return video.displayableSegments.map { SegmentDescriptor(from: $0, sourceKey: key) }
         }
 
         // 2. 每段 candidatePool → topCandidates(30)，渲染每段目录文本
@@ -914,10 +943,18 @@ final class SchemeViewModel {
 
     /// 从分镜数组创建自定义方案（异步：先建占位，AI 反推后填充元信息）
     /// 失败兜底：name 保留默认「自定义 #N」，banner 提示用户
+    ///
+    /// - Parameter inferMetadata: 是否让模型反推方案元信息（名字/结构/人群/风格）。
+    ///   **文件夹混剪必须传 `false`**（计划 D8：这条链零网络、零算力）—— 那颗开关是本期新加的，
+    ///   因为现路径每次都调 `schemeService.inferMetadata(for:)`（`:984` 调用、
+    ///   `SchemeGenerationService.swift:493` 定义，是网络请求），而混剪的分镜天生无台词，
+    ///   反推既花钱也没依据。传 `false` 时名字保留「自定义 #N」—— 那不是失败兜底，
+    ///   是"这条路本来就没问过模型"的如实状态。
     @discardableResult
     func createCustomScheme(
         from segments: [Segment],
-        in project: Project
+        in project: Project,
+        inferMetadata: Bool = true
     ) async -> MixScheme? {
         // 失败路径必须带原因：调用方要据此给用户可读的提示，不能静默返回 nil。
         guard let context = modelContext else {
@@ -930,25 +967,9 @@ final class SchemeViewModel {
         }
         errorMessage = nil
 
-        // 确保 customGroup 存在（理论上一定有，双保险）
-        let group: MixStrategy
-        if let existing = project.strategies.first(where: { $0.isCustomGroup }) {
-            group = existing
-        } else {
-            let g = MixStrategy(
-                name: "自定义组合",
-                style: "",
-                description: "手动挑选分镜组合的方案",
-                targetAudience: "",
-                narrativeStructure: "",
-                targetDuration: 0
-            )
-            g.isCustomGroup = true
-            g.project = project
-            project.strategies.append(g)
-            context.insert(g)
-            group = g
-        }
+        // 确保 customGroup 存在（理论上一定有，双保险）。
+        // 容器本体只在 `MixStrategy.attachCustomGroup` 里写一遍 —— 这里曾是第 4 份拷贝。
+        let group = MixStrategy.customGroup(for: project, in: context)
 
         // 计算自定义方案序号
         let existingCustomCount = group.schemes.count
@@ -980,18 +1001,28 @@ final class SchemeViewModel {
 
         context.safeSave()
 
-        // AI 反推（失败不阻断）
-        if let metadata = await schemeService.inferMetadata(for: segments) {
-            scheme.name = metadata.name.isEmpty ? defaultName : metadata.name
-            scheme.narrativeStructure = metadata.narrativeStructure
-            scheme.targetAudience = metadata.targetAudience
-            scheme.schemeDescription = metadata.schemeDescription
-            scheme.style = metadata.style
-            context.safeSave()
-        } else {
-            ToastCenter.shared.show("元信息生成失败，方案已保存为「\(defaultName)」",
-                                    icon: "exclamationmark.triangle.fill")
+        // 方案预计时长 = 各段时长之和。现 custom 路径以前**没写**这个字段（AI 生成路径写了，
+        // 见 :451 与 :888），于是自定义组合与混剪出来的方案在界面上时长是空的。
+        // 混剪要在建 N 个方案时就让用户看到"每条多长"，所以这里补上；对既有 custom 路径是
+        // 从"没数"变成"有数"，不改任何判定。
+        scheme.estimatedDuration = segments.reduce(0.0) { $0 + $1.duration }
+
+        if inferMetadata {
+            // AI 反推（失败不阻断）
+            if let metadata = await schemeService.inferMetadata(for: segments) {
+                scheme.name = metadata.name.isEmpty ? defaultName : metadata.name
+                scheme.narrativeStructure = metadata.narrativeStructure
+                scheme.targetAudience = metadata.targetAudience
+                scheme.schemeDescription = metadata.schemeDescription
+                scheme.style = metadata.style
+            } else {
+                ToastCenter.shared.show("元信息生成失败，方案已保存为「\(defaultName)」",
+                                        icon: "exclamationmark.triangle.fill")
+            }
         }
+        // `inferMetadata == false` 时**什么都不做**：不发网络请求（D8），也不弹"生成失败"——
+        // 没问过模型却说"生成失败"是句谎话。名字保持上面算好的 defaultName。
+        context.safeSave()
 
         // 重新加载策略以触发 UI 更新
         loadSchemes(for: project)

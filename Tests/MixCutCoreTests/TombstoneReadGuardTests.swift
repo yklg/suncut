@@ -141,7 +141,7 @@ enum RelationshipReadScan {
         var nonModel = Set<String>()
     }
 
-    /// **逐文件**分类 receiver：`SchemeViewModel.swift:73` 有 `let group: MixStrategy`（模型），
+    /// **逐文件**分类 receiver：`SchemeViewModel.swift:129-132` 的 `let group` 取自 `groups: [MixStrategy]`（模型），
     /// 而 `SegmentLibraryView.swift:617` 的形参是 `_ group: VideoSegmentGroup`（结构体）——
     /// 同名不同物。跨文件汇总会让结构体那个被误判成模型 receiver，所以一颗文件一份表。
     static func classifyReceivers(in code: String, modelTypes: Set<String>) -> Receivers {
@@ -207,7 +207,7 @@ enum RelationshipReadScan {
 
 // MARK: - 门 5：跨 to-one 边界的读取必须过活对象门槛（本案刀 10）
 
-/// 第二起同族崩（2026-10-04，`Project.id.getter` @ `SegmentPickerDrawer.swift:106`）证明：
+/// 第二起同族崩（2026-10-04，`Project.id` fault @ `SegmentPickerDrawer.swift:109`，该行现已走 `project.live?.id`）证明：
 /// 门 4a 自认的效力上限（`:24`「只拦取关系集合这一次读」+ 计划 §3 刀 5「to-one 读取不拦」）
 /// **不是可接受残留，是真实 hazard** —— 穿过一条没有删除规则的 to-one 边再 fault 一个持久标量，
 /// 读到的可以是已被真删的对象，同样命中 SwiftData 内部断言（SIGTRAP）。
@@ -394,7 +394,16 @@ private func realScan() -> [RelationshipReadScan.Hit]? {
 struct TombstoneReadGuardTests {
 
     /// 基线名册（**由本守卫自己生成、非手写** —— 用 `TOMBSTONE_DUMP_BASELINE=1` 跑 G08d 那条腿重生成）：
-    /// 45 处 / 43 键 / 12 个文件。
+    /// **42 处 / 40 键 / 10 个文件**（2026-10-22 由 G08d 腿重生成，不是手数）。
+    /// 〔第三轮 笔 K2 的销账逐条〕视图层 8 处裸读 `video.segments` / `project.videos.flatMap(\.segments)`
+    /// 全部改走决议 K9 那颗唯一出口 ⇒ 扫描器把它们的键从 `segments` 改认成 `displayableSegments`
+    /// （视图层仍然被认出，因为那次遍历确实发生，只是发生地点搬进了出口体内）：
+    ///   拔掉的 8 条 = ImportView 三处 + ProjectOverviewView 计数 + NarrativeStructureEditorView +
+    ///   SchemeListView 时长 + SegmentPropertiesSection 两处（计数 2）+ SegmentVariantInspector；
+    ///   新增的 7 条 = 同一批行改写后的 `displayableSegments` 形态（键名变了）；
+    ///   净变化 −1 处 = 逐卡计数与项目级计数两处改读 `displayableSegmentCount`（那颗不按关系名认出，
+    ///   它内部仍是同一次遍历），而 `SegmentPickerDrawer` 那处从 fetch 改写后键名不变 ⇒ 43 − 8 + 7 = 42。
+    /// ⚠ 这条名册被改红的本身是**预期的**（门在正常工作）：任何一次可见性收口都必须同时改这张表。
     /// v1.6 刀 1 首批销账：`SegmentLibraryView` 的 3 处 `video.segments` + `DubSettingsBar` 的
     /// `variantCount = video.segments.reduce(…)` 已拔掉；同批新登记 1 处（`$1.segmentDubs` 闭包形参，
     /// 保守命中）⇒ 49 − 5 + 1 = 45。
@@ -409,14 +418,13 @@ struct TombstoneReadGuardTests {
         (#"MixCut/Views/Export/ExportView.swift"#, "schemeSegments", #"for ss in scheme.schemeSegments where ss.segment?.source == .curated {"#, 1),
         (#"MixCut/Views/Export/ExportView.swift"#, "schemes", #"let total = strategy.schemes.count"#, 1),
         (#"MixCut/Views/Import/ImportView.swift"#, "associatedVideos", #"return project.associatedVideos"#, 1),
-        (#"MixCut/Views/Import/ImportView.swift"#, "segments", #"&& video.segments.isEmpty"#, 1),
-        (#"MixCut/Views/Import/ImportView.swift"#, "segments", #"for seg in video.segments {"#, 1),
-        (#"MixCut/Views/Import/ImportView.swift"#, "segments", #"if !video.segments.isEmpty {"#, 1),
+        (#"MixCut/Views/Import/ImportView.swift"#, "displayableSegments", #"&& video.displayableSegments.isEmpty"#, 1),
+        (#"MixCut/Views/Import/ImportView.swift"#, "displayableSegments", #"for seg in video.displayableSegments {"#, 1),
+        (#"MixCut/Views/Import/ImportView.swift"#, "displayableSegments", #"if !video.displayableSegments.isEmpty {"#, 1),
         (#"MixCut/Views/Import/ImportView.swift"#, "videos", #"MixLog.info( Int(Date().timeIntervalSince(t0) * 1000) project.videos.count )"#, 1),
         (#"MixCut/Views/Import/ImportView.swift"#, "videos", #"if project.videos.contains(where: { !$0.isUserUploaded }) {"#, 1),
         (#"MixCut/Views/Import/ImportView.swift"#, "videos", #"let thumbPaths = project.videos.compactMap(\.thumbnailPath)"#, 1),
-        (#"MixCut/Views/Overview/ProjectOverviewView.swift"#, "segments", #"Text( video.segments.count )"#, 1),
-        (#"MixCut/Views/Schemes/NarrativeStructureEditorView.swift"#, "videos", #"project.videos.flatMap(\.segments).map { seg in"#, 1),
+        (#"MixCut/Views/Schemes/NarrativeStructureEditorView.swift"#, "displayableSegments", #"project.displayableSegments.map { seg in"#, 1),
         (#"MixCut/Views/Schemes/SchemeDetailView.swift"#, "orderedSegments", #"ForEach(Array(scheme.orderedSegments.enumerated()), id: \.element.id) { idx, schemeSeg in"#, 1),
         (#"MixCut/Views/Schemes/SchemeDetailView.swift"#, "orderedSegments", #"ForEach(scheme.orderedSegments) { schemeSeg in"#, 1),
         (#"MixCut/Views/Schemes/SchemeDetailView.swift"#, "orderedSegments", #"for ss in scheme.orderedSegments {"#, 1),
@@ -426,22 +434,23 @@ struct TombstoneReadGuardTests {
         (#"MixCut/Views/Schemes/SchemeDetailView.swift"#, "schemeSegments", #"if let schemeSeg = scheme.schemeSegments.first(where: { $0.id == schemeSegmentID }) {"#, 1),
         (#"MixCut/Views/Schemes/SchemeDetailView.swift"#, "schemeSegments", #"let referencedDubIDs = Set(scheme.schemeSegments.compactMap { $0.selectedSegmentDubId })"#, 1),
         (#"MixCut/Views/Schemes/SchemeDetailView.swift"#, "segmentDubs", #"for d in seg.segmentDubs where d.voiceId != current {"#, 1),
+        (#"MixCut/Views/Schemes/SchemeListView.swift"#, "displayableSegments", #"let allSegments = project.displayableSegments"#, 1),
         (#"MixCut/Views/Schemes/SchemeListView.swift"#, "orderedSchemes", #"ForEach(strategy.orderedSchemes) { scheme in"#, 1),
         (#"MixCut/Views/Schemes/SchemeListView.swift"#, "schemes", #"if strategy.isScriptGroup && strategy.schemes.isEmpty {"#, 1),
         (#"MixCut/Views/Schemes/SchemeListView.swift"#, "schemes", #"} else if strategy.isCustomGroup && strategy.schemes.isEmpty {"#, 1),
         (#"MixCut/Views/Schemes/SchemeListView.swift"#, "schemes", #"} else if strategy.isNarrativeTemplate && strategy.schemes.isEmpty {"#, 1),
-        (#"MixCut/Views/Schemes/SchemeListView.swift"#, "videos", #"let allSegments = project.videos.flatMap(\.segments)"#, 1),
         (#"MixCut/Views/Schemes/SegmentPickerDrawer.swift"#, "schemeSegments", #"Set(scheme.schemeSegments.compactMap { liveIndex.uuid(for: $0.segment) })"#, 1),
         (#"MixCut/Views/SegmentLibrary/SegmentLibraryView.swift"#, "schemeSegments", #"ToastCenter.shared.show( segment.schemeSegments.count ,"#, 1),
         (#"MixCut/Views/SegmentLibrary/SegmentLibraryView.swift"#, "schemeSegments", #"if segment.schemeSegments.isEmpty {"#, 1),
         (#"MixCut/Views/SegmentLibrary/SegmentLibraryView.swift"#, "videos", #"let videoCovers = project.videos.compactMap(\.thumbnailPath)"#, 1),
-        (#"MixCut/Views/SegmentLibrary/SegmentPropertiesSection.swift"#, "segments", #"let targets = video.segments.filter { $0.id != source.id }"#, 2),
+        (#"MixCut/Views/SegmentLibrary/SegmentPropertiesSection.swift"#, "displayableSegments", #"let targets = video.displayableSegments.filter { $0.id != source.id }"#, 2),
+        (#"MixCut/Views/SegmentLibrary/SegmentVariantInspector.swift"#, "displayableSegments", #"vid.displayableSegments.contains(where: { $0.id != segment.id"#, 1),
         (#"MixCut/Views/SegmentLibrary/SegmentVariantInspector.swift"#, "segmentDubs", #"?? segment.segmentDubs.first { $0.textVariantIndex == t }"#, 1),
         (#"MixCut/Views/SegmentLibrary/SegmentVariantInspector.swift"#, "segmentDubs", #"for dub in segment.segmentDubs where !dub.isDroppedFromContext {"#, 1),
         (#"MixCut/Views/SegmentLibrary/SegmentVariantInspector.swift"#, "segmentDubs", #"segment.segmentDubs.first { $0.textVariantIndex == t && $0.voiceId == v }"#, 1),
         (#"MixCut/Views/SegmentLibrary/SegmentVariantInspector.swift"#, "segmentDubs", #"} else if segment.segmentDubs.isEmpty {"#, 1),
-        (#"MixCut/Views/SegmentLibrary/SegmentVariantInspector.swift"#, "segments", #"vid.segments.contains(where: { $0.id != segment.id"#, 1),
         (#"MixCut/Views/SegmentLibrary/ShotEditSheet.swift"#, "variants", #"ForEach(shot.variants.sorted { $0.createdAt < $1.createdAt }) { v in"#, 1),
+
     ]
 
     private func asMap(_ hits: [RelationshipReadScan.Hit]) -> [String: Int] {
@@ -474,7 +483,7 @@ struct TombstoneReadGuardTests {
         // `segmentDubs` 遍历与 `video.segments.contains`（复用可能性判定）两处读取）。
         // ⚠️ 数字**由生成腿读出**（`TOMBSTONE_DUMP_BASELINE=1 swift test --filter dumpBaselineForRegeneration`，
         // 看 `.scratch/guard_baseline_new.txt` 首行 TOTAL_HITS），不是手数。
-        #expect(hits.count == 43, "命中总数应为 43（M2 新增 voices 的两处遍历），实得 \(hits.count)")
+        #expect(hits.count == 42, "命中总数应为 42（2026-10-22 笔 K2 收口后由 G08d 重生成），实得 \(hits.count)")
     }
 
     @Test("G08c 敏感性变异：往真实取样面里注入一处新裸读，门必须立刻认出来")
@@ -921,13 +930,27 @@ struct TombstoneReadGuardTests {
         #expect(got == want, "随机兜底与名册不符：未认领的新增 \(got.subtracting(want).sorted())；已被拆掉的 \(want.subtracting(got).sorted())")
         #expect(Self.randomFallbackRoster.allSatisfy { !$0.reason.isEmpty },
                 "有兜底条目没写理由 ⇒ 判据失效（豁免不许当欠账挂着）")
+        // ⚠ 名册现在是**空表**（见下面的拆解记录）。空表合法，但它有一个失效模式必须自证排除：
+        //   扫描面本身空转（前缀写错 / 目录改名）时 `got` 也会是 ∅ ⇒ 这条门永远绿。
+        let faces = ["MixCut/Services/", "MixCut/ViewModels/", "MixCut/Utilities/", "MixCut/Views/Export/"]
+        let surface = allMixCutSources().filter { pair in faces.contains { pair.path.hasPrefix($0) } }
+        #expect(surface.count > 20,
+                "扫描面只剩 \(surface.count) 个文件 ⇒ 名册对账是在空集上跑的，读数作废（先修台架再谈绿）")
     }
 
     /// 仍在仓里的随机 UUID 兜底（逐条认领）。归属/分组键那 4 条已拆，见 `deadRandomAttributionKeys`。
-    static let randomFallbackRoster: [(line: String, reason: String)] = [
-        (#"MixCut/ViewModels/ImportViewModel.swift: guard let destURL = try? FileHelper.copyVideoToGlobal(from: url, contentHash: hash ?? UUID().uuidString) else {"#,
-          "P2：contentHash 缺失时的唯一性占位，**不是**归属/分组键；是否改成「跳过并上报」另案 review"),
-    ]
+    ///
+    /// 〔2026-10-20 已拆，文件夹混剪 Step 2 / 计划 R17〕这里原本认领着最后 1 条：
+    ///   `MixCut/ViewModels/ImportViewModel.swift: guard let destURL = try? FileHelper.copyVideoToGlobal(
+    ///    from: url, contentHash: hash ?? UUID().uuidString) else {`
+    ///   理由原文：「P2：contentHash 缺失时的唯一性占位，**不是**归属/分组键；是否改成
+    ///   『跳过并上报』另案 review」。
+    /// 另案已定并已落地：**算不出校验和就拒绝该文件 + 逐名上报**（`ImportIngestError.uncomputableHash`）。
+    /// 当时挂 P2 的理由是"它不是归属键"，但漏看了一格 —— 那条分支**同时跳过**了上游按 hash 的去重，
+    /// 于是同一文件反复进来会反复成行、每行各带分镜，把混剪 D3「本次会话内不回放」击穿。
+    /// 同族的另一处（`importOrLinkVideo` 里的 `contentHash: UUID().uuidString`）一起改，
+    /// 由 `FolderMixIngestGuardTests` 的 T-18/T-18b 钉住（族计数能力另配合成对照）。
+    static let randomFallbackRoster: [(line: String, reason: String)] = []
 
     @Test("G17 锚点防呆：readiness / prewarm 那 5 处必须逐字不变（不许被顺手改成门后取值）")
     func readinessAndPrewarmAnchorsStayUntouched() {

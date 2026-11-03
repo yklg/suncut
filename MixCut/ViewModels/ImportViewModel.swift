@@ -21,6 +21,23 @@ enum ImportPhase: String {
 /// 一次导入调用的结构化结果（给 Agent/MCP 用；UI 路径忽略返回值）
 struct ImportReport: Sendable {
     var importedVideoIDs: [UUID] = []
+    /// 入库当场交回的对应关系：这个源文件落进了库里哪一行（计划 2026-10-22 决议 J1）。
+    ///
+    /// 为什么这张表必须由服务交回来，而不是调用方事后去库里查：库里那一行的路径是拷贝
+    /// 落地的 `<应用程序支持>/videos/<校验和>/<文件名>`，与素材目录里的路径**永不相交**；
+    /// 而去重命中那支返回的还是**别人第一次引入这份内容时**起的名 —— 按文件名反查会认错。
+    /// 只有这里（`importOrLink` 刚把 url 与行对象同时拿到手）知道真实对应关系。
+    ///
+    /// 生命周期：**会话内临时量**。本结构不是 `Codable`，`AgentJobRegistry` 只在内存里持有它
+    /// （那颗注册表自己的注释就写着"app 重启后任务会丢失"）；也**不许**进 MCP 的
+    /// `get_job` 载荷 —— 那批键是显式列举的，往里加就是外部契约变更。
+    var ingested: [FolderMixIngestedRow] = []
+    /// 混剪入库那一趟**补建**了多少条内部整片段（决议 K2 甲-隐，笔 K2）。
+    ///
+    /// 为什么要单独报数：档 B 掉没掉、界面那句「本轮自动补建 k 条」都吃它；没有读数就只能肉眼数方案
+    /// —— 那正是缺陷一能藏住的原因之一（计划第六节真机腿 4 的判据物）。
+    /// 生命周期与上面那颗表相同：会话内临时量，**不得**进 MCP 的 `get_job` 键字典。
+    var internalWholeClipBuilt: Int = 0
     var importedNames: [String] = []
     var linkedExistingNames: [String] = []
     var skippedDuplicateNames: [String] = []
@@ -31,6 +48,36 @@ struct ImportReport: Sendable {
     struct FailedItem: Sendable {
         let name: String
         let reason: String
+        /// 绝对路径。混剪拿它去标"这一颗候选不可用"（身份键默认档就是路径）——
+        /// 只有 `name` 的话只能按文件名字符串回查，跨目录同名会认错，那正是"替错素材"的形状。
+        let path: String
+        /// 失败**类别**。环境级短路（连续同因 ≥ 阈值就停整批）只看这颗，
+        /// 不看 `reason` 的措辞 —— 计划 D 段明令"不许靠字符串匹配"。
+        let code: FolderMixFailureCode
+
+        init(name: String, reason: String, path: String,
+             code: FolderMixFailureCode = .other) {
+            self.name = name
+            self.reason = reason
+            self.path = path
+            self.code = code
+        }
+    }
+}
+
+/// 入库阶段的拒绝原因（母体导入与文件夹混剪共用同一个入库动作，所以共用同一份文案）。
+/// 走 `FriendlyError.reason(for:)` 的 `localizedDescription` 兜底通道进 `report.failed`，
+/// 调用方不需要再拼一遍句子（第九节要求"逐名上报"，句子只有一处真源）。
+enum ImportIngestError: LocalizedError {
+    /// 校验和算不出来 —— 读不出这个文件（IO 抖动 / 内存压力 / 外接盘被拔）。
+    /// 计划 R17：这条分支以前退化成 UUID 目录名继续入库，并连带跳过 hash 去重。
+    case uncomputableHash(String)
+
+    var errorDescription: String? {
+        switch self {
+        case .uncomputableHash(let fileName):
+            return "无法读取「\(fileName)」的校验和（文件损坏、正在被写或已不在原位置），未入库"
+        }
     }
 }
 
@@ -46,9 +93,6 @@ final class ImportViewModel {
 
     /// 已取消的视频 ID（删除视频时加入，用于跳过后续处理）
     private var cancelledVideoIDs: Set<UUID> = []
-
-    /// 本批导入新视频的默认来源（importVideos 入口写入，importOrLinkVideo 读取）
-    private var pendingBatchSource: SegmentSource = .curated
 
     private var modelContext: ModelContext?
     private let ffmpeg = FFmpegRunner()
@@ -95,12 +139,15 @@ final class ImportViewModel {
     @discardableResult
     /// - Parameter defaultSource: 本批新视频的默认素材来源（写在 Video 上，切出的分镜继承）。
     ///   全局去重命中的**已有视频不覆写**其来源与 ownerProject（导入事实归首次导入所有）。
+    ///   ⚠ 它必须是**参数一路传到底**，不许改回"实例状态 + 下游读"：那条隐式通道对任何
+    ///   新调用方都是静默错值源（计划 D20/R12，默认值 `.curated` 会把整批素材悄悄标成"他人视频"）。
+    ///   默认值只留在**这道入口**上（导入页有 `batchSource` 选择器、MCP 的 `import_videos`
+    ///   没有这个入参），`importOrLinkVideo` 那一层是**必填** —— 它才是三个通路共用的入库动作。
     func importVideos(urls: [URL], to project: Project,
                       defaultSource: SegmentSource = .curated) async -> ImportReport {
         var report = ImportReport()
         isProcessing = true
         errorMessage = nil
-        pendingBatchSource = defaultSource
 
         // 去重：检查该视频是否已在当前项目中
         var dedupedURLs: [URL] = []
@@ -167,7 +214,8 @@ final class ImportViewModel {
             progress = Double(index) / Double(dedupedURLs.count) * 0.2
 
             do {
-                let (video, needsAnalysis) = try await importOrLinkVideo(url: url, to: project)
+                let (video, needsAnalysis) = try await importOrLinkVideo(url: url, to: project,
+                                                                        source: defaultSource)
                 if needsAnalysis {
                     videosToAnalyze.append(video)
                     report.importedVideoIDs.append(video.id)
@@ -179,7 +227,10 @@ final class ImportViewModel {
             } catch {
                 let prevError = errorMessage.map { $0 + "\n" } ?? ""
                 errorMessage = prevError + "导入 \(url.lastPathComponent) 失败: \(FriendlyError.reason(for: error))"
-                report.failed.append(.init(name: url.lastPathComponent, reason: FriendlyError.reason(for: error)))
+                report.failed.append(.init(name: url.lastPathComponent,
+                                           reason: FriendlyError.reason(for: error),
+                                           path: url.path,
+                                           code: FolderMixFailureCode.classify(error)))
             }
         }
 
@@ -396,67 +447,25 @@ final class ImportViewModel {
 
     // MARK: - 核心导入逻辑
 
-    /// 导入或关联视频：先查全局是否已有同一视频，有则直接关联，无则创建新的
-    /// 返回 (video, needsAnalysis) — needsAnalysis=false 表示已有完整分析数据
-    private func importOrLinkVideo(url: URL, to project: Project) async throws -> (Video, Bool) {
+    /// 导入或关联视频 —— **真身已下沉到 `ClipIngestService.importOrLink`（计划 D32 / 台账 R41）**，
+    /// 这一层只干一件属于 ViewModel 的事：把"正在拷贝落盘"这个事实映射回导入页的 `phase`。
+    ///
+    /// 为什么这一层必须留在 VM：`phase` 是导入页的读数，写进 service 就违反门 T-24
+    /// （`ClipIngestService.swift` 全文不许出现那五颗读数）；而母体导入链与混剪链今天都靠
+    /// `phase = .copying` 驱动导入页的阶段显示。
+    /// 六步流程、D20「source 必填」、R17「算不出校验和就拒绝该文件」的完整理由与事故记录
+    /// 都写在服务里，这里不重抄 —— 同一份理由抄在两处必然漂。
+    /// 返回 (video, needsAnalysis) — needsAnalysis=false 表示已有完整分析数据。
+    func importOrLinkVideo(url: URL, to project: Project,
+                           source: SegmentSource) async throws -> (Video, Bool) {
         guard let context = modelContext else {
             throw NSError(domain: Brand.bundleID, code: -1, userInfo: [NSLocalizedDescriptionKey: "数据库未就绪"])
         }
-
-        phase = .copying
-
-        // 先计算文件 hash
-        let hash = Self.computeFileHash(path: url.path)
-
-        // 查找全局是否已有同 hash 的视频
-        if let hash, let existingVideo = findExistingVideo(hash: hash, context: context) {
-            // 已有此视频：幂等挂到本项目（同一素材第二次进来不产生第二行关联）
-            ProjectVideo.associate(project: project, video: existingVideo, in: context)
-            context.safeSave()
-            MixLog.info(" 全局已有视频「\(existingVideo.name)」(hash=\(hash.prefix(8))...)，直接关联到项目")
-
-            let needsAnalysis = existingVideo.status != .completed || existingVideo.segments.isEmpty
-            return (existingVideo, needsAnalysis)
-        }
-
-        // 全局没有，创建新的
-        let destURL: URL
-        if let hash {
-            destURL = try FileHelper.copyVideoToGlobal(from: url, contentHash: hash)
-        } else {
-            // hash 计算失败（极端情况），用 UUID 作为目录名
-            destURL = try FileHelper.copyVideoToGlobal(from: url, contentHash: UUID().uuidString)
-        }
-
-        let video = Video(name: url.lastPathComponent, localPath: destURL.path)
-        video.status = .imported
-        video.contentHash = hash
-        // 导入事实：首次导入所在项目 + 本批选定来源。命中去重复用的已有视频在上面的分支直接返回，
-        // 不会走到这里，因此这两个事实字段不存在被覆写的路径。
-        video.ownerProject = project
-        video.defaultSourceRaw = pendingBatchSource.rawValue
-        context.insert(video)
-
-        // 创建 ProjectVideo 关联（幂等入口）
-        ProjectVideo.associate(project: project, video: video, in: context)
-        context.safeSave()
-
-        // 提取元数据（失败不阻塞）
-        do {
-            try await extractMetadata(for: video, at: destURL)
-        } catch {
-            video.errorMessage = "元数据提取失败: \(FriendlyError.reason(for: error))"
-        }
-
-        // 生成视频缩略图（失败不阻塞）
-        do {
-            try await generateVideoThumbnail(for: video)
-        } catch {
-            MixLog.error("缩略图生成失败: video=\(video.name), error=\(error)")
-        }
-
-        context.safeSave()
-        return (video, true)
+        var hooks = ClipIngestHooks()
+        hooks.copying = { self.phase = .copying }
+        return try await ClipIngestService.importOrLink(url: url, to: project, source: source,
+                                                       context: context,
+                                                       hooks: hooks, ffmpeg: ffmpeg)
     }
 
     /// 自建分镜单条时长上限（秒）。改这一个常量即可，文案会跟着走。
@@ -493,12 +502,17 @@ final class ImportViewModel {
             guard dur > 0 else { failedUnreadable.append(url.lastPathComponent); continue }
             guard dur <= Self.selfSegmentMaxDuration else { skippedLong.append(url.lastPathComponent); continue }
 
-            // 2) 去重
-            let hash = Self.computeFileHash(path: url.path)
-            if let hash, findExistingVideo(hash: hash, context: context) != nil { skippedDup += 1; continue }
+            // 2) 去重。校验和算不出来 ⇒ **拒绝这个文件**并逐名上报（并入下面 failedUnreadable 通道），
+            //    不再退化成 `UUID()` 目录名继续入库 —— 那条分支会同时绕过这里的全库去重，
+            //    同一文件反复进来就反复成行（计划 R17；与 importOrLinkVideo 同族，两处一起改）。
+            guard let hash = ClipIngestService.computeFileHash(path: url.path) else {
+                failedUnreadable.append(url.lastPathComponent)
+                continue
+            }
+            if ClipIngestService.findExistingVideo(hash: hash, context: context) != nil { skippedDup += 1; continue }
 
             // 3) 落盘 + 建载体视频（打「自建」标记；status 作处理态）
-            guard let destURL = try? FileHelper.copyVideoToGlobal(from: url, contentHash: hash ?? UUID().uuidString) else {
+            guard let destURL = try? FileHelper.copyVideoToGlobal(from: url, contentHash: hash) else {
                 failedCopy.append(url.lastPathComponent)
                 continue
             }
@@ -515,8 +529,8 @@ final class ImportViewModel {
             context.safeSave()
 
             // 4) 元数据 + 整片首帧缩略图（失败不阻塞）
-            try? await extractMetadata(for: video, at: destURL)
-            try? await generateVideoThumbnail(for: video)
+            try? await ClipIngestService.extractMetadata(for: video, at: destURL)
+            try? await ClipIngestService.generateVideoThumbnail(for: video, using: ffmpeg)
 
             // 5) 建「覆盖整片」的分镜
             let seg = segmentCommitter.commitWholeVideo(for: video, source: source, context: context)
@@ -563,6 +577,67 @@ final class ImportViewModel {
             ToastCenter.shared.show("\(failedCopy.count) 个文件保存失败（磁盘空间不足或无写入权限），未导入：\(failedCopy.prefix(3).joined(separator: "、"))",
                                     icon: "exclamationmark.triangle.fill", style: .warning, duration: 5)
         }
+    }
+
+    /// 文件夹混剪的入库入口（计划 Step 2 的丁案）：只走母体通路的**阶段 1**，绝不进阶段 2。
+    ///
+    /// **本函数是薄适配层**：真正的六步在 `ClipIngestService.importClips`（计划 D32）。
+    /// 这里只保留属于 ViewModel 的那半件事 —— 把服务报上来的事实翻译成导入页的四颗读数，
+    /// 以及取消收尾 `finishAsCancelled`（删除动作一律留在 VM，服务里一次 `context.delete(` 都没有）。
+    ///
+    /// 与 `importSelfSegments` 平级而**不复用**它 —— 那条路的名字承诺的是"用户上传的自建分镜"
+    /// （打 `isUserUploaded`、受 30 秒闸、跑 ASR + AI 打标），而这里的素材是**整片母体**（D4/D5/D8）。
+    /// 取消检查点在服务的循环里，所以"停止 ≠ 删除"的语义是**复用**来的，不是这里新写的。
+    ///
+    /// ⚠ 幂等纪律（`commitWholeVideo` 自己不判重 ⇒ 守门在调用方）与 D20「source 必填」、
+    ///   R17「算不出校验和就拒绝」的完整理由都写在服务里，这里不重抄。
+    @discardableResult
+    func importClipsWithoutAnalysis(urls: [URL], to project: Project,
+                                    source: SegmentSource,
+                                    onUpdate: @escaping @MainActor () -> Void = {}) async -> ImportReport {
+        var report = ImportReport()
+        guard let context = modelContext else {
+            report.abortMessage = "内部错误：modelContext 未注入"
+            return report
+        }
+        isProcessing = true
+        errorMessage = nil
+        defer { isProcessing = false }
+
+        // 真身在 `ClipIngestService.importClips`（计划 D32）。这一层只把服务报上来的**事实**
+        // 翻译成导入页那四颗读数 —— 逐颗、逐句、按原顺序翻译，不改一个字。
+        // ⚠ 顺序是判据（CR-3）钉着的：`progress = 1.0` 必须排在 `progressDescription = ""` 之前，
+        //   换序会让进度条在收尾瞬间闪回空值。
+        var hooks = ClipIngestHooks()
+        hooks.diskShortfall = { [weak self] needed, available in
+            guard let self else { return }
+            self.errorMessage = "磁盘空间不足：需要约 \(needed)，当前可用 \(available)"
+        }
+        hooks.fileStarting = { [weak self] index, count in
+            guard let self else { return }
+            self.progressDescription = "混剪入库第 \(index + 1)/\(count) 个…"
+            self.progress = count == 0 ? 1.0 : Double(index) / Double(count)
+        }
+        hooks.failure = { [weak self] file, reason in
+            guard let self else { return }
+            let prevError = self.errorMessage.map { $0 + "\n" } ?? ""
+            self.errorMessage = prevError + "入库 \(file) 失败: \(reason)"
+        }
+        hooks.cancelled = { [weak self] in
+            self?.finishAsCancelled(project: project, context: context)
+        }
+        hooks.batchSaved = { onUpdate() }
+        hooks.finished = { [weak self] in
+            guard let self else { return }
+            self.progress = 1.0
+            self.progressDescription = ""
+            onUpdate()
+        }
+        // 中止原因（磁盘不足 / 用户停止）由服务写进 report.abortMessage —— 那是结果，不是界面读数。
+        return await ClipIngestService.importClips(urls: urls, to: project, source: source,
+                                                  context: context,
+                                                  committer: segmentCommitter, ffmpeg: ffmpeg,
+                                                  hooks: hooks)
     }
 
     /// 执行视频分析（场景检测 + ASR + AI 分析 + 边界优化）
@@ -631,19 +706,35 @@ final class ImportViewModel {
         MixLog.info(" AI 分析开始: provider=\(activeProvider.displayName)")
 
         // Step 4+5: 边界优化 + 创建分镜 —— 与「重跑分析」共用同一个重建入口
+        //
+        // ⚠ `clearsExistingSegments` 背后有一条**未声明过的前置**：它安全，是因为"此刻没有旧分镜可退"。
+        //   以前这里写死 `false`，而 `:418` 的 needsAnalysis 判的是 status、不看段 ⇒ 文件夹混剪
+        //   第一次让"首跑"碰上已有分镜的视频：C 的载体停在 `.imported`（被判需要分析），
+        //   却已经带一条覆盖整片的机器段。继续传 false = 旧整片段不删 + 新切分段追加
+        //   ⇒ 同一条素材同时挂着两种分镜（计划 R14/P0-1 实读结论）。
+        //   现在按**形状**判：只清"恰好一条覆盖整片的段"（判据真源在 Core 的 `WholeClipShape`，
+        //   容差与 `MixCutApp.swift:295-304` 的 byShape 同源）。"已有 N 段切分"的形态保持既有行为
+        //   —— 那是重跑链（:362-367 显式传 true）的管辖范围，不由首跑替它决定去留。
         let rebuild = try await rebuildSegments(
             video,
             asr: asr,
             localAnalysis: localAnalysis,
             context: context,
-            clearsExistingSegments: false
+            clearsExistingSegments: WholeClipShape.isWholeClip(
+                segments: video.segments.map {
+                    WholeClipSegmentShape(startTime: $0.startTime, endTime: $0.endTime)
+                },
+                videoDuration: video.duration)
         )
 
         switch rebuild {
         case .success:
             video.status = .completed
         case .aiFailed(let error):
-            // 终态只在这里落：入口不碰 status。首跑此刻没有旧分镜可退，如实标失败。
+            // 终态只在这里落：入口不碰 status。
+            // 〔勘误〕这句后面原本还写着「首跑此刻没有旧分镜可退」—— 那是上面那条已被推翻的前置。
+            // 现在的事实是：AI 调用失败发生在 `rebuildSegments` **删旧段之前**（那里先 await 模型、
+            // 再 checkCancelled、最后才 delete），所以此刻已有分镜一条都没少，如实标 failed 即可。
             let errMsg = error.localizedDescription
             if errMsg.contains("API Key") || errMsg.contains("api") || errMsg.contains("key") || errMsg.contains("未配置") {
                 video.errorMessage = (video.errorMessage ?? "") + "\nAI 分析跳过：请先在「设置」中配置 API Key"
@@ -709,6 +800,10 @@ final class ImportViewModel {
                 format: "整片保留：%.1fs / %d 句，未调用模型切分",
                 video.duration, asr.sentences.count
             )
+            // 整片保留只有一条覆盖全片的段 —— 它不是空镜回测的主要对象，但出口在这里，
+            // 少挂一条就等于"这类素材一条数都取不到"，而那种缺失在日志里看不出来。
+            recordEmptyLensReadout(video.segments, localAnalysis: localAnalysis,
+                                   asr: asr, videoName: video.name)
             await generateSegmentThumbnails(segments: video.segments, videoPath: video.localPath)
             MixLog.info(" 整片保留: video=\(video.name), \(video.segmentationGuardNote ?? "")")
             return .success
@@ -755,6 +850,11 @@ final class ImportViewModel {
             MixLog.info(" 分镜规划改写: video=\(video.name), \(note)")
         }
 
+        // 台账必须排在逐段重听**之前**：那一步会花钱重跑 ASR，而回测要的是"开闸前这条分镜
+        // 本来会被怎么判"——放在后面读到的就是被重听改写过的文本，取到的是改后的现场。
+        recordEmptyLensReadout(video.segments, localAnalysis: localAnalysis,
+                               asr: asr, videoName: video.name)
+
         // 台词以「逐分镜各自切音频独立 ASR」为准覆盖：整片流式 ASR 绝对时间戳会漂移、
         // 按整片时间戳切出的分镜台词会错位；单段短音频 ASR 永远准。边界已由本地场景/静音+AI 定好，
         // 这里只重识别各分镜台词（失败段保留 commitAIPartition 给的原文/AI 文本）。
@@ -767,6 +867,49 @@ final class ImportViewModel {
         )
 
         return .success
+    }
+
+    /// C 块空镜识别的**只读回测台账**：逐条分镜摊开「窗口 / 有声占比 / 逐 token 概率 / 判定」。
+    ///
+    /// 为什么要这颗开关而不是直接改行为：`EmptyLensPolicy.gateOpen` 现在是 **false**，而开闸的
+    /// 前置纪律是"先在他的真分镜上只读回测、逐条摊开原值"（计划 §五 第 3 项）。这批数字既不落库
+    /// （不占 schema、不为它迁移活库）也不上屏，除了日志没有第二个去处 —— 没有它，`voicedFractionCeil
+    /// = 0.05` 就永远只是一句"看起来合理"的话，而本仓纪律是静态核对 ≠ 跑过。
+    ///
+    /// 生效条件：`#if DEBUG` 内 **且** 环境变量 `MIXCUT_DEBUG_EMPTY_LENS_READOUT=1`；
+    /// 不设、设错值一律不跑（注入永远不能变成默认态）。守法与 `debugSaveHolds`、
+    /// `FileHelper.swift:17-25` 那颗假库开关同族。
+    /// 拦不住什么：它**不写任何状态**（不动 text / semanticTypes / status），所以既不能证明阈值
+    /// 该开，也不能证明闸已开 —— 它只出数。
+    /// 最坏代价：每个视频多 N 行日志（N = 分镜数）加一次纯算术的区间交集，不起新进程、不重新探测。
+    ///
+    /// ⚠️ 两个调用点（整片保留分支 / 正常切分分支）就是建段的两条出口，少挂一条就漏一种素材形状。
+    private func recordEmptyLensReadout(_ segments: [Segment],
+                                        localAnalysis: VideoLocalAnalysis,
+                                        asr: TranscriptionResult,
+                                        videoName: String) {
+        #if DEBUG
+        guard ProcessInfo.processInfo.environment["MIXCUT_DEBUG_EMPTY_LENS_READOUT"] == "1" else { return }
+        let silences = localAnalysis.silencePeriods.map { ($0.start, $0.end) }
+        for seg in segments.sorted(by: { $0.startTime < $1.startTime }) {
+            // 分镜窗口压在多条 whisper 段上 ⇒ 概率层按 token 数加权合成（口径只住在 Core 那一处）
+            let overlapping = asr.rawSentences.filter { $0.start < seg.endTime && $0.end > seg.startTime }
+            var signals = EmptyLensPolicy.aggregateProbabilityLayer(
+                overlapping.compactMap(\.emptyLensSignals))
+            signals.voicedFraction = EmptyLensPolicy.voicedFraction(
+                windowStart: seg.startTime, windowEnd: seg.endTime, silentIntervals: silences)
+            let verdict = EmptyLensPolicy.verdict(signals)
+            let tf = seg.text.isEmpty ? "-" : String(seg.text.prefix(12))
+            MixLog.info("[空镜台账] \(videoName) 段\(seg.segmentIndex) "
+                        + "窗[\(String(format: "%.2f", seg.startTime)),\(String(format: "%.2f", seg.endTime))] "
+                        + "占比=\(signals.voicedFraction.map { String(format: "%.3f", $0) } ?? "无静音数据") "
+                        + "颗数=\(signals.tokenCount.map(String.init) ?? "无概率") "
+                        + "均值=\(signals.meanTokenProb.map { String(format: "%.4f", $0) } ?? "-") "
+                        + "最低=\(signals.minTokenProb.map { String(format: "%.4f", $0) } ?? "-") "
+                        + "低置占比=\(signals.lowTokenProbFraction.map { String(format: "%.3f", $0) } ?? "-") "
+                        + "判定=\(verdict.rawValue) 句数=\(overlapping.count) 文本=\(tf)")
+        }
+        #endif
     }
 
     // MARK: - 视频删除（解除关联 vs 真删除）
@@ -950,7 +1093,7 @@ final class ImportViewModel {
     }
 
     /// Agent 立即删除路径：与 `deleteVideo` **同一条咽喉**，只是立即生效、无撤销
-    /// （MCP `remove_video` 侧签名与语义都不动，`MCPToolHandlers.swift:494` 仍按 Bool 回 `deletedGlobally`）
+    /// （MCP `remove_video` 侧签名与语义都不动，`MCPToolHandlers.swift:481` 仍按 Bool 回 `deletedGlobally`）
     @discardableResult
     func removeVideoImmediately(_ video: Video, from project: Project) -> Bool {
         guard modelContext != nil else { return false }
@@ -1139,17 +1282,6 @@ final class ImportViewModel {
 
     // MARK: - 全局视频查找
 
-    /// 查找全局已有的同 hash 视频
-    private func findExistingVideo(hash: String, context: ModelContext) -> Video? {
-        let descriptor = FetchDescriptor<Video>(
-            predicate: #Predicate<Video> { video in
-                video.contentHash == hash
-            }
-        )
-        guard let videos = try? context.fetch(descriptor) else { return nil }
-        return videos.first
-    }
-
     /// 检测视频是否已在当前项目中
     private func isDuplicate(url: URL, in project: Project) -> Bool {
         let fileName = url.lastPathComponent
@@ -1160,7 +1292,7 @@ final class ImportViewModel {
         }
 
         // 再按 hash 检查（最准确）
-        if let hash = Self.computeFileHash(path: url.path) {
+        if let hash = ClipIngestService.computeFileHash(path: url.path) {
             return project.videos.contains { $0.contentHash == hash }
         }
 
@@ -1184,24 +1316,6 @@ final class ImportViewModel {
         if cancelledVideoIDs.contains(video.id) {
             cancelledVideoIDs.remove(video.id)
             throw CancellationError()
-        }
-    }
-
-    /// 使用 AVFoundation 提取视频元数据
-    private func extractMetadata(for video: Video, at url: URL) async throws {
-        let asset = AVURLAsset(url: url)
-        let duration = try await asset.load(.duration)
-        video.duration = CMTimeGetSeconds(duration)
-
-        if let track = try await asset.loadTracks(withMediaType: .video).first {
-            let size = try await track.load(.naturalSize)
-            let transform = try await track.load(.preferredTransform)
-            let transformedSize = size.applying(transform)
-            video.width = Int(abs(transformedSize.width))
-            video.height = Int(abs(transformedSize.height))
-
-            let rate = try await track.load(.nominalFrameRate)
-            video.fps = Double(rate)
         }
     }
 
@@ -1252,48 +1366,16 @@ final class ImportViewModel {
         modelContext?.safeSave()
     }
 
-    /// 生成视频缩略图（全局目录）
-    private func generateVideoThumbnail(for video: Video) async throws {
-        let thumbDir = FileHelper.globalThumbnailDirectory
-        let thumbPath = thumbDir.appendingPathComponent("\(video.id.uuidString).jpg").path
-
-        try await ffmpeg.generateThumbnail(from: video.localPath, to: thumbPath)
-        video.thumbnailPath = thumbPath
-    }
-
-    /// 计算文件 SHA-256 哈希
-    static func computeFileHash(path: String) -> String? {
-        do {
-            guard let handle = FileHandle(forReadingAtPath: path) else { return nil }
-            defer { try? handle.close() }
-
-            let attrs = try FileManager.default.attributesOfItem(atPath: path)
-            let fileSize = (attrs[.size] as? Int64) ?? 0
-
-            var hasher = SHA256()
-            hasher.update(data: Data(String(fileSize).utf8))
-
-            let chunkSize = 4 * 1024 * 1024
-            let headData = handle.readData(ofLength: chunkSize)
-            hasher.update(data: headData)
-
-            if fileSize > Int64(chunkSize * 2) {
-                handle.seek(toFileOffset: UInt64(fileSize) - UInt64(chunkSize))
-                let tailData = handle.readData(ofLength: chunkSize)
-                hasher.update(data: tailData)
-            }
-
-            let digest = hasher.finalize()
-            return digest.map { String(format: "%02x", $0) }.joined()
-        } catch {
-            MixLog.error(" 计算文件哈希失败: \(error)")
-            return nil
-        }
-    }
-
-    /// 支持的视频文件类型
+    /// 支持的视频文件类型 —— 由 Core 的扩展名真源派生（守卫 G-i：字面量只许出现在 Core 一处）。
+    /// 原先这里自己列 `[.movie, .mpeg4Movie, .quickTimeMovie, .avi]`，而导入页的白名单收 m4v/mkv
+    /// ⇒ 同一个 `.mkv` 拖进来算视频、点开放行器却不给选。`.movie` 保留作父型兜底；
+    /// 五个扩展名各自能否解析出 UTType 由 `FolderMixScannerTests` 的口径对账腿取证，不靠推测。
     static var supportedTypes: [UTType] {
-        [.movie, .mpeg4Movie, .quickTimeMovie, .avi]
+        var types: [UTType] = [.movie]
+        for ext in VideoFileFormat.videoExtensions {
+            if let type = UTType(filenameExtension: ext) { types.append(type) }
+        }
+        return types
     }
 
     /// 重识别该视频各分镜台词：**逐分镜各自切音频独立 ASR**（不动分镜边界）。
@@ -1312,11 +1394,15 @@ final class ImportViewModel {
         // 用户点名「逐段重听」⇒ 整条都听，不做沿用判断（那是自动链的省法，不是这里语义）
         let r = await reidentifySegmentTexts(video: video, context: context, auto: false)
         let detail = r.reason.map { "：\($0)" } ?? ""
-        if r.stoppedEarly || r.failed > 0 || r.refused > 0 || r.cancelled > 0 {
+        // emptyAudio 必须进触发条件：`.emptyAudio` 已不再计入 failed，
+        // 少了这一颗，"整条视频一段都没认到字"会掉进下面的**成功**分支，
+        // 弹一句「已逐分镜重认台词（0 段）」——那是把没干活报成干完了。
+        if r.stoppedEarly || r.failed > 0 || r.emptyAudio > 0 || r.refused > 0 || r.cancelled > 0 {
             // 只报"X 成功 / Y 失败"等于没报——用户既不知道为什么失败，也不知道该怎么办。
             // 分档报数：refused（配置问题）与 failed（识别问题）混在一起会把"没配 Key"伪装成"这片子没声音"。
             var parts = ["台词重认 \(r.gotText) 段拿到字"]
-            if r.failed > 0 { parts.append("\(r.failed) 段没拿到字") }
+            if r.failed > 0 { parts.append("\(r.failed) 段识别失败") }
+            if r.emptyAudio > 0 { parts.append("\(r.emptyAudio) 段没声音（疑似空镜）") }
             if r.refused > 0 { parts.append("\(r.refused) 段没跑识别") }
             if r.cancelled > 0 { parts.append("\(r.cancelled) 段被取消") }
             ToastCenter.shared.show("\(parts.joined(separator: "、"))\(detail)",
@@ -1331,10 +1417,11 @@ final class ImportViewModel {
     /// 但结果必须进日志 —— 两处调用点都忽略返回值，就等于"整批没配 Key、一段也没重认"这件事没人知道。
     private func autoReidentifySegments(_ video: Video, context: ModelContext) async {
         let r = await reidentifySegmentTexts(video: video, context: context, auto: true)
-        if r.failed > 0 || r.refused > 0 || r.stoppedEarly {
+        if r.failed > 0 || r.emptyAudio > 0 || r.refused > 0 || r.stoppedEarly {
             let detail = r.reason.map { "：\($0)" } ?? ""
             MixLog.error("[ASR] \(video.name) 自动逐段重认：\(r.gotText) 段拿到字、"
-                         + "\(r.failed) 段没字、\(r.refused) 段没跑识别\(detail)")
+                         + "\(r.failed) 段识别失败、\(r.emptyAudio) 段没声音（疑似空镜）、"
+                         + "\(r.refused) 段没跑识别\(detail)")
         }
     }
 
@@ -1351,7 +1438,7 @@ final class ImportViewModel {
     @discardableResult
     func reidentifySegmentTexts(video: Video, context: ModelContext,
                                 auto: Bool) async
-        -> (gotText: Int, failed: Int, refused: Int, cancelled: Int, stoppedEarly: Bool, reason: String?) {
+        -> (gotText: Int, failed: Int, emptyAudio: Int, refused: Int, cancelled: Int, stoppedEarly: Bool, reason: String?) {
         let fps = video.fps > 0 ? video.fps : 30
         let segs = video.segments.sorted { $0.startFrame < $1.startFrame }
         var outcomes: [SegmentTranscribeOutcome] = []
@@ -1392,7 +1479,8 @@ final class ImportViewModel {
             if !result.gotText, firstReason == nil { firstReason = result.reason }
             outcomes.append(result.outcome)
 
-            consecutiveFailures = result.gotText ? 0 : consecutiveFailures + 1
+            consecutiveFailures = SegmentTranscribeRule.countsAsBatchFailure(result.outcome)
+                ? consecutiveFailures + 1 : 0
             if case .tooManyConsecutiveFailures = SegmentBatchPolicy.shouldStop(
                 consecutiveFailures: consecutiveFailures, cancelled: false) {
                 MixLog.error("[ASR] 连续 \(consecutiveFailures) 段没拿到字，提前停止 \(video.name)")
@@ -1410,7 +1498,7 @@ final class ImportViewModel {
         context.saveOrWarn("重识别的台词")
 
         let t = SegmentBatchPolicy.tally(outcomes)
-        return (t.gotText, t.failed, t.refused, t.cancelled, stoppedEarly, firstReason)
+        return (t.gotText, t.failed, t.emptyAudio, t.refused, t.cancelled, stoppedEarly, firstReason)
     }
 
     // MARK: - 分镜拆分（PRD/TRD 06）

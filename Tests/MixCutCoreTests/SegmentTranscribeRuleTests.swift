@@ -154,10 +154,15 @@ struct SegmentTranscribeRuleTests {
         let t = SegmentBatchPolicy.tally([.replaced, .unchanged, .emptyAudio,
                                           .engineFailed, .bothEnginesFailed, .refused, .cancelled])
         #expect(t.gotText == 2, "replaced/unchanged 才是拿到字")
-        #expect(t.failed == 3, "空识别 + 两条失败档算识别失败；实际 \(t.failed)")
+        // 〔C 块重定口径〕`.emptyAudio` 不再并进 failed：它的含义是"引擎跑完了、也确实一个字没有"
+        // ⇒ 那是空镜的正确答案，不是引擎故障。混在一起会让连续 3 段空镜提前停掉整批
+        // （后面真有口播的段再也拿不到字），而停批上限存在的理由只是"引擎坏了别继续烧钱"。
+        #expect(t.failed == 2, "只有两条引擎故障档算识别失败；实际 \(t.failed)")
+        #expect(t.emptyAudio == 1, "空识别必须单列 —— '这段没声音'本身就是要报给用户的信息")
         #expect(t.refused == 1, "没配 Key 这类配置问题必须单列，否则被报成'N 段识别失败'")
         #expect(t.cancelled == 1)
-        #expect(t.gotText + t.failed + t.refused + t.cancelled == 7, "有档被漏计 = 批次总数对不上")
+        #expect(t.gotText + t.failed + t.emptyAudio + t.refused + t.cancelled == 7,
+                "有档被漏计 = 批次总数对不上")
     }
 
     @Test("TC-SB-03 自动链跳过的段不产生 outcome ⇒ tally 的分母只算真跑过的（§AF 的语义边界）")
@@ -216,21 +221,27 @@ struct SegmentTranscribeRuleTests {
 
     @Test("TC-SB-02 tally 求和守恒：任意档任意条数，四桶之和恒等于条数；分桶口径与 gotText() 同源")
     func tallyConservesCountAcrossAllOutcomes() {
-        // 空批：四个桶全 0（"0 段拿到字"与"没跑"不能混）
+        // 空批：五个桶全 0（"0 段拿到字"与"没跑"不能混）
         let empty = SegmentBatchPolicy.tally([])
-        #expect(empty.gotText == 0 && empty.failed == 0 && empty.refused == 0 && empty.cancelled == 0)
+        #expect(empty.gotText == 0 && empty.failed == 0 && empty.emptyAudio == 0
+                && empty.refused == 0 && empty.cancelled == 0)
 
         let all = SegmentTranscribeOutcome.allCases
-        // 穷举不变量走全表，不复制 SplitMix64（那是 ProjectVideoDedupTests 的 private 夹具，
-        // 复制 = 第二份真源；见 WhisperModelCatalogTests.swift:38 的同一条裁定）
+        // 穷举不变量走全表，不自己造随机源（`SplitMix64` 的真源在 `Sources/MixCutCore/FolderMixPicker.swift`，
+        // 抄一份 = 第二份真源；见 WhisperModelCatalogTests.swift:38 的同一条裁定）
         #expect(all.count == 7, "档位表变了：本条的穷举覆盖要跟着补，tally 的 switch 也得跟着改")
 
         // 每档单独一条：求和恒 1，且"算不算拿到字"必须与 gotText() 同一口径
         for outcome in all {
             let one = SegmentBatchPolicy.tally([outcome])
-            #expect(one.gotText + one.failed + one.refused + one.cancelled == 1, "\(outcome) 漏计或被双计")
+            #expect(one.gotText + one.failed + one.emptyAudio + one.refused + one.cancelled == 1,
+                    "\(outcome) 漏计或被双计")
             #expect((one.gotText == 1) == SegmentTranscribeRule.gotText(outcome),
                     "\(outcome)：tally 的分桶与 gotText() 分家 = 两套真源")
+            // 停批口径也必须与 tally 同源：failed 桶 == countsAsBatchFailure 的档集。
+            // 两边分家就是"Toast 说 3 段失败、循环却按另一套数停批"的形状。
+            #expect((one.failed == 1) == SegmentTranscribeRule.countsAsBatchFailure(outcome),
+                    "\(outcome)：tally 的 failed 桶与停批判据分家 = 两套真源")
             #expect((one.refused == 1) == (outcome == .refused),
                     "\(outcome)：配置问题被并进识别失败 = 把没配 Key 报成质量差")
             #expect((one.cancelled == 1) == (outcome == .cancelled))
@@ -243,13 +254,17 @@ struct SegmentTranscribeRuleTests {
             mixed.append(contentsOf: Array(repeating: outcome, count: k + 1))
         }
         let gotSet: Set<SegmentTranscribeOutcome> = [.replaced, .unchanged]
-        let failedSet: Set<SegmentTranscribeOutcome> = [.emptyAudio, .bothEnginesFailed, .engineFailed]
+        // 〔C 块重定口径〕`.emptyAudio` 从 failedSet 移到 emptySet：
+        // 引擎跑完、确实没字 = 空镜的正确答案，不是故障（详见 SegmentTranscribeRule.countsAsBatchFailure）
+        let failedSet: Set<SegmentTranscribeOutcome> = [.bothEnginesFailed, .engineFailed]
+        let emptySet: Set<SegmentTranscribeOutcome> = [.emptyAudio]
         let t = SegmentBatchPolicy.tally(mixed)
         #expect(t.gotText == mixed.filter { gotSet.contains($0) }.count)
         #expect(t.failed == mixed.filter { failedSet.contains($0) }.count)
+        #expect(t.emptyAudio == mixed.filter { emptySet.contains($0) }.count)
         #expect(t.refused == mixed.filter { $0 == .refused }.count)
         #expect(t.cancelled == mixed.filter { $0 == .cancelled }.count)
-        #expect(t.gotText + t.failed + t.refused + t.cancelled == mixed.count,
+        #expect(t.gotText + t.failed + t.emptyAudio + t.refused + t.cancelled == mixed.count,
                 "有档被漏计 = 批次总数对不上（Toast 会说谎）")
         // 夹具非空洞性：不均分布真的不均（每档条数各不相同），否则上面几条退化成"全都相等"
         #expect(mixed.count == 28 && Set(mixed).count == all.count)

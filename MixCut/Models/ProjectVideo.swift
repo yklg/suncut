@@ -30,7 +30,12 @@ extension ProjectVideo {
     @discardableResult
     static func associate(project: Project, video: Video, in context: ModelContext) -> ProjectVideo {
         if let existing = project.projectVideos.first(where: { $0.video?.id == video.id }) {
-            MixLog.error("项目「\(project.name)」已关联视频「\(video.name)」，幂等返回既有行（不重复挂载）")
+            // info 而非 error：幂等命中是**正常路径**，不是异常。
+            // 文件夹混剪把它变成高频路径（同一素材属于两个类别项目 = `importOrLinkVideo` 的
+            // 既有落法，重扫同一目录也会命中），留在 error 级别会让日志刷一片红，
+            // 而红日志会被当成故障证据 —— `2026-10-03-tombstone-read-after-real-delete.md:48`
+            // 就是被这行误导过一次。守卫 T-21 钉住"这里不许再用 error 级"。
+            MixLog.info("项目「\(project.name)」已关联视频「\(video.name)」，幂等返回既有行（不重复挂载）")
             return existing
         }
         let pv = ProjectVideo(project: project, video: video)

@@ -39,6 +39,11 @@ final class Project: Identifiable {
     /// 带默认值 optional 字段，走 SwiftData 轻量迁移（同 v3.4 字段惯例）。
     var preferredVoiceChoiceRaw: String?
 
+    /// 项目级 logo 角标配置（LogoOverlayCoder 版本化 JSON 串）。
+    /// nil / 坏串 = 关闭；写入唯一收口见 `ProjectViewModel.setProjectLogoOverlay`。
+    /// optional ⇒ 轻量迁移；schema 指纹会变，`SchemaGuard` 只增路径会先备份再开库。
+    var logoOverlayRaw: String?
+
     init(name: String) {
         self.id = UUID()
         self.name = name
@@ -61,6 +66,21 @@ final class Project: Identifiable {
 
     /// 视频总数：与 `associatedVideos` 同口径，悬空关联与重复关联都不计入
     var videoCount: Int { associatedVideos.count }
+
+    /// 项目内**可显示**的分镜（决议 K9 的聚合出口；体形照下面那颗 `videoNoByVideoID`：
+    /// 唯一一处遍历，调用方读全再用自己的缓存，别在视图 body 里逐次调）。
+    var displayableSegments: [Segment] {
+        var out: [Segment] = []
+        for video in associatedVideos { out.append(contentsOf: video.displayableSegments) }
+        return out
+    }
+
+    /// 可显示分镜总数（方案页那句「N 个分镜可用」用它）。
+    /// ⚠ 与 `segmentCount` 是**两颗不同的数**，且刻意不是同一颗：那颗一颗两用
+    ///   （既当数字又当三处「有没有料」的禁用闸），闸必须继续看见混剪内部段，否则等于偷改闸。
+    var displayableSegmentCount: Int {
+        associatedVideos.reduce(0) { $0 + $1.displayableSegmentCount }
+    }
 
     /// UI 卡片 # 与 MCP `video_no` 的**唯一定义处**（原来在素材库、导入页、MCP 三处各抄了一遍）
     var videoNoByVideoID: [UUID: Int] {
@@ -95,4 +115,27 @@ final class Project: Identifiable {
 
     /// 方案总数
     var schemeCount: Int { schemes.count }
+}
+
+// MARK: - 「建一个可用项目」的唯一动作
+
+extension Project {
+
+    /// 新建项目并同步挂上「自定义组合」容器。
+    ///
+    /// 为什么要有这颗：`Project(name:) + insert + MixStrategy(自定义组合) + append + insert`
+    /// 这五步在仓里有两份逐字拷贝（UI 的 `ProjectViewModel.createProject` 与
+    /// `MCPToolHandlers` 的建项工具，后者那句注释写着「与 UI 的 createProject 保持一致」——
+    /// 靠人记着抄对的一致性不是一致性）。文件夹混剪是第三个调用方（类别项目 + 汇总项目），
+    /// 所以动作收在这里：**只落对象，不落盘、不刷列表** —— 那些是每个调用方自己的事务边界
+    /// （UI 要刷 `projects`/`products`，MCP 走 `notifyUIReload`，混剪要连着入库）。
+    /// 容器本体见 `MixStrategy.attachCustomGroup`。
+    @discardableResult
+    static func makeWithName(_ name: String, product: Product?, in context: ModelContext) -> Project {
+        let project = Project(name: name)
+        project.product = product
+        context.insert(project)
+        MixStrategy.attachCustomGroup(to: project, in: context)
+        return project
+    }
 }

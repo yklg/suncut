@@ -41,8 +41,13 @@ struct ExportDurationGateTests {
 
             let src = try await source(dir)
             let out = dir.appendingPathComponent("out.mp4").path
-            let input = ExportInput(segments: [(path: src, start: 0, end: 1)],
-                                    maxWidth: 1080, maxHeight: 1920)
+            // 〔本期加的两个参数〕`plannedSegmentCount` / `droppedDescriptions` 是 Step 7 给
+    // `ExportInput` 补的"丢段必须出声"账本，由 `from(scheme:)` 在生产路径填。本文件是**手工喂段**
+    // 的渲染腿，不走那条路径，所以按"交进去几条就是计划几条"如实填、`droppedDescriptions` 留空 ——
+    // 不写默认值：默认值会让"计划几条"这件事有两个答案。
+    let input = ExportInput(segments: [(path: src, start: 0, end: 1)],
+                                    maxWidth: 1080, maxHeight: 1920,
+                                    plannedSegmentCount: 1, droppedDescriptions: [])
             do {
                 try await ExportService().export(input: input, outputPath: out, config: ExportConfig())
                 Issue.record("1 秒输入按千川目标（要求 4~300s）竞导出成功")
@@ -71,7 +76,8 @@ struct ExportDurationGateTests {
             var config = ExportConfig()
             config.resolution = .p1080
             let input = ExportInput(segments: [(path: src, start: 0, end: 5)],
-                                    maxWidth: 1080, maxHeight: 1920)
+                                    maxWidth: 1080, maxHeight: 1920,
+                                    plannedSegmentCount: 1, droppedDescriptions: [])
             try await ExportService().export(input: input, outputPath: out, config: config)
 
             #expect(FileManager.default.fileExists(atPath: out), "5 秒输入没导出来")
@@ -107,7 +113,8 @@ struct ExportDurationGateTests {
             config.deliveryTarget = .unrestricted
             config.resolution = .p1080
             let input = ExportInput(segments: [(path: src, start: 0, end: 1)],
-                                    maxWidth: 1080, maxHeight: 1920)
+                                    maxWidth: 1080, maxHeight: 1920,
+                                    plannedSegmentCount: 1, droppedDescriptions: [])
             do {
                 try await ExportService().export(input: input, outputPath: out, config: config)
             } catch let error as ExportError {
@@ -153,7 +160,8 @@ struct LoudnessChainIntegrationTests {
             config.deliveryTarget = .unrestricted
             config.resolution = .p1080
             let input = ExportInput(segments: [(path: src, start: 0, end: 1)],
-                                    maxWidth: 1080, maxHeight: 1920)
+                                    maxWidth: 1080, maxHeight: 1920,
+                                    plannedSegmentCount: 1, droppedDescriptions: [])
             try await ExportService().export(input: input, outputPath: out, config: config)
 
             #expect(FileManager.default.fileExists(atPath: out), "1 秒静音单段没导出来")
@@ -177,7 +185,8 @@ struct LoudnessChainIntegrationTests {
             config.resolution = .p1080
             let input = ExportInput(segments: [(path: silent, start: 0, end: 1),
                                                (path: audible, start: 0, end: 4)],
-                                    maxWidth: 1080, maxHeight: 1920)
+                                    maxWidth: 1080, maxHeight: 1920,
+                                    plannedSegmentCount: 2, droppedDescriptions: [])
             try await ExportService().export(input: input, outputPath: out, config: config)
 
             #expect(FileManager.default.fileExists(atPath: out),

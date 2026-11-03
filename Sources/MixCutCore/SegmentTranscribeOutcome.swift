@@ -145,6 +145,21 @@ public enum SegmentTranscribeRule {
     public static func gotText(_ outcome: SegmentTranscribeOutcome) -> Bool {
         outcome == .replaced || outcome == .unchanged
     }
+
+    /// 该不该计入"连续失败"从而提前停批。
+    ///
+    /// ⚠️ 这颗与 `gotText` **故意不是一回事**，分开是修一个真实存在的误判：
+    /// `consecutiveFailureLimit` 存在的理由是"引擎坏了就别再逐段烧钱烧时间"，
+    /// 而 `.emptyAudio` 的含义是**引擎跑完了、也确实一个字没有** —— 那是空镜（B-roll、
+    /// 纯环境音）的**正确答案**，不是引擎故障。把它计成失败会导致：
+    ///   一条视频里连续 3 段空镜 ⇒ 整批逐段重听被 `tooManyConsecutiveFailures` 提前停掉
+    ///   ⇒ **后面真有口播的段再也拿不到字**。空镜越多的素材（带货实拍里很常见）越容易撞上。
+    /// 实测读数见 `SegmentTranscribeRuleTests` 的 TC-AR-1。
+    /// 只有真故障（`.engineFailed` / `.bothEnginesFailed`）才该停批；
+    /// `.refused`（决策就没让跑）与 `.cancelled` 另有各自的上报通道，都不算故障。
+    public static func countsAsBatchFailure(_ outcome: SegmentTranscribeOutcome) -> Bool {
+        outcome == .engineFailed || outcome == .bothEnginesFailed
+    }
 }
 
 /// 分类结论（含要不要落笔、落什么）。
@@ -181,20 +196,26 @@ public enum SegmentBatchPolicy {
         return .continueBatch
     }
 
-    /// 失败段数怎么数：**`replaced`/`unchanged` 之外都算没拿到字**，
-    /// 但取消与拒绝要单独报（否则"没配 Key"会被报成"N 段识别失败"，把配置问题伪装成识别质量问题）。
+    /// 失败段数怎么数：**只有引擎真故障算失败**。
+    ///
+    /// `.emptyAudio` 从前被算进 `failed`，那是错的（理由见 `countsAsBatchFailure`）——
+    /// 现在单列一档，因为它既不是"拿到字"也不是"引擎坏了"，
+    /// 而"这段没声音"这个信息本身要能上报给用户（空镜识别正是要用它）。
+    /// 取消与拒绝仍各自单报，否则"没配 Key"会被报成"N 段识别失败"，
+    /// 把配置问题伪装成识别质量问题。
     public static func tally(_ outcomes: [SegmentTranscribeOutcome])
-        -> (gotText: Int, failed: Int, refused: Int, cancelled: Int) {
-        var got = 0, failed = 0, refused = 0, cancelled = 0
+        -> (gotText: Int, failed: Int, emptyAudio: Int, refused: Int, cancelled: Int) {
+        var got = 0, failed = 0, empty = 0, refused = 0, cancelled = 0
         for outcome in outcomes {
             switch outcome {
             case .replaced, .unchanged: got += 1
-            case .emptyAudio, .bothEnginesFailed, .engineFailed: failed += 1
+            case .emptyAudio: empty += 1
+            case .bothEnginesFailed, .engineFailed: failed += 1
             case .refused: refused += 1
             case .cancelled: cancelled += 1
             }
         }
-        return (got, failed, refused, cancelled)
+        return (got, failed, empty, refused, cancelled)
     }
 }
 

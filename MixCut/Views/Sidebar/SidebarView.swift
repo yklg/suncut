@@ -72,7 +72,8 @@ struct SidebarView: View {
                     ForEach(NavigationItem.allCases) { item in
                         navRow(item)
                     }
-                    .opacity(projectVM.selectedProject == nil ? 0.35 : 1.0)
+                    // 置灰口径下沉到 `navRow` 自己：「文件夹混剪」不需要选中项目就能进，
+                    // 挂在这里会把那一格一起压成 0.35×0.35。
                 }
                 .padding(.horizontal, 12)
                 .padding(.vertical, 8)
@@ -287,11 +288,14 @@ struct SidebarView: View {
     }
 
     private func navRow(_ item: NavigationItem) -> some View {
-        let isSelected = selectedNavItem == item && projectVM.selectedProject != nil
+        // 「文件夹混剪」自己建产品与项目 ⇒ 一个项目都没有时也要能点（其余 7 项照旧要选中项目）
+        let needsProject = item != .folderMix
+        let available = !needsProject || projectVM.selectedProject != nil
+        let isSelected = selectedNavItem == item && available
         let isHovered = hoveredNavItem == item
         let shortcut = shortcutHint(for: item)
         return Button {
-            guard projectVM.selectedProject != nil else { return }
+            guard available else { return }
             withAnimation(DesignTokens.Motion.transition) {
                 selectedNavItem = item
             }
@@ -320,12 +324,13 @@ struct SidebarView: View {
             )
         }
         .buttonStyle(.plain)
+        .opacity(available ? 1 : 0.35)
         .onHover { hovering in
             withAnimation(DesignTokens.Motion.hover) {
                 hoveredNavItem = hovering ? item : nil
             }
         }
-        .disabled(projectVM.selectedProject == nil)
+        .disabled(!available)
         .help(shortcut.isEmpty ? item.rawValue : "\(item.rawValue) (\(shortcut))")
     }
 
@@ -343,6 +348,7 @@ struct SidebarView: View {
         case .schemes:       return "⌘4"
         case .export:         return "⌘5"
         case .bgmLibrary:     return "⌘6"
+        case .folderMix:      return "⌘8"
         }
     }
 

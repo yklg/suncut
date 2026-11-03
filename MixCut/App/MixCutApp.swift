@@ -234,6 +234,17 @@ struct MixCutApp: App {
                     NotificationCenter.default.post(name: .mixCutNavigate, object: NavigationItem.bgmLibrary)
                 }
                 .keyboardShortcut("6", modifiers: .command)
+                Button("知识库") {
+                    NotificationCenter.default.post(name: .mixCutNavigate, object: NavigationItem.knowledge)
+                }
+                // 〔本期补上的既有缺口〕`SidebarView.shortcutHint` 早就把「知识库」标成 ⌘7，
+                // 而这里从来没有那颗按钮 ⇒ 侧栏悬停提示说了一句做不到的话。
+                // 守卫 G-e 要求 case 数与 ⌘ 绑定数对齐，顺手把这一格补真。
+                .keyboardShortcut("7", modifiers: .command)
+                Button("文件夹混剪") {
+                    NotificationCenter.default.post(name: .mixCutNavigate, object: NavigationItem.folderMix)
+                }
+                .keyboardShortcut("8", modifiers: .command)
             }
         }
 
@@ -874,20 +885,10 @@ struct MixCutApp: App {
 
         var addedCount = 0
         for project in projects {
-            let hasCustomGroup = project.strategies.contains { $0.isCustomGroup }
-            if !hasCustomGroup {
-                let strategy = MixStrategy(
-                    name: "自定义组合",
-                    style: "",
-                    description: "手动挑选分镜组合的方案",
-                    targetAudience: "",
-                    narrativeStructure: "",
-                    targetDuration: 0
-                )
-                strategy.isCustomGroup = true
-                strategy.project = project
-                project.strategies.append(strategy)
-                context.insert(strategy)
+            if !project.strategies.contains(where: { $0.isCustomGroup }) {
+                // 容器本体只在 `MixStrategy.attachCustomGroup` 写一遍（这里曾是第 3 份拷贝）；
+                // 是否"补建"仍由上面这个判断决定 —— addedCount 要的就是"这次真的补了几颗"。
+                MixStrategy.attachCustomGroup(to: project, in: context)
                 addedCount += 1
             }
         }
@@ -943,7 +944,7 @@ struct MixCutApp: App {
             guard let video = segment.video,
                   FileHelper.isMaterialFilePresent(path: video.localPath) else { continue }
             // 不在这里删旧图：输出名就是同一个 seg_<uuid>.jpg（`ImportViewModel.swift:1027` 也用这个名），
-            // 而 `generateThumbnail` 自带 `-y`（`FFmpegRunner.swift:664`）会原地覆盖。
+            // 而 `generateThumbnail` 自带 `-y`（`FFmpegRunner.swift:784`）会原地覆盖。
             // 以前先删后生，于是任何一次 ffmpeg 失败都把这个分镜的缩略图**删没了却补不上**，
             // 而 `segment.thumbnailPath` 仍指着那个不存在的文件 —— 界面因此是空白而不是旧图。
             let firstFrameTime = max(0, segment.startTime + 0.1)
@@ -1138,10 +1139,9 @@ struct MixCutApp: App {
                 includingPropertiesForKeys: nil
             ) else { continue }
 
-            let videoFiles = files.filter { url in
-                let ext = url.pathExtension.lowercased()
-                return ["mp4", "mov", "avi", "mkv", "m4v"].contains(ext)
-            }
+            // 白名单真源在 Core 的 `VideoFileFormat`（守卫 G-i）：原先这里自己写死一份，
+            // 与导入页那份同集合不同顺序 —— 同一个文件在两条链路上的可见性会分家。
+            let videoFiles = files.filter { VideoFileFormat.isVideoExtension($0.pathExtension) }
 
             if !videoFiles.isEmpty {
                 projectVideoMap[dirName] = videoFiles.map(\.lastPathComponent)
@@ -1169,7 +1169,7 @@ struct MixCutApp: App {
         for (fileName, fileURL) in uniqueVideos {
             let video = Video(name: fileName, localPath: fileURL.path)
             video.status = .imported  // 需要重新分析
-            video.contentHash = ImportViewModel.computeFileHash(path: fileURL.path)
+            video.contentHash = ClipIngestService.computeFileHash(path: fileURL.path)
             context.insert(video)
 
             ProjectVideo.associate(project: project, video: video, in: context)

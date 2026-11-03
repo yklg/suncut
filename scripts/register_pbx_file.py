@@ -37,7 +37,8 @@ def main(argv):
     # —— Xcode 侧的症状是 "Build input file cannot be found"，报错点离根因隔一层。
     found = None
     for cand in (os.path.join(ROOT, "Sources/MixCutCore", new_name),
-                 os.path.join(ROOT, "MixCut", new_name)):
+                 os.path.join(ROOT, "MixCut", new_name),
+                 os.path.join(ROOT, "MixCutAppTests", new_name)):
         if os.path.isfile(cand):
             found = cand
             break
@@ -46,7 +47,8 @@ def main(argv):
         # 只查顶层会把真实存在的文件判成"拼写错了"。递归找，且**唯一命中**才算数：
         # 同名两份时登记哪一份是个真问题，不许默默挑一份。
         hits = [os.path.join(dir_, new_name)
-                for dir_, _, files in os.walk(os.path.join(ROOT, "MixCut"))
+                for root_ in ("MixCut", "MixCutAppTests")
+                for dir_, _, files in os.walk(os.path.join(ROOT, root_))
                 if new_name in files]
         if len(hits) == 1:
             found = hits[0]
@@ -57,6 +59,34 @@ def main(argv):
     if found is None:
         print("ERR 源文件不存在，拒绝登记：%s（先在 Sources/MixCutCore 与 MixCut 下确认拼写）"
               % new_name)
+        return 1
+
+    # 模板必须与要登记的文件**同目录**：脚本是把新条目插到模板所在的那个组里，
+    # 模板在哪个组，新文件就挂进哪个组。2026-10-21 实测踩过：默认模板
+    # `VoiceAuditionPlayer.swift` 在 `MixCut/Services/TTS/`，我拿它登记三颗别处的新文件 ⇒
+    # ID 唯一、四段齐全、path 字面都对，`check_pbx_registration.py` 全绿，
+    # 只有真机 `xcodebuild` 报 "Build input files cannot be found"（一趟 4 分钟才发现）。
+    # 所以这笔成本必须在登记当场付：给一个同目录的兄弟文件当模板。
+    def locate(name):
+        for cand in (os.path.join(ROOT, "Sources/MixCutCore", name),
+                     os.path.join(ROOT, "MixCut", name),
+                     os.path.join(ROOT, "MixCutAppTests", name)):
+            if os.path.isfile(cand):
+                return cand
+        hits = [os.path.join(d, name) for root_ in ("MixCut", "MixCutAppTests")
+                for d, _, fs in os.walk(os.path.join(ROOT, root_)) if name in fs]
+        return hits[0] if len(hits) == 1 else None
+
+    tpl_found = locate(tpl_name)
+    if tpl_found is None:
+        print("ERR 模板文件在本机找不到：%s ⇒ 无法判断要挂进哪个组，拒绝登记" % tpl_name)
+        return 1
+    if os.path.dirname(tpl_found) != os.path.dirname(found):
+        print("ERR 模板与新文件不同目录：模板 %s 在 %s，新文件在 %s"
+              % (tpl_name, os.path.relpath(os.path.dirname(tpl_found), ROOT),
+                 os.path.relpath(os.path.dirname(found), ROOT)))
+        print("    ⇒ 挂错组只有 xcodebuild 才发现。请拿同目录的兄弟文件当第二参数重跑，例如：")
+        print("      python3 scripts/register_pbx_file.py %s <同目录的另一颗文件.swift>" % new_name)
         return 1
     if new_name in text:
         print("SKIP %s 已在 pbxproj 中" % new_name)

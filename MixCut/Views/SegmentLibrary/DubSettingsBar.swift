@@ -160,6 +160,24 @@ struct DubSettingsBar: View {
     /// 仅反映本视频的忙碌状态（不同视频互不联动）。
     private var busy: Bool { dubVM.isBusy(videoID: video.id) }
 
+    /// 语速读写绑定：写入侧一律过 `DubRateLimits.clamp`。
+    ///
+    /// 为什么必须 clamp 在**写入处**而不是读取处：`Video.dubSpeechRate` 的注释写着
+    /// 「范围 0.7~1.3」却全仓没有任何写入面，那句话就这么烂了好几个版本。
+    /// 范围只在 `DubRateLimits` 一处定义，界面与引擎合法区间同源，不再抄第二份。
+    private var speechRateBinding: Binding<Double> {
+        Binding(
+            get: { DubRateLimits.clamp(video.dubSpeechRate) },
+            set: { newValue in
+                let clamped = DubRateLimits.clamp(newValue)
+                guard clamped != video.dubSpeechRate else { return }
+                video.dubSpeechRate = clamped
+                do { try modelContext.save() }
+                catch { MixLog.error("语速保存失败：\(error.localizedDescription)") }
+            }
+        )
+    }
+
     var body: some View {
         HStack(spacing: DesignTokens.Spacing.compact) {
             if busy {
@@ -222,6 +240,22 @@ struct DubSettingsBar: View {
                 .controlSize(.mini)
                 .fixedSize()
                 .help("每个非「保留原声」分镜要产出的台词变体数量（1–5）")
+
+                // 语速：A 块「全程语速一致」的唯一可调旋钮。
+                // 写在这里而不是另造一颗 @AppStorage —— `Video.dubSpeechRate` 这颗字段早就存在，
+                // 但全仓**只有定义与一次读取、没有任何写入面**（注释里那句「范围 0.7~1.3」
+                // 因此从来没被 clamp 过）。这一颗控件是它的第一任写入者，值域与 clamp
+                // 统一走 DubRateLimits，界面范围和引擎合法区间同源。
+                Stepper(value: speechRateBinding, in: DubRateLimits.rateMin...DubRateLimits.rateMax,
+                        step: 0.05) {
+                    Text(String(format: "语速 %.2f×", video.dubSpeechRate))
+                        .font(.caption2).foregroundStyle(.secondary).monospacedDigit()
+                }
+                .controlSize(.mini)
+                .fixedSize()
+                .disabled(busy)
+                .help("该视频此后新生成配音的语速（一条视频内恒定，不再逐段变速去凑画面时长）。"
+                     + "只影响此后新生成，不改动已有配音。")
 
                 scopeLabel
 

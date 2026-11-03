@@ -357,6 +357,8 @@ actor DubExportService {
         outputPath: String,
         config: ExportConfig = ExportConfig(),
         globalBGM: GlobalBGMSpec? = nil,
+        logo: LogoOverlayConfig? = nil,
+        stripMetadata: Bool = false,
         onProgress: (@Sendable (ExportProgress) -> Void)? = nil
     ) async throws {
         guard !input.segments.isEmpty else { throw ExportError.noSegments }
@@ -396,7 +398,9 @@ actor DubExportService {
 
             let interURL = workDir.appendingPathComponent(String(format: "seg_%03d.mp4", i))
             try await renderSegment(spec: spec, index: i, outW: outW, outH: outH,
-                                    workDir: workDir, config: config, outputPath: interURL.path)
+                                    workDir: workDir, config: config,
+                                    logo: logo, stripMetadata: stripMetadata,
+                                    outputPath: interURL.path)
             intermediatePaths.append(interURL.path)
         }
 
@@ -405,11 +409,13 @@ actor DubExportService {
         let concatTarget = globalBGM == nil
             ? outputPath
             : workDir.appendingPathComponent("voiced.mp4").path
-        try await concatCopy(paths: intermediatePaths, workDir: workDir, outputPath: concatTarget)
+        try await concatCopy(paths: intermediatePaths, workDir: workDir,
+                             outputPath: concatTarget, stripMetadata: stripMetadata)
 
         if let bgm = globalBGM {
             onProgress?(ExportProgress(phase: .concatenating, progress: 0.95, description: "铺底背景音乐…"))
-            try await mixGlobalBGM(voicedPath: concatTarget, bgm: bgm, outputPath: outputPath)
+            try await mixGlobalBGM(voicedPath: concatTarget, bgm: bgm,
+                                   outputPath: outputPath, stripMetadata: stripMetadata)
         }
 
         // 后置回读：证明"计划画布"真的等于"落盘画布"（与 `ExportService.performExport` 同一条腿）。
@@ -461,7 +467,10 @@ actor DubExportService {
     // MARK: - 单分镜中间片
 
     private func renderSegment(spec: DubSegmentSpec, index: Int, outW: Int, outH: Int,
-                               workDir: URL, config: ExportConfig, outputPath: String) async throws {
+                               workDir: URL, config: ExportConfig,
+                               logo: LogoOverlayConfig? = nil,
+                               stripMetadata: Bool = false,
+                               outputPath: String) async throws {
         let mode: SubtitleMaskMode = spec.isVoiceLocked
             ? .none
             : SubtitleMaskMode.from(hasHardSubtitle: spec.hasHardSubtitle, maskStyleRaw: spec.maskStyleRaw)
@@ -521,6 +530,41 @@ actor DubExportService {
                                         start: spec.vocalsStart, end: spec.vocalsEnd)
         }
 
+        // 品牌角标：**最后**追加输入，避免 dub/BGM/vocals 的索引整体后移。
+        var logoStage: LogoOverlayStage? = nil
+        if let logo, logo.enabled, !logo.layers.isEmpty {
+            var valid: [(layer: LogoOverlayLayer, index: Int)] = []
+            var sizes: [String: (width: Int, height: Int)] = [:]
+            for layer in logo.layers.prefix(LogoOverlayConfig.maxLayers) {
+                guard let url = LogoOverlayAssetStore.url(for: layer.file) else {
+                    throw ExportError.encodingFailed("logo 文件名不合法：\(layer.file)")
+                }
+                // 用像素探测代替裸 fileExists：缺失/坏图都会在这里统一报"不可读"。
+                guard let size = LogoOverlayAssetStore.pixelSize(file: layer.file) else {
+                    throw ExportError.encodingFailed("logo 文件缺失或不可读：\(layer.file)")
+                }
+                extraInputs.append(url.path)
+                valid.append((layer, extraInputs.count))
+                sizes[layer.file] = size
+            }
+            let layout = LogoOverlayLayout.compute(
+                canvasWidth: outW, canvasHeight: outH,
+                layers: valid.map { $0.layer },
+                imageSizes: sizes,
+                rightMarginPct: logo.rightMarginPct,
+                bottomMarginPct: logo.bottomMarginPct,
+                avoidRect: maskPixel)
+            guard layout.items.count == valid.count else {
+                throw ExportError.encodingFailed("logo 布局计算失败（层数不一致）")
+            }
+            logoStage = LogoOverlayStage(layers: zip(valid, layout.items).map { pair in
+                LogoOverlayStage.Layer(inputIndex: pair.0.index, rect: pair.1.rect)
+            })
+            if layout.overlapsCaptionMask {
+                MixLog.info("[Logo] 分镜 \(index) 的 logo/文字可能与字幕遮挡区相交（仅提示，不拦截）")
+            }
+        }
+
         let graph = DubSegmentGraphBuilder.build(
             mode: mode,
             startFrame: spec.startFrame, endFrame: spec.endFrame, fps: spec.fps,
@@ -532,7 +576,8 @@ actor DubExportService {
             freezePadFrames: spec.freezePadFrames,
             trailingSilence: spec.trailingSilence,
             bgmInputIndex: bgmInputIndex,
-            vocalsSource: vocalsSource)
+            vocalsSource: vocalsSource,
+            logo: logoStage)
 
         var args: [String] = ["-y", "-i", spec.videoPath]
         for input in extraInputs { args += ["-i", input] }
@@ -548,7 +593,11 @@ actor DubExportService {
         args += ["-c:v", "h264_videotoolbox", "-b:v", "\(bitrate)k", "-maxrate", "\(bitrate * 2)k",
                  "-tag:v", "avc1", "-allow_sw", "1", "-pix_fmt", "yuv420p",
                  "-c:a", "aac", "-b:a", "192k", "-ar", "44100", "-ac", "2",
-                 "-movflags", "+faststart", outputPath]
+                 "-movflags", "+faststart"]
+        if stripMetadata {
+            args += ["-map_metadata", "-1", "-map_chapters", "-1"]
+        }
+        args += [outputPath]
 
         _ = try await ffmpeg.run(arguments: args, totalDuration: nil, onProgress: nil)
     }
@@ -557,7 +606,8 @@ actor DubExportService {
 
     /// 把选中的 BGM 铺到纯口播成片上：视频流直拷（不重编码），音频 = 口播 + BGM 混音。
     /// BGM 短于成片由 -stream_loop 循环补齐，长于成片由滤镜 atrim 截断，结尾 1 秒淡出。
-    private func mixGlobalBGM(voicedPath: String, bgm: GlobalBGMSpec, outputPath: String) async throws {
+    private func mixGlobalBGM(voicedPath: String, bgm: GlobalBGMSpec,
+                              outputPath: String, stripMetadata: Bool = false) async throws {
         guard FileManager.default.fileExists(atPath: bgm.audioPath) else {
             throw ExportError.encodingFailed(
                 "背景音乐文件不存在：\((bgm.audioPath as NSString).lastPathComponent)，请回「BGM 库」检查")
@@ -567,13 +617,17 @@ actor DubExportService {
             throw ExportError.encodingFailed("无法读取成片时长，背景音乐铺底失败")
         }
         let graph = GlobalBGMMixGraphBuilder.filterComplex(pieceDuration: duration, bgmVolume: bgm.volume)
-        let args = ["-y", "-i", voicedPath,
+        var args = ["-y", "-i", voicedPath,
                     "-stream_loop", "-1", "-i", bgm.audioPath,
                     "-filter_complex", graph,
                     "-map", "0:v", "-map", "[aout]",
                     "-c:v", "copy",
                     "-c:a", "aac", "-b:a", "192k", "-ar", "44100", "-ac", "2",
-                    "-movflags", "+faststart", outputPath]
+                    "-movflags", "+faststart"]
+        if stripMetadata {
+            args += ["-map_metadata", "-1", "-map_chapters", "-1"]
+        }
+        args += [outputPath]
         _ = try await ffmpeg.run(arguments: args, totalDuration: nil, onProgress: nil)
     }
 
@@ -586,15 +640,20 @@ actor DubExportService {
 
     // MARK: - 阶段二拼接
 
-    private func concatCopy(paths: [String], workDir: URL, outputPath: String) async throws {
+    private func concatCopy(paths: [String], workDir: URL,
+                            outputPath: String, stripMetadata: Bool = false) async throws {
         let listURL = workDir.appendingPathComponent("list.txt")
         let body = paths.map { "file '\($0)'" }.joined(separator: "\n") + "\n"
         try body.write(to: listURL, atomically: true, encoding: .utf8)
 
         // 阶段二a：concat 无损拼接到临时文件
         let joined = workDir.appendingPathComponent("joined.mp4")
-        let concatArgs = ["-y", "-f", "concat", "-safe", "0", "-i", listURL.path,
-                          "-c", "copy", "-movflags", "+faststart", joined.path]
+        var concatArgs = ["-y", "-f", "concat", "-safe", "0", "-i", listURL.path,
+                          "-c", "copy", "-movflags", "+faststart"]
+        if stripMetadata {
+            concatArgs += ["-map_metadata", "-1", "-map_chapters", "-1"]
+        }
+        concatArgs += [joined.path]
         _ = try await ffmpeg.run(arguments: concatArgs, totalDuration: nil, onProgress: nil)
 
         // 阶段二b：concat 会把首段 AAC 编码 priming 延迟转成视频起始时间偏移（start_time≈0.023s）。
@@ -602,9 +661,13 @@ actor DubExportService {
         // 在 t=0 直接报 -11832 取不到帧）。这里把视频起始时间整体平移回 0，封面即为真实首帧。
         let startTime = await probeVideoStartTime(joined.path)
         if startTime > 0.001 {
-            let fixArgs = ["-y", "-i", joined.path, "-c", "copy",
+            var fixArgs = ["-y", "-i", joined.path, "-c", "copy",
                            "-output_ts_offset", String(format: "%.6f", -startTime),
-                           "-movflags", "+faststart", outputPath]
+                           "-movflags", "+faststart"]
+            if stripMetadata {
+                fixArgs += ["-map_metadata", "-1", "-map_chapters", "-1"]
+            }
+            fixArgs += [outputPath]
             _ = try await ffmpeg.run(arguments: fixArgs, totalDuration: nil, onProgress: nil)
             try? FileManager.default.removeItem(at: joined)
         } else {
@@ -619,6 +682,40 @@ actor DubExportService {
             "-v", "error", "-select_streams", "v:0",
             "-show_entries", "stream=start_time", "-of", "csv=p=0", path])
         return Double((out ?? "").trimmingCharacters(in: .whitespacesAndNewlines)) ?? 0
+    }
+
+    /// 批量级 HDR 预检的路径收集：放在服务层，避免视图层裸读 SwiftData 关系。
+    @MainActor
+    static func uniqueSourcePaths(for schemes: [MixScheme]) -> [String] {
+        var seen = Set<String>()
+        var out: [String] = []
+        for scheme in schemes {
+            for ss in scheme.orderedSegments {
+                guard let path = ss.segment?.effectivePicture.videoPath, !path.isEmpty,
+                      seen.insert(path).inserted else { continue }
+                out.append(path)
+            }
+        }
+        return out.sorted()
+    }
+
+    /// 批量级 HDR 前置：对去重后的源路径各探一次；返回第一条 PQ/HLG 路径。
+    /// 探测放在批量入口一次做完，避免每个 job/分镜重复 ffprobe。
+    static func firstHDRSource(paths: [String]) async -> String? {
+        let unique = Array(Set(paths)).sorted()
+        guard !unique.isEmpty else { return nil }
+        let runner = FFmpegRunner()
+        for path in unique {
+            let out = try? await runner.runProbe(arguments: [
+                "-v", "error", "-select_streams", "v:0",
+                "-show_entries", "stream=color_transfer",
+                "-of", "default=noprint_wrappers=1:nokey=1", path])
+            let transfer = (out ?? "").trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            if transfer == "smpte2084" || transfer == "arib-std-b67" {
+                return path
+            }
+        }
+        return nil
     }
 
     // MARK: - 分辨率

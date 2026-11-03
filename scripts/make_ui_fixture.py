@@ -12,7 +12,7 @@ MCP 没有"选中项目"这个工具。⇒ 用 **启动参数域** 注入该键�
 `-lastSelectedProjectID <uuid>` 走 NSUserDefaults argument domain。
 
 ⚠️ 但参数域**不是进程级的**（2026-10-04 实测推翻本脚本原假设）：App 在
-`ProjectViewModel.swift:18` 的 `selectedProject` didSet 里会把该键**写回标准域**，
+`ProjectViewModel.swift:10` 的 `selectedProject` didSet 里会把该键**写回标准域**，
 而 Debug 与 Release 共用 bundle id `com.suncut.app` ⇒ 一次带参启动就会污染用户真实偏好。
 所以任何用这套启动参数的会话，必须用 `--prefs-guard` 前后包夹（快照 + 还原）。
 

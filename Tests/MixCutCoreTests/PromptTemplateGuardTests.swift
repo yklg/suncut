@@ -58,13 +58,28 @@ func pb2_noFirstNCharsRequirement() throws {
             "改写模板不得要求「前 N 个字」逐字比对——实测会让推理模型反复重算")
 }
 
-@Test("PB-3 改写模板保留「不得更短」的定性要求（不能因去数字而丢掉对齐依据）")
+@Test("PB-3 改写模板必须同时保留「不得更短」与「不得更长」两头定性约束")
 func pb3_keepsQualitativeLengthRequirement() throws {
     let tpl = try promptTemplate("script_rewrite_prompt.md")
     #expect(tpl.contains("不得更短") || tpl.contains("略长不略短"),
-            "放宽字数 ≠ 取消长度要求：短于原文会让 TTS 配音末尾露空挡（见AlignmentPlan）")
+            "放宽字数 ≠ 取消长度要求：固定语速下偏短仍会留末尾静音（AudioAligner.fixedRatePlan 只补静音、不再放慢去藏）")
+    // A 块新增的下界一侧：偏长过去被 atempo 无封顶压缩吸收，现在一律被 DubLengthGate 拒收
+    // ⇒ 模板必须把"更长会被拒"告诉模型，否则它照旧凑字、整条改写白做（还白花一次 TTS 钱）。
+    #expect(tpl.contains("不得更长") || tpl.contains("偏长"),
+            "模板未提「不得更长/偏长会被拒」：固定语速口径下超字是硬拒，不是变速能救的")
     #expect(tpl.contains("自动校验") || tpl.contains("会自动重试"),
             "应告知模型字数由本机校验，让它专注写文案而非数字数")
+}
+
+@Test("PB-3b 反向对照：把「不得更长」那头摘掉，PB-3 的新腿必须变红")
+func pb3b_upperBoundLegIsNotAlwaysGreen() throws {
+    // 与 PB-3 同一套判据，喂一棵"只留下界"的假模板 ⇒ 必须判红，
+    // 否则那条新断言是恒绿（本仓反复踩过：守卫看着绿、实际一次检查都没做）。
+    let oneSided = "2. **长度与原台词相当，且不得更短**：宁可略长不略短。"
+    let hasUpperBound = oneSided.contains("不得更长") || oneSided.contains("偏长")
+    #expect(!hasUpperBound, "反向对照失效：一棵没写上界的模板竟也算通过 ⇒ PB-3 的新腿是假绿")
+    // 再确认它仍满足"有下界"那一腿 —— 证明红是红在上界，不是整条判据崩了
+    #expect(oneSided.contains("不得更短"), "反向对照样本本身不成立：连下界都没有")
 }
 
 @Test("PB-4 反向对照：守卫本身非恒绿（把区间塞回去必须变红）")

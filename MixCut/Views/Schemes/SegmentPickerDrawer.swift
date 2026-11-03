@@ -124,7 +124,8 @@ struct SegmentPickerDrawer: View {
         let projects = (try? modelContext.fetch(FetchDescriptor<Project>())) ?? []
         let projectVideos = (try? modelContext.fetch(FetchDescriptor<ProjectVideo>())) ?? []
         let videos = (try? modelContext.fetch(FetchDescriptor<Video>())) ?? []
-        let segments = (try? modelContext.fetch(FetchDescriptor<Segment>())) ?? []
+        let segments = ((try? modelContext.fetch(FetchDescriptor<Segment>())) ?? [])
+            .filter { !$0.mixInternalWholeClip }   // 决议 K9：混剪补建的内部段不在抽屉里挑
 
         // ① 先从**活 fetch 结果**统一构建解边索引（persistentModelID → 业务 UUID）。
         var index = LiveModelIDIndex()

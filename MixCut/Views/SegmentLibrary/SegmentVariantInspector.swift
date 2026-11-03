@@ -196,7 +196,7 @@ struct SegmentVariantInspector<PropertiesContent: View>: View {
         // 该视频内已有其它分镜的克隆窗口 ⇒ 本分镜很可能复用（`ensureClonedVoice` 会判定），
         // 先执行；真的需要新注册时，VM 侧会照常弹计费确认。
         if let vid = segment.video,
-           vid.segments.contains(where: { $0.id != segment.id
+           vid.displayableSegments.contains(where: { $0.id != segment.id
                && ($0.clonedVoiceId ?? "").isEmpty == false
                && $0.cloneWindowEndFrame > $0.cloneWindowStartFrame }) {
             proceedSingleRewrite()
@@ -542,7 +542,10 @@ struct SegmentVariantInspector<PropertiesContent: View>: View {
     }
 
     /// 生成后时长警告（只有两种）：① 字数比原片多很多→红字；② 配音确实短于画面（留白）→橙字。
-    /// 台词多但仍被 atempo 加速塞进画面属正常，不报「超时」。
+    ///
+    /// ⚠️ ①那句「已大幅加速」只对**旧口径**成立。新口径（`.fixedRate`）下配音绝不变速，
+    /// 能落库就说明它没超画面（超字在 `DubLengthGate` 就被拒了），此时字多只是字多 ——
+    /// 继续报"已大幅加速"就是一句谎话，故按口径分文案。
     @ViewBuilder
     private func variantAudioWarning(_ t: Int) -> some View {
         if let d = displayDub(t),
@@ -550,8 +553,14 @@ struct SegmentVariantInspector<PropertiesContent: View>: View {
             let target = segment.duration
             let count = d.rewrittenText.count
             if isTooMany(count) {
-                warnLabel("台词比原片(\(origCharCount)字)多 \(count - origCharCount) 字，配音已大幅加速，建议精简",
-                          .red, "exclamationmark.triangle.fill")
+                if d.alignmentPolicy == .fixedRate {
+                    warnLabel("台词比原片(\(origCharCount)字)多 \(count - origCharCount) 字；"
+                            + "已按固定语速合成、未加速凑画面，若想让画面更从容可精简",
+                              .orange, "exclamationmark.circle.fill")
+                } else {
+                    warnLabel("台词比原片(\(origCharCount)字)多 \(count - origCharCount) 字，配音已大幅加速，建议精简",
+                              .red, "exclamationmark.triangle.fill")
+                }
             } else if target - d.audioDuration > 0.5 {
                 warnLabel("配音比画面短 \(f(target - d.audioDuration))s，末尾留白，建议加字",
                           .orange, "exclamationmark.circle.fill")

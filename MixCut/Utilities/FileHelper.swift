@@ -187,6 +187,16 @@ enum FileHelper {
         return url
     }
 
+    // MARK: - Logo 库（全局共享）
+
+    /// Logo 库目录：AppSupport/<Brand>/LogoLibrary/。
+    /// 文件名是裁边后 PNG 的内容哈希；Project 只存引用，跨项目复用/去重。
+    static var logoLibraryDirectory: URL {
+        let url = appSupportDirectory.appendingPathComponent("LogoLibrary", isDirectory: true)
+        ensureDirectory(at: url)
+        return url
+    }
+
     // MARK: - Whisper 语音模型存储
 
     /// Whisper 语音模型存储目录。

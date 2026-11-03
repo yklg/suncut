@@ -33,7 +33,7 @@ import Testing
 //   R8 分桶守恒：judgeable + excluded == records.count，一条记录不许同时进两个桶。
 //
 // 非空洞性约定：每条 degraded 都配一条 ⚠️ 反向对照（同一批证据、门不该咬时必须咬出结论），
-// 与 OrphanFileFinderTests.swift:44 的 `safeOrphan_stillReclaimsWhenReferenceSetIsTrustworthy` 同形。
+// 与 OrphanFileFinderTests.swift:45 的 `safeOrphan_stillReclaimsWhenReferenceSetIsTrustworthy` 同形。
 // ============================================================================
 
 // MARK: - 夹具

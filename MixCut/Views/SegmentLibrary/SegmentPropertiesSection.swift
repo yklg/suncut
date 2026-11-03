@@ -459,7 +459,7 @@ enum SegmentBatchActions {
     static func applyFontSizeToAllSegments(of source: Segment, in context: ModelContext) {
         guard let video = source.video else { return }
         let ratio = SubtitleFontSize.clamp(source.subtitleFontRatio)
-        let targets = video.segments.filter { $0.id != source.id }
+        let targets = video.displayableSegments.filter { $0.id != source.id }
         guard !targets.isEmpty else {
             ToastCenter.shared.show("这个视频只有一个分镜，无需应用",
                                     icon: "info.circle.fill", style: .info)
@@ -494,7 +494,7 @@ enum SegmentBatchActions {
         let style = source.maskStyle
         let hasSub = source.hasHardSubtitle
 
-        let targets = video.segments.filter { $0.id != source.id }
+        let targets = video.displayableSegments.filter { $0.id != source.id }
         guard !targets.isEmpty else {
             ToastCenter.shared.show("这个视频只有一个分镜，无需应用",
                                     icon: "info.circle.fill", style: .info)

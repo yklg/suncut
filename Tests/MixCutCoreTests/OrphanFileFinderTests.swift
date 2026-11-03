@@ -118,7 +118,8 @@ func symlinkedSpellingVariants() {
 }
 
 // MARK: - TC-OF-13 / 14：不变量与门的形状（固定夹具，故意不做随机 property 版）
-// 复制 SplitMix64 等于制造第二份真源（WhisperModelCatalogTests.swift:38 记着这条裁定），
+// 随机源要用的话直接拿 Core 的 public `SplitMix64`（`Sources/MixCutCore/FolderMixPicker.swift`），
+// 自己复制一份等于制造第二份真源（WhisperModelCatalogTests.swift:38 记着这条裁定），
 // 所以这里用「按下标轮转四种形状」的确定性夹具 —— 同样可复现，且期望值能手算。
 
 /// 四种形状轮转：真孤儿 / 两边同写法 / 只有大小写差 / 只有末尾斜杠差

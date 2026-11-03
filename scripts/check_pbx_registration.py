@@ -19,10 +19,12 @@
 判据：新增文件必须满足 ① ID 唯一 ② 四段齐全 ③ path 与所在组匹配。
 """
 import io
+import os
 import re
 import sys
 
 PBX = "/Users/yilukaige/mixed_cut-main/MixCut.xcodeproj/project.pbxproj"
+ROOT = os.path.dirname(os.path.dirname(PBX))
 # 本轮新增的两个文件（作为回归样本；后续新增文件请追加到EXPECTED）
 EXPECTED = ["RawAudioCacheStore.swift", "RawAudioCache.swift", "SegmentCommitter.swift",
              "SegmentationPlanner.swift", "SegmentationPlanSettings.swift",
@@ -36,7 +38,23 @@ EXPECTED = ["RawAudioCacheStore.swift", "RawAudioCache.swift", "SegmentCommitter
              "MissingMaterialCopy.swift", "MaterialAvailabilityStore.swift",
              # 批 5（2026-10-19）：导出画布尺寸的唯一真源。它一旦被踢出编译单元，
              # 报 cannot find type 的会是 ExportService / DubExportService，而不是它自己。
-             "DeliverySpec.swift"]
+             "DeliverySpec.swift",
+             # 文件夹混剪 Step 1（2026-10-20）：三颗 Core 纯逻辑。被踢出编译单元时
+             # 报 cannot find type 的是 ImportView / MixCutApp / ImportViewModel（它们已改成调用方），
+             # 而不是这三颗自己 —— 正是本脚本要防的那种"报错点离根因隔一层"。
+             "FolderMixScanner.swift", "FolderMixPicker.swift", "DiskSpaceBudget.swift",
+             # Step 2/3（2026-10-20）：首跑清段判据 + 混剪唯一 IO 面。后者在 MixCut/Services/Import/
+             # 子目录里（App 侧按功能分组，登记沿模板走组内裸名），漏登记时 ImportViewModel 报
+             # cannot find 'MaterialFolderScanner' —— 报错点隔了一层。
+             "WholeClipShape.swift", "MaterialFolderScanner.swift",
+             # Step 5（2026-10-20）：混剪的编排层与页面。两颗都是 **App 侧文件**（走组内裸名 path），
+             # 且 View 只能落在 `MixCut/Views/Import/` —— register_pbx_file.py 只会"沿模板插入同一个组"，
+             # 而 path 是相对组路径解析的：新建 `Views/FolderMix/` 目录会让 Xcode 去旧组路径找文件，
+             # 症状是 "Build input file cannot be found"（本仓为登记问题连红过三次，见脚本 docstring）。
+             "FolderMixViewModel.swift", "FolderMixView.swift",
+             # 计划 2026-10-22 笔 J2：App 腿第一颗混剪判据（真实往返）。它被踢出编译单元时
+             # 症状不是"少一条测试"，而是那条接缝重新变成没人跑过 —— 正是这次缺陷的原形。
+             "FolderMixIngestJoinTests.swift"]
 
 
 def main() -> int:
@@ -101,6 +119,28 @@ def main() -> int:
                 print("WARN %s 的 path 带目录（%s）—— 确认是否与所在组 path 重复拼接"
                       % (name, path_val))
         print("PASS %s 四段齐全且 path 正确（%s）" % (name, path_val))
+
+    # —— 判据 ⑤：全量扫描面 —— 把「记得往 EXPECTED 里追加」变成机械闸 ——
+    # EXPECTED 是手工名册：新增 Core 文件时忘了追加，判据 ②③④ 就永远看不到那颗漏登记的，
+    # 而漏登记的症状是**别的文件**报 cannot find type（沙盒 typecheck 按文件系统扫，看不出来）。
+    # 这里直接以文件系统为真源逐颗查登记段数，名册只当"重点样本"留着。
+    core_dir = os.path.join(ROOT, "Sources", "MixCutCore")
+    core_files = sorted(n for n in os.listdir(core_dir) if n.endswith(".swift"))
+    # App 测试目录同一条道理：漏登记不会让 xcodebuild 报"这个文件没进 target"，
+    # 只会让那条判据**从未跑过**（读测试报告的人看见的是"全绿"）。
+    app_test_dir = os.path.join(ROOT, "MixCutAppTests")
+    core_files += sorted(n for n in os.listdir(app_test_dir) if n.endswith(".swift"))
+    # 整词计数：`RawAudioCache.swift` 不得被 `RawAudioCacheStore.swift` 的出现次数冒充
+    thin = [(n, len(re.findall(r"(?<![A-Za-z0-9_])%s" % re.escape(n), text)))
+            for n in core_files]
+    thin = [(n, c) for n, c in thin if c < 4]
+    if thin:
+        print("FAIL Core 目录有 %d 颗文件登记不足 4 段（漏登记 = 只有真机 xcodebuild 才红）:" % len(thin))
+        for n, c in thin:
+            print("     %s 出现 %d 次" % (n, c))
+        fail = 1
+    else:
+        print("PASS Core + App 测试全量登记：%d 颗 .swift 全部 ≥4 段（不依赖手工名册）" % len(core_files))
 
     return fail
 

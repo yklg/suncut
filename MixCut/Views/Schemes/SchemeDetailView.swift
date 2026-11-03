@@ -183,6 +183,22 @@ struct SchemeDetailView: View {
                     .foregroundStyle(.secondary)
             }
 
+            // Step 7 收口之一：本会话内有分镜被真删时，方案详情头部要显式说"少了 N 段"，
+            // 而不是等用户去选素材抽屉里发现卡片变少了。
+            // 数字来自 `SchemeViewModel.prunedCountByScheme`（归属在 VM 只有一份）；
+            // 这里**不许**自己数 `scheme.schemeSegments` —— 视图层裸读模型关系正是
+            // 本案那一族 SIGTRAP 的形状（`TombstoneReadGuardTests` G08b 钉着那道门）。
+            if let dropped = viewModel.prunedCountByScheme[scheme.id], dropped > 0 {
+                HStack(spacing: DesignTokens.Spacing.tight) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .foregroundStyle(DesignTokens.Palette.Status.warning)
+                    Text("该方案有 \(dropped) 段素材已不存在，成片会少这几段（导出时也会逐条报出）")
+                        .font(DesignTokens.Typography.caption)
+                        .foregroundStyle(DesignTokens.Palette.Status.warning)
+                    Spacer()
+                }
+            }
+
             if !scheme.schemeDescription.isEmpty {
                 Text(scheme.schemeDescription)
                     .font(DesignTokens.Typography.body)

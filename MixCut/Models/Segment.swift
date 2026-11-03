@@ -137,6 +137,25 @@ final class Segment: Identifiable {
 /// 是否"保留原声"（明星出镜镜头 = true，不可重配）
     var isVoiceLocked: Bool = false
 
+    // MARK: - 混剪内部整片段（计划 2026-10-22 第三轮 笔 K2，决议 K2 甲-隐）
+
+    /// 这条段是不是**文件夹混剪为"整片直拼"补建出来的内部段**。
+    ///
+    /// 为什么需要这颗字段：混剪要的是"这一条视频 + 它的整片时长"，而建方案的入口只吃 `Segment`
+    /// ⇒ 对当年按分镜导入的素材（75% 的主力），库里没有一条覆盖全片的段，混剪只能整批判档 B。
+    /// 补建一条是最小改法，但那条**不是用户的创作物**，不该出现在他手工维护的分镜素材库里，
+    /// 也不该参与与混剪无关的 AI 方案候选池 —— 这颗字段就是那条界线。
+    ///
+    /// ⚠ 它回答的是「这条段是谁建的、能不能算进用户手工分镜」，**不回答素材来源**
+    ///   （自拍/搬运那颗是 `sourceRaw` + `SegmentSource`，不许复用：两个问题一个字段 = 两个答案会漂）。
+    /// ⚠ 带默认值的存储字段 ⇒ SwiftData **轻量兼容**（`classifySchemaChange` 走 additionsOnly，
+    ///   门只做"改前备份 + 加列"，`AppSchemaV1` 与 stages 都不动 —— 判据源 `CLAUDE.md:476`）。
+    ///   回退不是"装回旧版 App"（sidecar 指纹是单调棘轮，`CLAUDE.md:486` 已实测证伪），
+    ///   而是把 `*.backup` 那四件原样放回。
+    /// ⚠ 可见性口径只走 `Video.displayableSegments` / `Project.displayableSegments` 那一颗出口
+    ///   （决议 K9），**不许在界面各写一遍 filter**；导出/删除咽喉/启动修复必须**含**它（门 T-33 反腿）。
+    var mixInternalWholeClip: Bool = false
+
     // MARK: - 段级克隆音色（M2：按分镜时间范围克隆，而非按整段视频）
 
     /// 本分镜的克隆音色 id（qwen-vc）。nil = 未克隆。

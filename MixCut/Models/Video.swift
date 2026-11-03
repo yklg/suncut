@@ -24,6 +24,16 @@ struct ASRSentence: Codable, Hashable {
     var text: String
     let start: Double
     let end: Double
+
+    // ── 空镜识别的证据（C 块）：随句子一起持久化，供"为什么这段没打标"可追溯、可翻案 ──
+    // 装的是**实测真在 JSON 里**的那一层：whisper.cpp 的逐 token `p`（均值/下界/低置信占比/token 数），
+    // 外加导入路径能派生出的有声占比。三颗段级 `no_speech_prob/avg_logprob/compression_ratio`
+    // 是 Python openai-whisper 的形态、whisper.cpp 根本不吐 —— 2026-10-26 真跑包内二进制取证，
+    // 段级键名册只有 ['offsets','text','timestamps','tokens']，别再往这儿加那三颗。
+    // ⚠️ **必须是 Optional**：`asrSentencesData` 是已落盘的 JSON，
+    // 给已落盘的 Codable 结构加非 Optional 字段即使带默认值也会 keyNotFound（本仓实测）。
+    // 缺键 = 旧数据没这项证据，与"证据说是 0"是两回事，不许合并。
+    var emptyLensSignals: EmptyLensSignals? = nil
 }
 
 @Model
@@ -78,7 +88,7 @@ final class Video: Identifiable {
     @Transient private var asrSentencesCache = DecodedCache<[ASRSentence]>()
     @Transient private var selectedVoiceIdsCache = DecodedCache<[String]>()
 
-    /// 配音全局语速（CosyVoice rate，基准 1.0，范围 0.7~1.3）。SwiftData 加字段，默认 1.0。
+    /// 配音语速（CosyVoice rate）。值域与 clamp 的唯一真源是 `DubRateLimits`，写入者是 `DubSettingsBar` 的语速 Stepper。SwiftData 加字段，默认 1.0。
     var dubSpeechRate: Double = 1.0
 
     /// 原声克隆音色 id（qwen3-tts-vc）。nil = 尚未克隆。SwiftData 加字段。
@@ -133,6 +143,21 @@ final class Video: Identifiable {
 
     @Relationship(deleteRule: .cascade, inverse: \Segment.video)
     var segments: [Segment] = []
+
+    // MARK: - 可显示段（决议 K9 的那颗唯一出口，逐视频颗粒）
+
+    /// 用户看得见的那批分镜 = 全部段去掉混剪补建的内部整片段。
+    ///
+    /// 为什么要收成一颗：这条界线以前散在十几处各写一遍就是本仓最忌的"第二个真源"；
+    /// 现在界面与生成候选池只许调这两颗，门 `T-33` 正反两腿盯着"该挂的挂了、不该挂的没挂"。
+    /// ⚠ 这两颗是**计算属性**（每次访问走一遍关系数组）⇒ 逐卡读数请用 `displayableSegmentCount`，
+    ///   绝不要在 `ForEach` 里逐卡调上面那颗（计划第十节 E2 的教训：概览页从"一次读全"退化成每卡全遍历）。
+    /// ⚠ 这里那次 `segments` 读取是**墓碑读族的登记点**（E3）：它必须留在 `TombstoneReadGuardTests`
+    ///   的基线名册里，不许被当成豁免 —— 全仓读该关系最集中的一处就是它。
+    var displayableSegments: [Segment] { segments.filter { !$0.mixInternalWholeClip } }
+
+    /// 可显示段的条数（逐卡/逐视频读数的唯一形态）。
+    var displayableSegmentCount: Int { segments.reduce(0) { $0 + ($1.mixInternalWholeClip ? 0 : 1) } }
 
     var createdAt: Date
 

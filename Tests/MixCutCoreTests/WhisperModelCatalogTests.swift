@@ -35,8 +35,9 @@ import Testing
 /// - R-d 半截文件只出 `truncated` 提示；未识别文件名只出 `tierUnknown`，且 `selectedTier == nil` 但 `usable == true`
 ///
 /// 非空洞性对应：TC-65 是正向对照（唯一一颗干净模型必须 `issues` 为空）；TC-72 是穷举不变量
-/// （**故意不做随机 property 版**：本域输入空间可枚举，且 `SplitMix64` 是 `ProjectVideoDedupTests.swift` 里的
-/// private 夹具，复制它等于制造第二份真源）。
+/// （**故意不做随机 property 版**：本域输入空间可枚举，且 `SplitMix64` 现已收编为
+/// `Sources/MixCutCore/FolderMixPicker.swift` 的 public 定义（2026-10-20，从 `ProjectVideoDedupTests`
+/// 那份 private 副本迁来）—— 要用就直连，另抄一份等于制造第二份真源）。
 
 @Suite("WhisperModelCatalog：档位识别、四层就绪与根优先级")
 struct WhisperModelCatalogTests {
