@@ -828,6 +828,29 @@ private extension String {
                 "计数腿抓不到三处调用 ⇒ 它是瞎的")
     }
 
+    @Test("T-34 混剪补建的载体必须停在 .imported —— 母体导入不许被静默判成「已分析」（计划 P-2）")
+    func mixCarrierStatusNeverCompleted() {
+        // P-2 的触发链：若混剪入库把 Video.status 收成 `.completed`，同一文件日后走母体导入时
+        // `needsAnalysis = status != .completed || segments.isEmpty` 两个条件同时为假
+        // ⇒ 阶段 2（镜头检测 + ASR + AI）整段跳过，用户拿到一条覆盖整片的粗分镜且无提示。
+        // 本门钉住：入库真身只许写 `.imported`，且 needsAnalysis 的表达式必须保留对 status 的判断。
+        let service = FolderMixIngestScan.scan(
+            folderMixLoad("MixCut/Services/Import/ClipIngestService.swift")).text
+        #expect(service.contains("video.status = .imported"),
+                "新建支不再写 .imported ⇒ 母体链与混剪的边界失去可区分性")
+        #expect(!service.contains("video.status = .completed"),
+                "混剪入库把载体收成 .completed ⇒ P-2 跨通路污染立即成立")
+        #expect(service.contains("existingVideo.status != .completed"),
+                "needsAnalysis 不再看 status ⇒ 已入库的载体可能被静默判成「无需分析」")
+        #expect(service.contains("existingVideo.segments.isEmpty"),
+                "needsAnalysis 不再看段数 ⇒ 无段载体不会触发分析")
+
+        // 正对照：注入 P-2 的写法必须被同一颗字符串判据认出来（否则四条只是「文件里恰好没写」）。
+        let dirty = FolderMixIngestScan.scan("video.status = .completed\nvideo.status = .imported").text
+        #expect(dirty.contains("video.status = .completed"),
+                "扫描器读不出 `.completed` ⇒ 上面那条反例腿是瞎的")
+    }
+
     @Test("T-32d「查不了」那一档必须真的整批停手：degraded 分支里要有 errorMessage 与 return")
     func degradedBranchAbortsTheWholeBatch() {
         // 拦什么：有人把 degraded 退成"当没缺处理"（放行）或退成"全标缺失"—— 两种都是伪装。
@@ -897,10 +920,12 @@ private extension String {
             .map { String($0.prefix(220)) }.allSatisfy { $0.contains("missingIDs:") },
                  "注入的漏传写法抓不到 ⇒ 腿 C 是恒真的")
     }
-    @Test("T-33 可见性名册：19 处都挂上唯一出口，8 组豁免面一处都没偷挂过滤")
+    @Test("T-33 可见性名册：18 处都挂上唯一出口，8 组豁免面一处都没偷挂过滤")
     func visibilityRosterIsPaired() {
         // 决议 K9（甲-隐 的可见性收口）。名册口径：`grep -rn "\\.segments" MixCut` 的全部命中
-        // = 29 颗文件 / 120 处，逐颗表态 ⇒ 19 处挂出口、其余按四类豁免（计划 K2-6 / 第十节）。
+        // = 29 颗文件 / 120 处，逐颗表态 ⇒ 18 处挂出口、其余按四类豁免（计划 K2-6 / 第十节）。
+        // 〔2026-10-23 V3 改口〕19 → 18：概览页那张卡片不再逐卡读 `displayableSegmentCount`，
+        //   取数点搬进 `ProjectViewModel.refreshOverviewSnapshot`（下面那条 VM 名册已经是它）。
         // 拦什么：少挂一处 = 用户看不见的段出现在那一屏；多挂一处 = 把功能自己打死或漏删数据。
         // 拦不住什么：把同一处判据抄进别的文件 —— 名册按文件计数，同文件内的重复写法要人审。
         let mustHaveExit: [(file: String, needle: String, note: String)] = [
@@ -908,8 +933,7 @@ private extension String {
             ("MixCut/ViewModels/SegmentLibraryViewModel.swift", "!$0.mixInternalWholeClip", "撤销那两条绕过装载的 append（出-17/18）"),
             ("MixCut/Views/SegmentLibrary/SegmentPropertiesSection.swift", "video.displayableSegments", "批量字号/遮罩作用域（出-2/3）"),
             ("MixCut/Views/SegmentLibrary/SegmentVariantInspector.swift", "vid.displayableSegments", "克隆复用来源（出-4）"),
-            ("MixCut/Views/Overview/ProjectOverviewView.swift", "displayableSegmentCount", "每卡分镜数（出-5）"),
-            ("MixCut/ViewModels/ProjectViewModel.swift", "displayableSegmentCount", "概览项目级计数（出-6）"),
+            ("MixCut/ViewModels/ProjectViewModel.swift", "displayableSegmentCount", "概览一次读全（原出-5/6 收进这一点）"),
             ("MixCut/Views/Import/ImportView.swift", "video.displayableSegments", "导入页标签墙（出-7/8）"),
             ("MixCut/Views/Import/ImportView.swift", "displayableSegments.isEmpty", "重试分析门禁（出-19，实施时补）"),
             ("MixCut/Views/Schemes/SchemeListView.swift", "displayableSegmentCount", "「N 个分镜可用」那句（出-9）"),

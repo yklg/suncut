@@ -122,6 +122,41 @@ func dedupHitBranchReturnsTheExistingRowID() async throws {
             "键→段 id 必须落在真那条整片段上，否则建方案那头会报「已经不在素材库里」")
 }
 
+@Test("P-2 母体导入不被静默判成已分析：混剪补建整片段后 status 仍 .imported，importOrLink 返回 needsAnalysis=true")
+@MainActor
+func mixCarrierStillNeedsParentAnalysis() async throws {
+    let dir = try fjScratch()
+    defer { try? FileManager.default.removeItem(at: dir) }
+    let container = try fjContainer()
+    let context = container.mainContext
+
+    let file = dir.appendingPathComponent("同款素材.mp4")
+    try fjWrite(file, 4096)
+    guard let hash = ClipIngestService.computeFileHash(path: file.path) else {
+        Issue.record("校验和算不出来 ⇒ 夹具失效"); return
+    }
+
+    let project = try fjSeeding(context, category: "卖点")
+    let existing = Video(name: "钩子A.mp4", localPath: "/nowhere/钩子A.mp4")
+    existing.contentHash = hash
+    existing.duration = 12
+    existing.status = .imported
+    context.insert(existing)
+    _ = ProjectVideo.associate(project: project, video: existing, in: context)
+    _ = SegmentCommitter().commitWholeVideo(for: existing, source: .selfShot, context: context)
+    try context.save()
+
+    let (video, needsAnalysis) = try await ClipIngestService.importOrLink(
+        url: file, to: project, source: .selfShot, context: context,
+        hooks: ClipIngestHooks(), ffmpeg: FFmpegRunner())
+
+    #expect(video.id == existing.id)
+    #expect(video.status == .imported,
+            "混剪入库的载体必须停在 .imported ⇒ 母体链才会重新分析（P-2）")
+    #expect(needsAnalysis,
+            "已有整片段不代表母体链分析过 ⇒ needsAnalysis 必须为 true，否则阶段 2 被静默跳过")
+}
+
 @Test("TC-J3 新建整片段支：从没导入过的文件 ⇒ 拷盘、建段、交回、join 命中一气过")
 @MainActor
 func freshFileGoesThroughCopyCommitAndResolves() async throws {

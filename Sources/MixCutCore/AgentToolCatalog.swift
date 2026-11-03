@@ -180,8 +180,8 @@ public enum AgentToolCatalog {
             annotationsJSON: #"{"readOnlyHint":false,"destructiveHint":false}"#),
         MCPToolDefinition(
             name: "export_segments",
-            description: "批量导出分镜片段为独立 mp4 到指定目录（命名规则与 UI 批量导出一致）。返回 job_id 轮询",
-            inputSchemaJSON: #"{"type":"object","properties":{"project_id":{"type":"string","description":"项目 UUID（与 video_no/segment_nos 配合使用）"},"video_no":{"type":"integer","description":"视频编号：项目内按导入顺序 1 起"},"segment_nos":{"type":"array","items":{"type":"integer"},"description":"分镜编号数组：视频内按时间顺序 1 起"},"segment_ids":{"type":"array","items":{"type":"string"},"description":"分镜 UUID 数组（与编号方式二选一）"},"output_dir":{"type":"string","description":"输出目录绝对路径，必须已存在且可写"}},"required":["output_dir"]}"#,
+            description: "批量导出分镜片段为独立 mp4 到指定目录（按源片尺寸切、不缩放；命名规则与 UI 批量导出一致）。返回 job_id 轮询",
+            inputSchemaJSON: #"{"type":"object","properties":{"project_id":{"type":"string","description":"项目 UUID（与 video_no/segment_nos 配合使用）"},"video_no":{"type":"integer","description":"视频编号：项目内按导入顺序 1 起"},"segment_nos":{"type":"array","items":{"type":"integer"},"description":"分镜编号数组：视频内按时间顺序 1 起"},"segment_ids":{"type":"array","items":{"type":"string"},"description":"分镜 UUID 数组（与编号方式二选一）"},"output_dir":{"type":"string","description":"输出目录绝对路径，必须已存在且可写"},"delivery_target":{"type":"string","enum":["qianchuanVertical","unrestricted"],"description":"交付目标，省略＝qianchuanVertical（巨量千川·竖屏投放）。它决定用哪张平台证据表闸这次导出；传未知值直接报错，不会静默退回缺省。unrestricted＝不限（仅本地留档，不承诺可投放）"}},"required":["output_dir"]}"#,
             annotationsJSON: #"{"readOnlyHint":false,"destructiveHint":false}"#),
     ]
 }

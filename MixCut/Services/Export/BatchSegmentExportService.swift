@@ -52,11 +52,14 @@ actor BatchSegmentExportService {
     /// - Parameters:
     ///   - items: 待导出的分镜列表
     ///   - outputDirectory: 输出目录（绝对路径）
+    ///   - spec: 本次导出的交付口径。**必填**：MCP 的 `export_segments` 与整方案导出同规，
+    ///     缺省由工具入口解析成 `qianchuanVertical`，不许在服务里再藏一份默认值。
     ///   - onProgress: 进度回调（@MainActor，回主线程刷 UI）
     /// - Returns: (成功数, 失败列表)
     func exportAll(
         items: [BatchExportItem],
         outputDirectory: URL,
+        spec: DeliverySpec,
         onProgress: @Sendable @MainActor (SegmentBatchExportProgress) -> Void
     ) async -> (succeeded: Int, failed: [(BatchExportItem, String)]) {
         var succeeded = 0
@@ -84,6 +87,21 @@ actor BatchSegmentExportService {
             )
 
             do {
+                // 切前两条闸：宽度/比例/分辨率区间 + 时长区间。
+                // `cutSegment` 不带 scale ⇒ 产物尺寸就是源片尺寸；这条腿只能「只拦不改」。
+                guard let planned = await ffmpeg.probeCanvasSize(path: item.sourcePath) else {
+                    throw ExportError.canvasUnverifiable(item.sourcePath)
+                }
+                if let blocked = DeliveryGate.rejectionMessage(for: spec,
+                                                              width: planned.width,
+                                                              height: planned.height) {
+                    throw ExportError.deliveryBlocked(blocked)
+                }
+                if let blocked = DeliveryGate.durationRejectionMessage(for: spec,
+                                                                      seconds: max(0, item.duration)) {
+                    throw ExportError.deliveryBlocked(blocked)
+                }
+
                 try await ffmpeg.cutSegment(
                     from: item.sourcePath,
                     start: item.startTime,
@@ -91,9 +109,20 @@ actor BatchSegmentExportService {
                     fps: item.fps,
                     to: outputURL.path
                 )
+
+                // 切后回读：这条腿此前零回读 —— 计划与落盘分叉时，只有拿到文件的人才会发现。
+                guard let landed = await ffmpeg.probeCanvasSize(path: outputURL.path) else {
+                    throw ExportError.canvasUnverifiable(outputURL.path)
+                }
+                if landed != planned {
+                    throw ExportError.canvasMismatch(planned: "\(planned.width)×\(planned.height)",
+                                                     actual: "\(landed.width)×\(landed.height)")
+                }
                 succeeded += 1
             } catch {
-                failed.append((item, error.localizedDescription))
+                // 失败/半成品一律删掉，不把「双击能播、内容却是半条」的文件留在用户目录。
+                try? FileManager.default.removeItem(at: outputURL)
+                failed.append((item, FriendlyError.reason(for: error)))
                 MixLog.error("批量导出失败 \(item.fileName): \(error)")
             }
 

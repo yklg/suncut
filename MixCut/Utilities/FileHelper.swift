@@ -366,7 +366,11 @@ enum FileHelper {
 
     /// 回收孤儿文件：扫描全局视频/缩略图目录，删除"数据库已无任何记录引用"的文件。
     /// referencedPaths 由调用方从所有 Video/Segment 记录收集（localPath/thumbnailPath/segment.thumbnailPath）。
-    static func collectOrphanFiles(referencedPaths: Set<String>) {
+    /// - Parameter protectedVideoDirectoryNames: 内容哈希目录名集合（来自 `Video.contentHash`
+    ///   与 `localPath` 解析）。这些目录下的文件即使路径比对没命中也不许回收 ——
+    ///   路径前缀漂移是 `TC-OF-15` 那条已知局限的根因，目录名（内容哈希）是第二条更硬的坐标。
+    static func collectOrphanFiles(referencedPaths: Set<String>,
+                                   protectedVideoDirectoryNames: Set<String> = []) {
         let fm = FileManager.default
         var onDisk: [String] = []
         // 视频：Videos/{hash}/xxx.mp4（两级）
@@ -414,7 +418,10 @@ enum FileHelper {
         }
 
         let raw = OrphanFileFinder.orphanFiles(onDisk: onDisk, referenced: referencedPaths)
-        let orphans = OrphanFileFinder.safeOrphanFiles(onDisk: onDisk, referenced: referencedPaths)
+        let orphans = OrphanFileFinder.safeOrphanFiles(
+            onDisk: onDisk,
+            referenced: referencedPaths,
+            protectedDirectoryNames: protectedVideoDirectoryNames)
         if orphans.isEmpty && !raw.isEmpty {
             // 本可以删掉整批文件，但引用集与磁盘零交集 —— 说明判断依据不可信（库退到内存模式、
             // 目录迁移尚未改写路径等）。宁可留着孤儿，也不能把在用素材删掉。
@@ -429,7 +436,11 @@ enum FileHelper {
                 try? fm.removeItem(at: hashDir)
             }
         }
-        if !orphans.isEmpty { MixLog.info("GC 回收孤儿文件 \(orphans.count) 个") }
+        if !orphans.isEmpty {
+            let protectedCount = raw.count - orphans.count
+            MixLog.info("GC 回收孤儿文件 \(orphans.count) 个"
+                        + (protectedCount > 0 ? "（内容哈希目录保护跳过 \(protectedCount) 个）" : ""))
+        }
     }
 
     /// 临时文件目录

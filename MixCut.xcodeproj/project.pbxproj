@@ -129,6 +129,7 @@
 		AF000000000000000000004A /* WholeClipShape.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF000000000000000000004B /* WholeClipShape.swift */; };
 		AF0000000000000000000048 /* DiskSpaceBudget.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF0000000000000000000049 /* DiskSpaceBudget.swift */; };
 		AF0000000000000000000046 /* FolderMixPicker.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF0000000000000000000047 /* FolderMixPicker.swift */; };
+		AF0000000000000000000062 /* OverviewProjectionPrune.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF0000000000000000000063 /* OverviewProjectionPrune.swift */; };
 		AF0000000000000000000055 /* FolderMixOrchestration.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF0000000000000000000056 /* FolderMixOrchestration.swift */; };
 		AF0000000000000000000044 /* FolderMixScanner.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF0000000000000000000045 /* FolderMixScanner.swift */; };
 		AF0000000000000000000050 /* FolderMixSessionState.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF0000000000000000000051 /* FolderMixSessionState.swift */; };
@@ -304,6 +305,7 @@ AF0000000000000000000069 /* LogoOverlayExportTests.swift in Sources */ = {isa = 
 7B0000000000000000000001 /* ExportDeliveryTargetParsingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7C0000000000000000000001 /* ExportDeliveryTargetParsingTests.swift */; };
 7D0000000000000000000001 /* ExportDurationGateTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7A0000000000000000000002 /* ExportDurationGateTests.swift */; };
 AF0000000000000000000057 /* FolderMixIngestJoinTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF0000000000000000000058 /* FolderMixIngestJoinTests.swift */; };
+AF0000000000000000000060 /* OverviewProjectionAppTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF0000000000000000000061 /* OverviewProjectionAppTests.swift */; };
 7B0000000000000000000002 /* DubFixedRateRenderLaneTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7C0000000000000000000002 /* DubFixedRateRenderLaneTests.swift */; };
 7D0000000000000000000002 /* WhisperEvidenceDecodeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7A0000000000000000000003 /* WhisperEvidenceDecodeTests.swift */; };
 /* End PBXBuildFile section */
@@ -458,6 +460,7 @@ AF0000000000000000000057 /* FolderMixIngestJoinTests.swift in Sources */ = {isa 
 		AF000000000000000000004B /* WholeClipShape.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = WholeClipShape.swift; path = Sources/MixCutCore/WholeClipShape.swift; sourceTree = "<group>"; };
 		AF0000000000000000000049 /* DiskSpaceBudget.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = DiskSpaceBudget.swift; path = Sources/MixCutCore/DiskSpaceBudget.swift; sourceTree = "<group>"; };
 		AF0000000000000000000047 /* FolderMixPicker.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = FolderMixPicker.swift; path = Sources/MixCutCore/FolderMixPicker.swift; sourceTree = "<group>"; };
+		AF0000000000000000000063 /* OverviewProjectionPrune.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = OverviewProjectionPrune.swift; path = Sources/MixCutCore/OverviewProjectionPrune.swift; sourceTree = "<group>"; };
 		AF0000000000000000000056 /* FolderMixOrchestration.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = FolderMixOrchestration.swift; path = Sources/MixCutCore/FolderMixOrchestration.swift; sourceTree = "<group>"; };
 		AF0000000000000000000045 /* FolderMixScanner.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = FolderMixScanner.swift; path = Sources/MixCutCore/FolderMixScanner.swift; sourceTree = "<group>"; };
 		AF0000000000000000000051 /* FolderMixSessionState.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = FolderMixSessionState.swift; path = Sources/MixCutCore/FolderMixSessionState.swift; sourceTree = "<group>"; };
@@ -619,6 +622,7 @@ AF000000000000000000006A /* LogoOverlayExportTests.swift */ = {isa = PBXFileRefe
 7C0000000000000000000001 /* ExportDeliveryTargetParsingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExportDeliveryTargetParsingTests.swift; sourceTree = "<group>"; };
 7A0000000000000000000002 /* ExportDurationGateTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExportDurationGateTests.swift; sourceTree = "<group>"; };
 AF0000000000000000000058 /* FolderMixIngestJoinTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FolderMixIngestJoinTests.swift; sourceTree = "<group>"; };
+AF0000000000000000000061 /* OverviewProjectionAppTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OverviewProjectionAppTests.swift; sourceTree = "<group>"; };
 7C0000000000000000000002 /* DubFixedRateRenderLaneTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DubFixedRateRenderLaneTests.swift; sourceTree = "<group>"; };
 7A0000000000000000000003 /* WhisperEvidenceDecodeTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WhisperEvidenceDecodeTests.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
@@ -816,6 +820,7 @@ AF0000000000000000000058 /* FolderMixIngestJoinTests.swift */ = {isa = PBXFileRe
 				7C0000000000000000000002 /* DubFixedRateRenderLaneTests.swift */,
 				7A0000000000000000000002 /* ExportDurationGateTests.swift */,
 				AF0000000000000000000058 /* FolderMixIngestJoinTests.swift */,
+				AF0000000000000000000061 /* OverviewProjectionAppTests.swift */,
 				7C0000000000000000000001 /* ExportDeliveryTargetParsingTests.swift */,
 				7A0000000000000000000001 /* ExportCanvasReadbackTests.swift */,
 				AF000000000000000000006C /* LogoOverlayAssetStoreTests.swift */,
@@ -863,6 +868,7 @@ AF0000000000000000000058 /* FolderMixIngestJoinTests.swift */ = {isa = PBXFileRe
 				AF000000000000000000004B /* WholeClipShape.swift */,
 				AF0000000000000000000049 /* DiskSpaceBudget.swift */,
 				AF0000000000000000000047 /* FolderMixPicker.swift */,
+				AF0000000000000000000063 /* OverviewProjectionPrune.swift */,
 				AF0000000000000000000056 /* FolderMixOrchestration.swift */,
 				AF0000000000000000000045 /* FolderMixScanner.swift */,
 				AF0000000000000000000051 /* FolderMixSessionState.swift */,
@@ -1505,6 +1511,7 @@ AF0000000000000000000058 /* FolderMixIngestJoinTests.swift */ = {isa = PBXFileRe
 				AF000000000000000000004A /* WholeClipShape.swift in Sources */,
 				AF0000000000000000000048 /* DiskSpaceBudget.swift in Sources */,
 				AF0000000000000000000046 /* FolderMixPicker.swift in Sources */,
+				AF0000000000000000000062 /* OverviewProjectionPrune.swift in Sources */,
 				AF0000000000000000000055 /* FolderMixOrchestration.swift in Sources */,
 				AF0000000000000000000044 /* FolderMixScanner.swift in Sources */,
 				AF0000000000000000000050 /* FolderMixSessionState.swift in Sources */,
@@ -1653,6 +1660,7 @@ AF0000000000000000000058 /* FolderMixIngestJoinTests.swift */ = {isa = PBXFileRe
 				7B0000000000000000000002 /* DubFixedRateRenderLaneTests.swift in Sources */,
 				7D0000000000000000000001 /* ExportDurationGateTests.swift in Sources */,
 				AF0000000000000000000057 /* FolderMixIngestJoinTests.swift in Sources */,
+				AF0000000000000000000060 /* OverviewProjectionAppTests.swift in Sources */,
 				7B0000000000000000000001 /* ExportDeliveryTargetParsingTests.swift in Sources */,
 				7D0000000000000000000000 /* ExportCanvasReadbackTests.swift in Sources */,
 				AF000000000000000000006B /* LogoOverlayAssetStoreTests.swift in Sources */,

@@ -156,7 +156,8 @@ public enum GraphEntity: String, Equatable, Hashable, Sendable, CaseIterable {
 
     /// UI 侧目前**有消费者**的实体。不在这个集合里的，整条变更一律回落到"无载荷 = 全量重载"。
     /// 之所以先只认这三类：剪枝要复用各 VM 既有的重算入口，而删项目链目前只交得出这三类 id。
-    /// ⚠️ `.video` 的消费者是**间接**的（跟着 `.project` 一起摘），所以 `isPrunable` 对它另加一条判据。
+    /// `.video` 自 2026-10-23 起有**直接消费者**（概览投影剪枝 + 导入页选中集），
+    /// 但视频删除咽喉仍不 note `.video`，所以 `isPrunable` 对它另加的那条判据保留。
     public static let prunable: Set<GraphEntity> = [.project, .video, .segment]
 }
 
@@ -184,10 +185,10 @@ public struct GraphChange: Equatable, Sendable {
 
     /// 能不能只靠剪枝收口。假 ⇒ 发布口按无载荷发，观察者走原有的全量重载分支。
     ///
-    /// 判据是**有没有人接得住**，不是"id 好不好拿"。`.video` 是**条件可剪**：界面里没有独立的
-    /// 视频投影生命周期 —— 视频列表一律从活着的 `Project.videos` 现读，删项目时那份投影随
-    /// `pruneDeletedProjects` 取消选中一起拆掉。所以"带着视频却没有带着项目"的变更没人接得住，
-    /// 必须**整条**降级，而不是剪掉能剪的那半（那正是这条判据存在的唯一意义）。
+    /// 判据是**有没有人接得住**，不是"id 好不好拿"。`.video` 仍是**条件可剪**：概览投影与
+    /// 导入页选中集虽然已能直接剪，但视频删除咽喉本身不 note `.video` —— 现在带着视频 id 的
+    /// 变更仍由删项目链（`.project` 同时在册）带出来。所以"只有视频、没有项目"的形态至今
+    /// 没人接得住，必须**整条**降级，而不是剪掉能剪的那半（这正是这条判据存在的唯一意义）。
     public var isPrunable: Bool {
         !isEmpty
             && deleted.keys.allSatisfy { GraphEntity.prunable.contains($0) }

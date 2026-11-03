@@ -371,10 +371,112 @@ private func viewSources() -> [(path: String, code: String)] {
     return pairs
 }
 
+private func viewModelSources() -> [(path: String, code: String)] {
+    let files = swiftFiles(under: "MixCut/ViewModels")
+    let pairs = files.compactMap { p -> (String, String)? in
+        guard let s = load(p) else { return nil }
+        return (p, RelationshipReadScan.codeOnly(s))
+    }
+    if pairs.count != files.count { Issue.record("ViewModels 有文件读不出来 ⇒ 取样面不全，本条不算通过") }
+    if files.isEmpty { Issue.record("MixCut/ViewModels 扫不到 .swift ⇒ 探针根没命中，本条不算通过") }
+    return pairs
+}
+
+/// 界面投影面 = Views ∪ Models 的计算出口。
+/// 2026-10-23 计划 V3：`Video.displayableSegments` / `Project.displayableSegments` 这些
+/// 「把关系读搬进出口体内」的写法如果只扫 Views，就会落在门的射程之外 —— 真源在哪一层，
+/// 门就得看到哪一层（D 组判据）。Models 里声明语句本身不会命中，只有真的 `receiver.关系名`
+/// 才命中，所以扩面不等于把 `@Relationship` 声明也算成读取。
+private func uiProjectionSources() -> [(path: String, code: String)] {
+    viewSources() + modelSources()
+}
+
 private func allMixCutSources() -> [(path: String, code: String)] {
     swiftFiles(under: "MixCut").compactMap { p -> (String, String)? in
         guard let s = load(p) else { return nil }
         return (p, RelationshipReadScan.codeOnly(s))
+    }
+}
+
+/// 取出 `struct <name>` 的左花括号起、到配对右花括号止的体（含花括号）。
+/// 只用于 G24 的两颗投影结构；源码先过 `codeOnly`，注释/字符串不参与判定。
+private func structBody(named name: String, in code: String) -> String? {
+    guard let head = code.range(of: "struct \(name)") else { return nil }
+    var depth = 0
+    var started = false
+    var out = ""
+    for ch in code[head.lowerBound...] {
+        if ch == "{" { depth += 1; started = true }
+        if started { out.append(ch) }
+        if ch == "}" {
+            depth -= 1
+            if started && depth == 0 { return out }
+        }
+    }
+    return nil
+}
+
+/// 一段代码里出现过的模型类名（词边界；`VideoCount` 不会被 `Video` 误命中）。
+private func modelTypeMentions(in text: String, modelTypes: Set<String>) -> [String] {
+    guard !modelTypes.isEmpty else { return [] }
+    let alt = modelTypes.sorted().joined(separator: "|")
+    var out = Set<String>()
+    forEachMatch(in: text, pattern: "\\b(" + alt + ")\\b") { g in
+        if let n = g(1) { out.insert(n) }
+    }
+    return out.sorted()
+}
+
+/// G25 的口径：`MixCut/ViewModels/**` 里**存储属性**（含 `didSet` 观察者）的类型中含模型类名。
+/// 计算属性不算 —— 它们不该长期持有模型引用；本门要钉的是「VM 把模型实例存下来」这一形状。
+enum ViewModelModelHoldScan {
+
+    struct Hit: Hashable {
+        let file: String
+        let property: String
+        let type: String
+
+        var key: String { "\(file)|\(property)|\(type)" }
+    }
+
+    static func scan(_ sources: [(path: String, code: String)],
+                     modelTypes: Set<String>) -> [Hit] {
+        guard !modelTypes.isEmpty else { return [] }
+        let alt = modelTypes.sorted().joined(separator: "|")
+        var out: [Hit] = []
+        for (path, code) in sources {
+            let lines = code.components(separatedBy: "\n")
+            for (i, line) in lines.enumerated() {
+                guard let m = firstMatch(line, pattern:
+                        "^    (?:private\\(set\\)\\s+)?(?:private\\s+)?(?:var|let)\\s+(\\w+)\\s*:\\s*(.+)$"),
+                      let name = m(1), let rest = m(2) else { continue }
+                let cut = rest.firstIndex(where: { $0 == "=" || $0 == "{" }) ?? rest.endIndex
+                let type = rest[..<cut].trimmingCharacters(in: .whitespaces)
+                guard !type.isEmpty else { continue }
+                guard firstMatch(type, pattern: "\\b(" + alt + ")\\b") != nil else { continue }
+
+                // 有 `=` / 行尾 ⇒ 存储；有 `{` 时要分清「计算属性」与「didSet/willSet 观察者」。
+                let after = String(rest[cut...]).trimmingCharacters(in: .whitespaces)
+                var stored = false
+                if after.isEmpty || after.hasPrefix("=") {
+                    stored = true
+                } else if after.hasPrefix("{") {
+                    if firstMatch(after, pattern: "\\b(?:didSet|willSet)\\b") != nil {
+                        stored = true
+                    } else {
+                        for next in lines[(i + 1)...].prefix(2)
+                        where !next.trimmingCharacters(in: .whitespaces).isEmpty {
+                            if firstMatch(next, pattern: "\\s*(?:didSet|willSet)\\b") != nil {
+                                stored = true
+                            }
+                            break
+                        }
+                    }
+                }
+                if stored { out.append(Hit(file: path, property: name, type: type)) }
+            }
+        }
+        return out.sorted { $0.key < $1.key }
     }
 }
 
@@ -386,7 +488,7 @@ private func realScan() -> [RelationshipReadScan.Hit]? {
         .union(RelationshipReadScan.arrayModelNames(modelSources: models, modelTypes: types))
     if types.isEmpty { Issue.record("取不到任何 @Model 类名 ⇒ 判据失效"); return nil }
     if forbidden.isEmpty { Issue.record("禁词表为空 ⇒ 判据失效"); return nil }
-    return RelationshipReadScan.scan(viewSources: viewSources(), forbidden: forbidden, modelTypes: types)
+    return RelationshipReadScan.scan(viewSources: uiProjectionSources(), forbidden: forbidden, modelTypes: types)
 }
 
 // MARK: - G08–G12
@@ -394,7 +496,8 @@ private func realScan() -> [RelationshipReadScan.Hit]? {
 struct TombstoneReadGuardTests {
 
     /// 基线名册（**由本守卫自己生成、非手写** —— 用 `TOMBSTONE_DUMP_BASELINE=1` 跑 G08d 那条腿重生成）：
-    /// **42 处 / 40 键 / 10 个文件**（2026-10-22 由 G08d 腿重生成，不是手数）。
+    /// **47 处 / 45 键 / 13 个文件**（2026-11-03 V3 把取样面扩到 Models 出口后由 G08d 重生成：
+    /// 42 + 5；新增的 5 条是模型层自己的读，登记为在册欠账，不在本轮 UI 止血的刀口上）。
     /// 〔第三轮 笔 K2 的销账逐条〕视图层 8 处裸读 `video.segments` / `project.videos.flatMap(\.segments)`
     /// 全部改走决议 K9 那颗唯一出口 ⇒ 扫描器把它们的键从 `segments` 改认成 `displayableSegments`
     /// （视图层仍然被认出，因为那次遍历确实发生，只是发生地点搬进了出口体内）：
@@ -410,6 +513,13 @@ struct TombstoneReadGuardTests {
     /// 逐条 = (文件, 关系属性名, 归一化行, 该组合出现次数)。
     /// 这条名册的用处：**新增一处 ⇒ 红；悄悄拔掉一处 ⇒ 也红**（销账必须同时改这张表，逼一次 review）。
     static let baseline: [(String, String, String, Int)] = [
+        // 〔V3 扩面后新增〕模型层自己的关系读 —— 门看得见真源，但它们是模型 API 本身，
+        // 本轮不动；新增/消失都必须同时改这张表（销账逼一次 review）。
+        (#"MixCut/Models/MixStrategy.swift"#, "strategies", #"if let existing = project.strategies.first(where: { $0.isCustomGroup }) {"#, 1),
+        (#"MixCut/Models/MixStrategy.swift"#, "strategies", #"project.strategies.append(group)"#, 1),
+        (#"MixCut/Models/Project.swift"#, "displayableSegments", #"for video in associatedVideos { out.append(contentsOf: video.displayableSegments) }"#, 1),
+        (#"MixCut/Models/Project.swift"#, "segments", #"associatedVideos.reduce(0) { $0 + $1.segments.count }"#, 1),
+        (#"MixCut/Models/ProjectVideo.swift"#, "projectVideos", #"if let existing = project.projectVideos.first(where: { $0.video?.id == video.id }) {"#, 1),
         (#"MixCut/Views/Export/ExportView.swift"#, "orderedSchemes", #"ForEach(strategy.orderedSchemes) { scheme in"#, 1),
         (#"MixCut/Views/Export/ExportView.swift"#, "orderedSchemes", #"let ids = Set(strategy.orderedSchemes.map(\.id))"#, 2),
         (#"MixCut/Views/Export/ExportView.swift"#, "orderedSchemes", #"let schemeIDs = Set(strategy.orderedSchemes.map(\.id))"#, 1),
@@ -479,11 +589,11 @@ struct TombstoneReadGuardTests {
                 "SegmentLibraryView 没有任何命中 ⇒ 取样面没覆盖崩点所在文件，下面的零断言是空的")
         #expect(!got.keys.contains { $0.hasPrefix("MixCut/Views/SegmentLibrary/SegmentLibraryView.swift|segments|") },
                 "本次 SIGTRAP 的直接触发点（SegmentLibraryView 读 video.segments）又回来了")
-        // 数量锁：实得 43（M2 引入：`SegmentVariantInspector.voices` 段级优先时新增
-        // `segmentDubs` 遍历与 `video.segments.contains`（复用可能性判定）两处读取）。
+        // 数量锁：实得 47（2026-11-03 V3 扩面后 = 原 42 + Models 出口 5 条；
+        // 历史：M2 曾新增 `segmentDubs` 遍历与 `video.segments.contains` 两处读取）。
         // ⚠️ 数字**由生成腿读出**（`TOMBSTONE_DUMP_BASELINE=1 swift test --filter dumpBaselineForRegeneration`，
         // 看 `.scratch/guard_baseline_new.txt` 首行 TOTAL_HITS），不是手数。
-        #expect(hits.count == 42, "命中总数应为 42（2026-10-22 笔 K2 收口后由 G08d 重生成），实得 \(hits.count)")
+        #expect(hits.count == 47, "命中总数应为 47（2026-11-03 V3 扩面后由 G08d 重生成），实得 \(hits.count)")
     }
 
     @Test("G08c 敏感性变异：往真实取样面里注入一处新裸读，门必须立刻认出来")
@@ -497,7 +607,7 @@ struct TombstoneReadGuardTests {
         let injected: [(path: String, code: String)] =
             [(path: "MixCut/Views/__Injected__.swift",
               code: #"private func probe(_ video: Video) -> Set<UUID> { Set(video.segments.map(\.id)) }"#)]
-        let after = RelationshipReadScan.scan(viewSources: viewSources() + injected,
+        let after = RelationshipReadScan.scan(viewSources: uiProjectionSources() + injected,
                                               forbidden: forbidden, modelTypes: types)
         let added = RelationshipReadScan.verdict(after).filter { $0.contains("__Injected__") }
         #expect(added.count == 1, "注入的裸读没被单独认出（实得 \(added)）⇒ 门对新增不敏感")
@@ -508,7 +618,7 @@ struct TombstoneReadGuardTests {
     func gateVerdictIsRedToday() {
         // 严格 xfail 语义（与仓内「测试暴露缺陷时记 xfail(strict)」同一口径）：
         // 刀 1 落地把这批读取拔掉之后，withKnownIssue 会因为「不再有问题」而**自己变红** ⇒ 逼一次摘标。
-        withKnownIssue("门 4a 尚未收口：视图层仍有裸读模型关系，见计划 §3 刀 1 / §11.4 G08") {
+        withKnownIssue("门 4a 尚未收口：界面投影面（Views ∪ Models 出口）仍有裸读模型关系，见计划 §3 刀 1 / §11.4 G08 / 2026-10-23 V3") {
             guard let hits = realScan() else { return }
             #expect(RelationshipReadScan.verdict(hits).isEmpty,
                     "仍有 \(hits.count) 处裸读未拔")
@@ -767,14 +877,115 @@ struct TombstoneReadGuardTests {
         try Data(out.utf8).write(to: url)
     }
 
+    // MARK: G24/G25 · 值型投影契约与 VM 持模型引用名册（计划 2026-10-23 笔 V3）
+
+    /// 概览投影的两颗结构名。
+    static let valueProjectionStructs = ["OverviewSnapshot", "OverviewVideoRow"]
+
+    @Test("G24 值型投影契约：概览投影的字段里一个模型类名都不许出现")
+    func overviewProjectionHoldsOnlyValues() throws {
+        let models = modelSources()
+        let types = RelationshipReadScan.modelTypeNames(modelSources: models)
+        guard !types.isEmpty else { throw GuardError.probeDead }
+        guard let raw = load("MixCut/ViewModels/ProjectViewModel.swift") else {
+            throw GuardError.probeDead
+        }
+        let code = RelationshipReadScan.codeOnly(raw)
+        for name in Self.valueProjectionStructs {
+            guard let body = structBody(named: name, in: code) else {
+                Issue.record("取不到 \(name) 的结构体 ⇒ G24 探针根腐烂"); continue
+            }
+            let mentions = modelTypeMentions(in: body, modelTypes: types)
+            #expect(mentions.isEmpty,
+                    "\(name) 里又出现模型类名 \(mentions) ⇒ 投影退回引用型，墓碑读失败面重开")
+        }
+        // 正对照：两颗结构确实被取到（否则上面的循环在空集合上恒绿）
+        #expect(Self.valueProjectionStructs.allSatisfy { structBody(named: $0, in: code) != nil },
+                "投影结构取不到 ⇒ 这条腿在测空气")
+    }
+
+    @Test("G24b 敏感性变异：把 `videos: [Video]` 写回投影必须被同一颗扫描器认出")
+    func valueProjectionMutationIsCaught() throws {
+        let models = modelSources()
+        let types = RelationshipReadScan.modelTypeNames(modelSources: models)
+        guard !types.isEmpty else { throw GuardError.probeDead }
+        let mutated = "struct OverviewSnapshot { var videos: [Video] = [] }"
+        let mentions = modelTypeMentions(in: mutated, modelTypes: types)
+        #expect(mentions == ["Video"],
+                "变异形态没被抓到 ⇒ G24 是恒绿的（实得 \(mentions)）")
+    }
+
+    /// G25 名册（由 `TOMBSTONE_DUMP_VM_BASELINE=1` 重生成，不手数）。
+    /// 2026-11-03 实得 **20 处 / 6 颗文件**；计划原记 15 处是 10-23 的旧口径
+    /// （漏了带 `didSet` 的 `selectedProject` 与两颗字典型），以本表为准。
+    static let vmModelHoldBaseline: [(String, String, String)] = [
+        ("MixCut/ViewModels/KnowledgeLibraryViewModel.swift", "documents", "[KnowledgeDocument]"),
+        ("MixCut/ViewModels/KnowledgeLibraryViewModel.swift", "boundProduct", "Product?"),
+        ("MixCut/ViewModels/ProjectViewModel.swift", "projects", "[Project]"),
+        ("MixCut/ViewModels/ProjectViewModel.swift", "selectedProject", "Project?"),
+        ("MixCut/ViewModels/ProjectViewModel.swift", "products", "[Product]"),
+        ("MixCut/ViewModels/SchemeViewModel.swift", "strategies", "[MixStrategy]"),
+        ("MixCut/ViewModels/SchemeViewModel.swift", "selectedStrategy", "MixStrategy?"),
+        ("MixCut/ViewModels/SchemeViewModel.swift", "selectedScheme", "MixScheme?"),
+        ("MixCut/ViewModels/ScriptWizardViewModel.swift", "project", "Project"),
+        ("MixCut/ViewModels/ScriptWizardViewModel.swift", "product", "Product?"),
+        ("MixCut/ViewModels/ScriptWizardViewModel.swift", "script", "ScriptDocument?"),
+        ("MixCut/ViewModels/SegmentLibraryViewModel.swift", "video", "Video?"),
+        ("MixCut/ViewModels/SegmentLibraryViewModel.swift", "visibleSegments", "[Segment]"),
+        ("MixCut/ViewModels/SegmentLibraryViewModel.swift", "segments", "[Segment]"),
+        ("MixCut/ViewModels/SegmentLibraryViewModel.swift", "filteredSegments", "[Segment]"),
+        ("MixCut/ViewModels/SegmentLibraryViewModel.swift", "shotEditRequestSegment", "Segment?"),
+        ("MixCut/ViewModels/SegmentLibraryViewModel.swift", "splitRequestSegment", "Segment?"),
+        ("MixCut/ViewModels/SegmentLibraryViewModel.swift", "unfilteredSegmentsByGroupID", "[UUID: [Segment]]"),
+        ("MixCut/ViewModels/SegmentLibraryViewModel.swift", "segmentByID", "[UUID: Segment]"),
+        ("MixCut/ViewModels/ShotEditViewModel.swift", "shots", "[PhysicalShot]"),
+    ]
+
+    @Test("G25 ViewModel 持模型引用的 stored property 名册（新增一处即红）")
+    func viewModelModelHoldRosterIsStable() throws {
+        let models = modelSources()
+        let types = RelationshipReadScan.modelTypeNames(modelSources: models)
+        guard !types.isEmpty else { throw GuardError.probeDead }
+        let hits = ViewModelModelHoldScan.scan(viewModelSources(), modelTypes: types)
+        let got = Set(hits.map(\.key))
+        let want = Set(Self.vmModelHoldBaseline.map { "\($0.0)|\($0.1)|\($0.2)" })
+        #expect(got == want,
+                "VM 持模型引用的名册漂移：多出 \(got.subtracting(want).sorted())，少了 \(want.subtracting(got).sorted())")
+        // 正对照：注入一处未登记必须被认出（否则这条只是数字对数字）
+        let injected = [("MixCut/ViewModels/__Injected__.swift", "    var videos: [Video] = []")]
+        #expect(ViewModelModelHoldScan.scan(injected, modelTypes: types).count == 1,
+                "注入的 `var videos: [Video] = []` 抓不到 ⇒ G25 恒绿")
+    }
+
+    /// G25 名册重生成腿（销账用，平时不启用）：`TOMBSTONE_DUMP_VM_BASELINE=1 swift test --filter TombstoneReadGuardTests`
+    @Test("G25d 名册重生成（仅在 TOMBSTONE_DUMP_VM_BASELINE=1 时启用）",
+          .enabled(if: ProcessInfo.processInfo.environment["TOMBSTONE_DUMP_VM_BASELINE"] == "1"))
+    func dumpViewModelModelHoldBaseline() throws {
+        let models = modelSources()
+        let types = RelationshipReadScan.modelTypeNames(modelSources: models)
+        let hits = ViewModelModelHoldScan.scan(viewModelSources(), modelTypes: types)
+        var out = "TOTAL_HITS=\(hits.count) FILES=\(Set(hits.map(\.file)).count)\n"
+        for hit in hits {
+            out += "        (\"\(hit.file)\", \"\(hit.property)\", \"\(hit.type)\"),\n"
+        }
+        let url = guardRepoRoot.appendingPathComponent(".scratch/guard_vm_baseline_new.txt")
+        try Data(out.utf8).write(to: url)
+    }
+
     // MARK: 门 5（G13–G17）· 跨 to-one 边界的读取必须过活对象门槛
 
     /// 门 5 存量名册（**由 G17d 生成、不手写** —— 手写=第二份实现，会静默漂移）。
-    /// 实测读数：**43 处 / 41 键 / 12 个文件**（`TOMBSTONE_DUMP_TOONE=1` 跑出来的，不是我估的）。
+    /// 实测读数：**39 处 / 36 键 / 14 个文件**（2026-11-03 V3 扩面后由 `TOMBSTONE_DUMP_TOONE=1`
+    /// 重生成；原注释「43 处」是旧口径，旧表实际计数为 35 + 新增 4 条模型层读 = 39）。
     /// ⚠️ 计划 §3 决策 3 与 §17.3 原先记的「宽口径 40 处 / 12 文件」是我用 grep 人工数的，**以本表为准**：
     ///    差在扫描器会把同一行内的多处跨边与各跨边成员都算上（如 ShotEditSheet 两行同样的 `segment.video?.fps`）。
     /// 逐条 = (文件, 被跨的边名, 归一化行, 该组合出现次数)。新增一处⇒红；悄悄拔掉一处不改表⇒也红。
     static let toOneBaseline: [(String, String, String, Int)] = [
+        // 〔V3 扩面后新增〕模型层自己的跨边读 —— 与 G08 那五条同批登记为在册欠账。
+        (#"MixCut/Models/MixScheme.swift"#, "segment", #"schemeSegments.reduce(0.0) { $0 + ($1.segment?.duration ?? 0) }"#, 1),
+        (#"MixCut/Models/Project.swift"#, "project", #"ProjectVideoAssociation(pvID: $0.id, projectID: $0.project?.id,"#, 1),
+        (#"MixCut/Models/Project.swift"#, "video", #"videoID: $0.video?.id, addedAt: $0.addedAt)"#, 1),
+        (#"MixCut/Models/ProjectVideo.swift"#, "video", #"if let existing = project.projectVideos.first(where: { $0.video?.id == video.id }) {"#, 1),
         (#"MixCut/Views/Export/ExportView.swift"#, "segment", #"for ss in scheme.schemeSegments where ss.segment?.source == .curated {"#, 1),
         (#"MixCut/Views/Export/ExportView.swift"#, "segment", #"if let sid = ss.segment?.id { ids.insert(sid) }"#, 1),
         (#"MixCut/Views/Export/ExportView.swift"#, "segment", #"let badVideo = scheme.orderedSegments.compactMap({ $0.segment?.video })"#, 1),
@@ -816,7 +1027,7 @@ struct TombstoneReadGuardTests {
         let edges = Set(ToOneReadScan.toOneEdgeDeclarations(modelSources: models, modelTypes: types).map(\.name))
         if types.isEmpty { Issue.record("取不到任何 @Model 类名 ⇒ 门 5 判据失效"); return nil }
         if edges.isEmpty { Issue.record("一条 to-one 边都没派生出来 ⇒ 第三来源跑偏，门 5 恒绿"); return nil }
-        return ToOneReadScan.scan(viewSources: viewSources(), edges: edges, modelTypes: types)
+        return ToOneReadScan.scan(viewSources: uiProjectionSources(), edges: edges, modelTypes: types)
     }
 
     @Test("G13 第三来源承重：to-one 边必须派生出 20 条声明 / 13 个名字，且名单逐条对得上（v3.4 含知识库+脚本 7 条新边）")
@@ -879,7 +1090,7 @@ struct TombstoneReadGuardTests {
     @Test("G15b 门 5 判定：视图层未过门的跨边读取必须为 0 —— 今天必红，是有意留下的证据")
     func toOneGateVerdictIsRedToday() {
         // 与 G08b 同一口径的 strict-xfail：刀 8 把这批读取改完，这条会因「不再有问题」自己变红 ⇒ 逼一次摘标。
-        withKnownIssue("门 5 尚未收口：视图层仍有跨 to-one 边未过门的读取，见计划 §17.4 TC-T01/T03") {
+        withKnownIssue("门 5 尚未收口：界面投影面（Views ∪ Models 出口）仍有跨 to-one 边未过门的读取，见计划 §17.4 TC-T01/T03 / 2026-10-23 V3") {
             guard let hits = realToOneScan() else { return }
             #expect(hits.isEmpty, "仍有 \(hits.count) 处未过门的跨边读取")
         }

@@ -154,14 +154,16 @@ public enum DubSegmentGraphBuilder {
             if let bgmIdx = bgmInputIndex {
                 let aStart = Double(startFrame) / fps
                 let aEnd = Double(endFrame) / fps
-                parts.append("[\(dubAudioInputIndex):a]aresample=44100,\(loudnorm)\(padSuffix)[voice]")
+                // aresample 必须在 loudnorm 之后：loudnorm 内部升到 192k，排在它前面等于
+                // 把交付件写成 96000 Hz（2026-11-03 实测；同素材 mean_volume 两写法相同）。
+                parts.append("[\(dubAudioInputIndex):a]\(loudnorm),aresample=44100\(padSuffix)[voice]")
                 parts.append(
                     "[\(bgmIdx):a]atrim=start=\(String(format: "%.5f", aStart)):end=\(String(format: "%.5f", aEnd))," +
                     "asetpts=PTS-STARTPTS,aresample=44100,volume=\(String(format: "%.2f", Self.bgmGain))[bgmcut]"
                 )
                 parts.append("[voice][bgmcut]amix=inputs=2:duration=first:normalize=0[aout]")
             } else {
-                parts.append("[\(dubAudioInputIndex):a]aresample=44100,\(loudnorm)\(padSuffix)[aout]")
+                parts.append("[\(dubAudioInputIndex):a]\(loudnorm),aresample=44100\(padSuffix)[aout]")
             }
         }
 

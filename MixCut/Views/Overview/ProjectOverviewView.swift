@@ -38,7 +38,7 @@ struct ProjectOverviewView: View {
         }
         .task(id: project.id) {
             projectVM.refreshOverviewSnapshot(for: project)
-            ThumbnailCache.shared.prewarm(paths: snapshot.videos.compactMap(\.thumbnailPath), for: project.id)
+            ThumbnailCache.shared.prewarm(paths: snapshot.thumbnailPaths, for: project.id)
         }
         .sheet(isPresented: $showScriptWizard) {
             ScriptWizardView(project: project)
@@ -142,7 +142,7 @@ struct ProjectOverviewView: View {
                 projectVoiceRow
 
                 // 视频列表预览（读 VM 快照，避免重绘时反复触发 SwiftData fetch）
-                if snapshot.videos.isEmpty {
+                if snapshot.rows.isEmpty {
                     VStack(spacing: DesignTokens.Spacing.normal) {
                         Image(systemName: "film.stack")
                             .font(.system(size: 36))
@@ -193,8 +193,8 @@ struct ProjectOverviewView: View {
                         LazyVGrid(columns: [
                             GridItem(.adaptive(minimum: 200, maximum: 250))
                         ], spacing: DesignTokens.Spacing.normal) {
-                            ForEach(snapshot.videos) { video in
-                                VideoCard(video: video)
+                            ForEach(snapshot.rows) { row in
+                                VideoCard(row: row)
                             }
                         }
                         .frame(maxWidth: 1060, alignment: .leading)
@@ -406,13 +406,14 @@ struct ActionButton: View {
 }
 
 struct VideoCard: View {
-    let video: Video
+    /// 值行入参：body 里一个模型引用都不许拿（2026-10-23 第四起墓碑读现场的构造性修法）。
+    let row: ProjectViewModel.OverviewVideoRow
     @State private var isHovering = false
 
     private var videoAspectRatio: CGFloat {
         // 元数据缺失时兜底 9:16 竖屏（信息流广告铁律，见 CLAUDE.md），与导入页 ImportedVideoCard 一致
-        guard video.width > 0, video.height > 0 else { return 9.0 / 16.0 }
-        return CGFloat(video.width) / CGFloat(video.height)
+        guard row.width > 0, row.height > 0 else { return 9.0 / 16.0 }
+        return CGFloat(row.width) / CGFloat(row.height)
     }
 
     var body: some View {
@@ -424,18 +425,18 @@ struct VideoCard: View {
                 .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
 
             VStack(alignment: .leading, spacing: 3) {
-                Text(video.name)
+                Text(row.name)
                     .font(DesignTokens.Typography.captionStrong)
                     .lineLimit(1)
 
                 HStack(spacing: DesignTokens.Spacing.tight) {
-                    Text(formatDuration(video.duration))
+                    Text(formatDuration(row.duration))
                     Text("·")
                         .foregroundStyle(.tertiary)
-                    Text(video.resolution)
+                    Text(row.resolution)
                     Text("·")
                         .foregroundStyle(.tertiary)
-                    Text("\(video.displayableSegmentCount) 分镜")
+                    Text("\(row.visibleSegmentCount) 分镜")
                 }
                 .font(DesignTokens.Typography.microRegular)
                 .foregroundStyle(.secondary)
@@ -468,7 +469,7 @@ struct VideoCard: View {
     @ViewBuilder
     private var staticThumbnail: some View {
         AsyncCachedImage(
-            path: video.thumbnailPath,
+            path: row.thumbnailPath,
             placeholder: {
                 Rectangle()
                     .fill(.quaternary.opacity(0.5))

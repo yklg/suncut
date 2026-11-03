@@ -274,3 +274,60 @@ func twoAxesNeverOverlapOnSameCoordinate() {
                                         referenced: ["/V/Case.MP4"]).isEmpty,
             "同一颗归一在 orphan 侧必须给同样的结论")
 }
+
+// MARK: - TC-OF-16 / 17：内容哈希目录保护（路径前缀漂移时不让在用视频被 GC 回收）
+// 背景：2026-10-04 日志里 GC 一次删 151 个；2026-10-15 起 `[OrphanGC]` 连续报「165 条素材记录
+// 的 localPath 在磁盘上不存在」。TC-OF-15 已钉住根因形状：保守门只要有一条路径碰巧同写法
+// 就整批放行。视频库是内容寻址的（目录名 = SHA-256），所以「哈希目录有没有库内引用」
+// 是比整条路径更硬的第二条坐标。
+
+@Test("TC-OF-16 内容哈希目录名：只认 64 位十六进制，大小写归一")
+func contentHashDirectoryNameParsing() {
+    let hash = String(repeating: "a", count: 64)
+    #expect(OrphanFileFinder.contentHashDirectoryName(
+        inVideoPath: "/Users/x/Library/Application Support/Suncut/Videos/\(hash)/素材.mp4") == hash)
+    #expect(OrphanFileFinder.contentHashDirectoryName(
+        inVideoPath: "/Videos/\(hash.uppercased())/素材.mp4") == hash,
+            "大小写不归一 ⇒ 同一条哈希目录会被认成两个")
+    #expect(OrphanFileFinder.contentHashDirectoryName(
+        inVideoPath: "/Videos/not-a-hash/素材.mp4") == nil)
+    #expect(OrphanFileFinder.contentHashDirectoryName(
+        inVideoPath: "/Videos/\(String(repeating: "g", count: 64))/素材.mp4") == nil,
+            "非十六进制字符不许被当成哈希目录")
+    #expect(OrphanFileFinder.contentHashDirectoryName(inVideoPath: "素材.mp4") == nil)
+}
+
+@Test("TC-OF-17 目录保护：近零交集 + 路径前缀漂移时，保护目录下的在用视频不出现在可删清单")
+func protectedHashDirectorySurvivesNearZeroOverlap() {
+    let hash = String(repeating: "b", count: 64)
+    // 库侧的 localPath 还是旧前缀（迁移未改写）；磁盘已在新前缀，且有一条别的路径同写法。
+    let stale = "/old/Videos/\(hash)/素材.mp4"
+    let live = "/new/Videos/\(hash)/素材.mp4"
+    let shared = "/new/Videos/other/在用.mp4"
+    let onDisk = [live, shared, "/new/Videos/\(String(repeating: "c", count: 64))/真孤儿.mp4"]
+    let referenced: Set<String> = [stale, shared]
+
+    // 今天的安全门只看整条路径：`shared` 一条交集就整批放行 ⇒ 在用视频进可删清单。
+    let withoutProtection = OrphanFileFinder.safeOrphanFiles(onDisk: onDisk, referenced: referenced)
+    #expect(withoutProtection.contains(live),
+            "夹具前提：不加保护时它确实会被当成孤儿（否则下面的保护腿是空的）")
+
+    // 加上内容哈希目录保护：同一颗哈希目录下的文件一律不出现在可删清单。
+    let withProtection = OrphanFileFinder.safeOrphanFiles(
+        onDisk: onDisk, referenced: referenced, protectedDirectoryNames: [hash])
+    #expect(!withProtection.contains(live),
+            "路径漂移的在用视频仍进可删清单 ⇒ 又回到 2026-10-04 那次 GC 的形状")
+    #expect(withProtection.contains("/new/Videos/\(String(repeating: "c", count: 64))/真孤儿.mp4"),
+            "保护腿不许退化成「永远返回空」——无关哈希目录的真孤儿仍该回收")
+    #expect(!withProtection.contains(shared), "被引用的路径本来就不该在孤儿清单里")
+}
+
+@Test("TC-OF-17b 保护集为空时与旧行为逐字相同")
+func emptyProtectionIsIdentity() {
+    let onDisk = ["/Videos/a/one.mp4", "/Videos/b/two.mp4"]
+    let referenced: Set<String> = ["/Videos/a/one.mp4"]
+    let old = OrphanFileFinder.safeOrphanFiles(onDisk: onDisk, referenced: referenced)
+    let new = OrphanFileFinder.safeOrphanFiles(onDisk: onDisk, referenced: referenced,
+                                              protectedDirectoryNames: [])
+    #expect(old == new)
+}

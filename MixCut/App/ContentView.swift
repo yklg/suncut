@@ -240,11 +240,16 @@ struct ContentView: View {
         if let change {
             let goneSegments = change.idsDeleted(of: .segment)
             let goneProjects = change.idsDeleted(of: .project)
+            let goneVideos = change.idsDeleted(of: .video)
             segmentLibraryVM.pruneDeletedSegments(goneSegments)
             projectVM.pruneDeletedProjects(goneProjects)
+            // `.video` 的两个直接消费者（计划 2026-10-23 笔 V2）：概览投影与导入页选中集。
+            // 纯剪，不许在这里接 fetch/load/flushNow —— 本段是 GraphBroadcast 的同步栈。
+            projectVM.pruneDeletedOverviewVideos(goneVideos)
+            importVM.pruneDeletedVideos(goneVideos)
             // 分发给持有快照的抽屉（剪枝信号状态机，不新增观察者/post）。
             schemeVM.notePrunedSegments(goneSegments)
-            MixLog.info("[GraphPrune] 剪枝 projects=\(goneProjects.count) videos=\(change.idsDeleted(of: .video).count) "
+            MixLog.info("[GraphPrune] 剪枝 projects=\(goneProjects.count) videos=\(goneVideos.count) "
                         + "segs=\(goneSegments.count) 剩余 segs=\(segmentLibraryVM.segments.count)")
             return
         }

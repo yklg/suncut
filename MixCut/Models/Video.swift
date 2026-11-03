@@ -150,8 +150,9 @@ final class Video: Identifiable {
     ///
     /// 为什么要收成一颗：这条界线以前散在十几处各写一遍就是本仓最忌的"第二个真源"；
     /// 现在界面与生成候选池只许调这两颗，门 `T-33` 正反两腿盯着"该挂的挂了、不该挂的没挂"。
-    /// ⚠ 这两颗是**计算属性**（每次访问走一遍关系数组）⇒ 逐卡读数请用 `displayableSegmentCount`，
-    ///   绝不要在 `ForEach` 里逐卡调上面那颗（计划第十节 E2 的教训：概览页从"一次读全"退化成每卡全遍历）。
+    /// ⚠ 这两颗是**计算属性**（每次访问走一遍关系数组）⇒ 概览卡片那样的逐卡读数
+    ///   已在 `ProjectViewModel.refreshOverviewSnapshot` 里「一次读全」取值型投影，
+    ///   视图 body 不再逐卡调用（2026-10-23 计划 V1；E2：概览页从"一次读全"退化成每卡全遍历的教训）。
     /// ⚠ 这里那次 `segments` 读取是**墓碑读族的登记点**（E3）：它必须留在 `TombstoneReadGuardTests`
     ///   的基线名册里，不许被当成豁免 —— 全仓读该关系最集中的一处就是它。
     var displayableSegments: [Segment] { segments.filter { !$0.mixInternalWholeClip } }

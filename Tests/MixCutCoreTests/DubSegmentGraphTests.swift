@@ -124,7 +124,7 @@ struct DubSegmentGraphTests {
     @Test("非锁定段从 dubAudioInputIndex 取音轨 + trailingSilence 补静音")
     func dubbedAudioWithSilence() {
         let g = blurDubbed()
-        #expect(g.filterComplex.contains("[2:a]aresample=44100"))
+        #expect(g.filterComplex.contains("[2:a]loudnorm=I=-16:TP=-1.5:LRA=11,aresample=44100"))
         #expect(g.filterComplex.contains("apad=pad_dur=0.200[aout]"))
     }
 
@@ -138,7 +138,7 @@ struct DubSegmentGraphTests {
             keepOriginalAudio: false, dubAudioInputIndex: 2,
             freezePadFrames: 0, trailingSilence: 0)
         #expect(g.filterComplex.contains("drawbox=x=0:y=1536:w=1080:h=230:color=0x1A1A1A@1.0:t=fill[masked]"))
-        #expect(g.filterComplex.contains("[2:a]aresample=44100,loudnorm=I=-16:TP=-1.5:LRA=11[aout]"))
+        #expect(g.filterComplex.contains("[2:a]loudnorm=I=-16:TP=-1.5:LRA=11,aresample=44100[aout]"))
     }
 
     @Test("none 模式不遮挡（null 透传）")
@@ -222,7 +222,7 @@ struct DubSegmentGraphBGMTests {
             freezePadFrames: 0, trailingSilence: 0,
             bgmInputIndex: 2)
         let fc = g.filterComplex
-        #expect(fc.contains("[1:a]aresample=44100"))
+        #expect(fc.contains("[1:a]loudnorm=I=-16:TP=-1.5:LRA=11,aresample=44100"))
         #expect(fc.contains("[2:a]atrim=start=1.00000:end=3.00000"))
         #expect(fc.contains("volume=0.60"))
         #expect(fc.contains("amix=inputs=2:duration=first:normalize=0[aout]"))
@@ -239,7 +239,7 @@ struct DubSegmentGraphBGMTests {
             freezePadFrames: 0, trailingSilence: 0)
         let fc = g.filterComplex
         #expect(!fc.contains("amix"))
-        #expect(fc.contains("[1:a]aresample=44100,loudnorm=I=-16:TP=-1.5:LRA=11[aout]"))
+        #expect(fc.contains("[1:a]loudnorm=I=-16:TP=-1.5:LRA=11,aresample=44100[aout]"))
     }
 
     @Test("带 trailingSilence + BGM：人声有 apad 再与 BGM 混")
@@ -294,7 +294,7 @@ struct VocalsSourceTests {
             captions: [], keepOriginalAudio: false,
             dubAudioInputIndex: 1, freezePadFrames: 0, trailingSilence: 0,
             vocalsSource: VocalsSource(inputIndex: 2, start: 0, end: 3))
-        #expect(g.filterComplex.contains("[1:a]aresample=44100"))
+        #expect(g.filterComplex.contains("[1:a]loudnorm=I=-16:TP=-1.5:LRA=11,aresample=44100"))
         #expect(!g.filterComplex.contains("[2:a]"))
     }
 }

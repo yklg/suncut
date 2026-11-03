@@ -944,7 +944,7 @@ struct MixCutApp: App {
             guard let video = segment.video,
                   FileHelper.isMaterialFilePresent(path: video.localPath) else { continue }
             // 不在这里删旧图：输出名就是同一个 seg_<uuid>.jpg（`ImportViewModel.swift:1027` 也用这个名），
-            // 而 `generateThumbnail` 自带 `-y`（`FFmpegRunner.swift:784`）会原地覆盖。
+            // 而 `generateThumbnail` 自带 `-y`（`FFmpegRunner.swift:787`）会原地覆盖。
             // 以前先删后生，于是任何一次 ffmpeg 失败都把这个分镜的缩略图**删没了却补不上**，
             // 而 `segment.thumbnailPath` 仍指着那个不存在的文件 —— 界面因此是空白而不是旧图。
             let firstFrameTime = max(0, segment.startTime + 0.1)
@@ -1377,10 +1377,16 @@ struct MixCutApp: App {
     private static func runOrphanGC(container: ModelContainer) {
         let ctx = container.mainContext
         var referenced = Set<String>()
+        var protectedVideoDirectoryNames = Set<String>()
         if let videos = try? ctx.fetch(FetchDescriptor<Video>()) {
             for v in videos {
                 referenced.insert(v.localPath)
                 if let t = v.thumbnailPath { referenced.insert(t) }
+                // 第二条坐标：内容哈希目录。路径前缀漂移时整条路径比对会漏，目录名不会。
+                if let hash = v.contentHash { protectedVideoDirectoryNames.insert(hash) }
+                if let dir = OrphanFileFinder.contentHashDirectoryName(inVideoPath: v.localPath) {
+                    protectedVideoDirectoryNames.insert(dir)
+                }
             }
             // 【只报不删】库盘分叉第一次在日志里可观测 —— 今天没有这一行，取证只能开 sqlite3 手查。
             // 明令：这条判定在本函数里**不触发任何删除或隐藏动作**。隐藏是界面侧
@@ -1412,7 +1418,8 @@ struct MixCutApp: App {
                 }
             }
         }
-        FileHelper.collectOrphanFiles(referencedPaths: referenced)
+        FileHelper.collectOrphanFiles(referencedPaths: referenced,
+                                      protectedVideoDirectoryNames: protectedVideoDirectoryNames)
     }
 }
 

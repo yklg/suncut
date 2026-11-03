@@ -728,7 +728,10 @@ actor FFmpegRunner {
             let durStr = String(format: "%.6f", segDuration)
             if useSourceAudio[i] {
                 filterParts.append(
-                    "[\(i):a]aresample=44100,loudnorm=I=-16:TP=-1.5:LRA=11,apad=whole_dur=\(durStr)[a\(i)]"
+                    // `loudnorm` 内部抬到 192k，aac 上限 96k ⇒ 它若排在 aresample 之前，
+                    // 每条成片落盘都会是 96000 Hz（2026-11-03 实测）。把 aresample 挪到它之后，
+                    // 交付件回到 44100 Hz；同一条 5s 440Hz 夹具 mean_volume 两种写法同为 −15.3 dB。
+                    "[\(i):a]loudnorm=I=-16:TP=-1.5:LRA=11,aresample=44100,apad=whole_dur=\(durStr)[a\(i)]"
                 )
             } else {
                 // 走静音支路：无音轨，或整段是纯数字静音（后者不能喂 loudnorm，见上面的说明）

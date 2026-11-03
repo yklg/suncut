@@ -569,6 +569,8 @@ extension MCPToolHandlers {
         let segment_nos: [Int]?
         let segment_ids: [String]?
         let output_dir: String
+        /// 交付目标。可选，省略＝千川竖屏投放（与 `export_scheme` 同一口径，见 `deliveryTarget(_:)`）。
+        let delivery_target: String?
     }
 
     func exportSegments(_ data: Data) throws -> Outcome {
@@ -595,15 +597,18 @@ extension MCPToolHandlers {
                 sequenceNumber: sequence,
                 fps: video.fps))
         }
+        // 与 export_scheme 同一条解析：未知值硬报错，不静默退回缺省；省略＝千川。
+        let target = try MCPToolHandlers.deliveryTarget(args.delivery_target)
         try ensureNoActiveJob()
         let projectID = jobProjectID(explicit: args.project_id, segments: segments)
         let job = jobs.begin(kind: .exportSegments, projectID: projectID)
         let registry = jobs
         let exportItems = items
+        let spec = target.spec
         Task { @MainActor in
             let service = BatchSegmentExportService()
             let (succeeded, failed) = await service.exportAll(
-                items: exportItems, outputDirectory: outputURL, onProgress: { _ in })
+                items: exportItems, outputDirectory: outputURL, spec: spec, onProgress: { _ in })
             let summary: [String: Any] = [
                 "succeeded": succeeded,
                 "output_dir": outputURL.path,

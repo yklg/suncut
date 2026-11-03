@@ -80,10 +80,35 @@ final class ProjectViewModel {
     /// （`ContentView.detailView` 是 `@ViewBuilder switch`），于是每次进入都得从骨架屏重画一遍 —— 就是用户看到的闪屏。
     /// 快照与「就绪与否」必须同生命周期，所以搬到本 VM。
     struct OverviewSnapshot: Equatable {
-        var videos: [Video] = []
+        /// 概览卡片列表（**只装值，不装 `Video` 对象**）。
+        /// 这一层边界是 2026-10-23 第四起墓碑读现场的止血：懒栅格的测量 pass 会在
+        /// 视图被移除的那一趟再算一次 body，若入参是模型引用，读已销毁对象的持久列会 trap。
+        var rows: [OverviewVideoRow] = []
+        /// 全量视频的值行（含不进卡片的自建分镜视频），只服务两颗计数与剪枝。
+        /// 为什么不用 `rows` 直接算：`segmentCount` 的既有口径包含自建分镜，
+        /// 只按卡片行重算会把这部分丢掉（见 `OverviewProjectionPrune.VideoCount`）。
+        var countRows: [OverviewProjectionPrune.VideoCount] = []
         var videoCount = 0
         var segmentCount = 0
         var schemeCount = 0
+
+        /// 封面预热的唯一取数口：只读值行，不碰模型关系。
+        var thumbnailPaths: [String] { rows.compactMap(\.thumbnailPath) }
+    }
+
+    /// 概览卡片的一行值。字段刻意全为值类型 —— 投影与存储层之间第一次有真边界。
+    /// `visibleSegmentCount` 不叫 `segments` / `displayableSegments`：同名会让
+    /// 「读这份投影」和「fault 模型关系」在源码里长得一模一样（本族既有纪律）。
+    struct OverviewVideoRow: Identifiable, Equatable {
+        let id: UUID
+        let name: String
+        let duration: Double
+        let width: Int
+        let height: Int
+        let thumbnailPath: String?
+        let visibleSegmentCount: Int
+
+        var resolution: String { "\(width)×\(height)" }
     }
 
     private(set) var overviewSnapshot = OverviewSnapshot()
@@ -92,14 +117,38 @@ final class ProjectViewModel {
     private var modelContext: ModelContext?
 
     /// 概览页的数据读取：关系字段是计算属性（每次访问都走一遍 dedup），所以一次读全、缓存到本 VM。
+    ///
+    /// ⚠️ 这里的 guard 挡的是「拿一颗已从图上摘除的项目去 fault 整张表」；
+    ///    它**不是**本次崩溃的证明 —— 第四起现场里 `isDeleted` / `modelContext` 双 false，
+    ///    真正的失败面是「投影持有模型引用」，已由值型行构造性消灭（计划 2026-10-23 V1）。
     func refreshOverviewSnapshot(for project: Project) {
+        guard !project.isGoneFromGraph else { return }
         let t0 = Date()
         let allVideos = project.videos
-        let realVideos = allVideos.filter { !$0.isUserUploaded }            // 成片视频（自建分镜不算「视频」，只在分镜库出现）
-        let segCount = allVideos.reduce(0) { $0 + $1.displayableSegmentCount }  // 分镜计数含自建分镜、不含混剪补建的内部整片段（决议 K9）
-        overviewSnapshot = OverviewSnapshot(videos: realVideos,
-                                            videoCount: realVideos.count,
-                                            segmentCount: segCount,
+        var rows: [OverviewVideoRow] = []
+        var countRows: [OverviewProjectionPrune.VideoCount] = []
+        rows.reserveCapacity(allVideos.count)
+        countRows.reserveCapacity(allVideos.count)
+        // 一次读全：每颗视频的 `displayableSegmentCount` 只在这里算一次，卡片与计数共用。
+        for video in allVideos {
+            let visibleSegments = video.displayableSegmentCount   // 决议 K9 的唯一出口，不含混剪补建的内部整片段
+            countRows.append(.init(id: video.id,
+                                   visibleSegmentCount: visibleSegments,
+                                   showsAsCard: !video.isUserUploaded))   // 自建分镜不算「视频」，只在分镜库出现
+            guard !video.isUserUploaded else { continue }
+            rows.append(OverviewVideoRow(id: video.id,
+                                         name: video.name,
+                                         duration: video.duration,
+                                         width: video.width,
+                                         height: video.height,
+                                         thumbnailPath: video.thumbnailPath,
+                                         visibleSegmentCount: visibleSegments))
+        }
+        let counts = OverviewProjectionPrune.counts(removing: [], from: countRows)
+        overviewSnapshot = OverviewSnapshot(rows: rows,
+                                            countRows: countRows,
+                                            videoCount: counts.videoCount,
+                                            segmentCount: counts.segmentCount,
                                             schemeCount: project.schemeCount)
         readiness.markLoaded(for: project.id)
         MixLog.info("[Readiness] 项目概览已就绪 project=\(project.id)")
@@ -341,8 +390,27 @@ final class ProjectViewModel {
         projects.removeAll { ids.contains($0.id) }
         if let selected = selectedProject, ids.contains(selected.id) {
             selectedProject = nil
-            overviewSnapshot = OverviewSnapshot()   // 快照里装的是模型对象，项目没了就成了一串死引用
+            // 快照里装的全是值；这里清空只为不让上一个项目的数字继续留在屏上。
+            // 它**不再**承担「拆掉死引用」的职责 —— 那条失败面已由值型投影构造性消灭。
+            overviewSnapshot = OverviewSnapshot()
         }
+    }
+
+    /// 从概览投影里剪掉已真删的视频 —— `.video` 变更第一次有直接消费者（计划 2026-10-23 笔 V2）。
+    ///
+    /// ⚠️ 这是 `GraphBroadcast.post` 的同步栈里执行的纯剪：**不许** fetch / load / `flushNow`
+    /// （`loadSegments` 首行就是 `flushNow()`，同栈递归是前案 §10 健壮-1 的 P0）。
+    /// 剪与算的纯判据在 `OverviewProjectionPrune`，本方法只负责把值搬回去。
+    func pruneDeletedOverviewVideos(_ ids: Set<UUID>) {
+        guard !ids.isEmpty,
+              overviewSnapshot.countRows.contains(where: { ids.contains($0.id) })
+                || overviewSnapshot.rows.contains(where: { ids.contains($0.id) })
+        else { return }
+        let counts = OverviewProjectionPrune.counts(removing: ids, from: overviewSnapshot.countRows)
+        overviewSnapshot.rows.removeAll { ids.contains($0.id) }
+        overviewSnapshot.countRows.removeAll { ids.contains($0.id) }
+        overviewSnapshot.videoCount = counts.videoCount
+        overviewSnapshot.segmentCount = counts.segmentCount
     }
 
     /// 重命名项目
