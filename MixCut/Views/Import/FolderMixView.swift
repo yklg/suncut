@@ -76,7 +76,11 @@ struct FolderMixView: View {
     /// 默认值曾把整批素材静默标成「搬运」（计划 R12），所以这里**没有默认值可退**。
     private var sourcePicker: some View {
         HStack(spacing: DesignTokens.Spacing.tight) {
-            Text("素材来源").font(DesignTokens.Typography.label)
+            // D15 真机修复（C1）：标签与「未选」必须 fixedSize —— 否则页头在 679 内容宽下
+            // 超宽时会被压成一字一行竖排（真机实测）。全称进 help，超宽由副标题截断吸收。
+            Text("来源").font(DesignTokens.Typography.label)
+                .fixedSize()
+                .help("素材来源")
             Picker("素材来源", selection: $vm.source) {
                 ForEach(Self.sourceChoices) { choice in
                     Text(choice.displayName).tag(SegmentSource?.some(choice))
@@ -87,6 +91,7 @@ struct FolderMixView: View {
             .fixedSize()
             if vm.source == nil {
                 Text("未选").font(DesignTokens.Typography.micro).foregroundStyle(.secondary)
+                    .fixedSize()
             }
         }
     }
@@ -115,11 +120,16 @@ struct FolderMixView: View {
             } else if vm.scan == nil {
                 emptyHint("先选一个素材根目录。它下面的每个一级子文件夹会成为一个类别。")
             } else {
-                ForEach(Array(vm.orderedCategories.enumerated()), id: \.element) { offset, name in
-                    categoryRow(name: name, offset: offset)
+                // D15 真机修复（C3）：24 行必须在 600 高内放尽 —— 行距收到 2，
+                // 行高由 categoryRow 的 11pt 行名决定（≈15pt/行，24 行 ≈ 406pt）。
+                VStack(spacing: 2) {
+                    ForEach(Array(vm.orderedCategories.enumerated()), id: \.element) { offset, name in
+                        categoryRow(name: name, offset: offset)
+                    }
                 }
-                Text("勾选决定参不参与；空类别不占额度（组合总数按参与类别相乘）")
+                Text("勾选决定参与；空类别不占额度")
                     .font(DesignTokens.Typography.micro).foregroundStyle(.secondary)
+                    .help("勾选决定参不参与；空类别不占额度（组合总数按参与类别相乘）")
                 if !vm.mergedCategories.isEmpty {
                     // 第九节「两个文件夹 trim 后同名」= 放行 + 合并，但必须出声
                     Text(vm.mergedNote)
@@ -139,6 +149,8 @@ struct FolderMixView: View {
     }
 
     /// 一行三件事：勾选（D29）/ 计数 / 排序。空类别可以勾，但勾了也不进乘积（R4/D13）。
+    /// D15 真机修复（C3）：行名 11pt、去掉「不参与」文字（灰显已表达该状态），
+    /// 把单行压到 ≈15pt —— 24 行才放得进 600 高（配合上面的行距 2）。
     private func categoryRow(name: String, offset: Int) -> some View {
         let count = vm.candidatesByCategory[name]?.count ?? 0
         let on = vm.enabledCategories.contains(name)
@@ -152,14 +164,13 @@ struct FolderMixView: View {
             .buttonStyle(.borderless)
             .help(count == 0 ? "这一类没有可拼接的视频，勾了也不参与" : "参不参与这一类")
             Text(name)
-                .font(DesignTokens.Typography.cardTitle)
+                .font(DesignTokens.Typography.caption)
                 .lineLimit(1)
                 .foregroundStyle(on && count > 0 ? Color.primary : Color.secondary)
             Spacer()
             Text(count == 0 ? "空" : "\(count) 条")
                 .font(DesignTokens.Typography.micro)
                 .foregroundStyle(.secondary)
-            if !on { Text("不参与").font(DesignTokens.Typography.micro).foregroundStyle(.secondary) }
             Button { vm.moveCategory(offset, up: true) } label: { Image(systemName: "chevron.up") }
                 .buttonStyle(.bordered).controlSize(.mini)
                 .disabled(offset == 0)
@@ -292,10 +303,13 @@ struct FolderMixView: View {
                     .foregroundStyle(DesignTokens.Palette.Status.danger)
                     .fixedSize(horizontal: false, vertical: true)
             }
+            // D15 真机修复（C2）：状态行限 1 行 —— 两行会把页脚顶到 56pt，
+            // 24 类时页脚整行被推出 600 高窗口；全文悬停 .help 可看。
             Text(vm.statusText.isEmpty ? "选目录 → 勾类别 → 排顺序 → 一键生成。整片按你排的类别顺序直拼。" : vm.statusText)
                 .font(DesignTokens.Typography.caption)
                 .foregroundStyle(.secondary)
-                .lineLimit(2)
+                .lineLimit(1)
+                .help(vm.statusText.isEmpty ? "选目录 → 勾类别 → 排顺序 → 一键生成。整片按你排的类别顺序直拼。" : vm.statusText)
             HStack(spacing: DesignTokens.Spacing.compact) {
                 if vm.isOverSoftLimit {
                     Toggle(isOn: $vm.overLimitConfirmed) {
