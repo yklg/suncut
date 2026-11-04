@@ -74,7 +74,6 @@
 		7442068825D4394E631F6CB1 /* MCPToolHandlers.swift in Sources */ = {isa = PBXBuildFile; fileRef = 350DD2EAFFF5B94FDC6E7C4F /* MCPToolHandlers.swift */; };
 		746E1049DD2834065672FBB3 /* OpenAICompatibleClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 56B4B3C845C059F96ABA5AF1 /* OpenAICompatibleClient.swift */; };
 		764494F9DF3575459D985927 /* SchemaFingerprint.swift in Sources */ = {isa = PBXBuildFile; fileRef = E24D293FC1A067C69B59F9C0 /* SchemaFingerprint.swift */; };
-		7A0000000000000000000000 /* VoiceCloneServiceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7B0000000000000000000000 /* VoiceCloneServiceTests.swift */; };
 		7A2C4E19B3D84F60A15C9E73 /* ProjectDataReadiness.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2C8F61D4A95B3E70C82D4F16 /* ProjectDataReadiness.swift */; };
 		7C4BEAA5D12BDB605E6A884B /* FrameCountAligner.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0E48A40ECEECC19FD7C8100A /* FrameCountAligner.swift */; };
 		7D5E9015AEE9E02EE8211DFF /* SegmentLibraryViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 091FFFADF81C22E2358CF840 /* SegmentLibraryViewModel.swift */; };
@@ -299,15 +298,6 @@
 		FF00BB11CC22DD3344EE55AB /* DubStaleness.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF00BB11CC22DD3344EE55AA /* DubStaleness.swift */; };
 		FF66AA77BB88CC99DD00EE11 /* SubtitleFontSizePopover.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF66AA77BB88CC99DD00EE12 /* SubtitleFontSizePopover.swift */; };
 		FF77AA88BB99CC0011DD22EE /* RewriteResultMapper.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF77AA88BB99CC0011DD22EF /* RewriteResultMapper.swift */; };
-7D0000000000000000000000 /* ExportCanvasReadbackTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7A0000000000000000000001 /* ExportCanvasReadbackTests.swift */; };
-AF000000000000000000006B /* LogoOverlayAssetStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF000000000000000000006C /* LogoOverlayAssetStoreTests.swift */; };
-AF0000000000000000000069 /* LogoOverlayExportTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF000000000000000000006A /* LogoOverlayExportTests.swift */; };
-7B0000000000000000000001 /* ExportDeliveryTargetParsingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7C0000000000000000000001 /* ExportDeliveryTargetParsingTests.swift */; };
-7D0000000000000000000001 /* ExportDurationGateTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7A0000000000000000000002 /* ExportDurationGateTests.swift */; };
-AF0000000000000000000057 /* FolderMixIngestJoinTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF0000000000000000000058 /* FolderMixIngestJoinTests.swift */; };
-AF0000000000000000000060 /* OverviewProjectionAppTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF0000000000000000000061 /* OverviewProjectionAppTests.swift */; };
-7B0000000000000000000002 /* DubFixedRateRenderLaneTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7C0000000000000000000002 /* DubFixedRateRenderLaneTests.swift */; };
-7D0000000000000000000002 /* WhisperEvidenceDecodeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7A0000000000000000000003 /* WhisperEvidenceDecodeTests.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -414,7 +404,6 @@ AF0000000000000000000060 /* OverviewProjectionAppTests.swift in Sources */ = {is
 		7A7548D82451414AA15EA629 /* SpeechRatePlanner.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = SpeechRatePlanner.swift; path = Sources/MixCutCore/SpeechRatePlanner.swift; sourceTree = "<group>"; };
 		7ACB561B3C5222BAF199821E /* ImportView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ImportView.swift; sourceTree = "<group>"; };
 		AF000000000000000000004F /* FolderMixView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FolderMixView.swift; sourceTree = "<group>"; };
-		7B0000000000000000000000 /* VoiceCloneServiceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoiceCloneServiceTests.swift; sourceTree = "<group>"; };
 		7DD8F10E220C49CFB4D2DBDA /* CosyVoiceTTSClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CosyVoiceTTSClient.swift; sourceTree = "<group>"; };
 		7E8212A6A3C180B93AC5AD93 /* BrandResidueScanner.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = BrandResidueScanner.swift; path = Sources/MixCutCore/BrandResidueScanner.swift; sourceTree = "<group>"; };
 		7F99A2236A49807C21EBA460 /* ShotVariant.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = ShotVariant.swift; sourceTree = "<group>"; };
@@ -616,15 +605,6 @@ AF0000000000000000000060 /* OverviewProjectionAppTests.swift in Sources */ = {is
 		FF77AA88BB99CC0011DD22EF /* RewriteResultMapper.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = RewriteResultMapper.swift; path = Sources/MixCutCore/RewriteResultMapper.swift; sourceTree = "<group>"; };
 		FF88AA99BB00CC1122DD33EE /* QwenVoice.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = QwenVoice.swift; path = Sources/MixCutCore/QwenVoice.swift; sourceTree = "<group>"; };
 		FFC59912B0CFE892506831DB /* ShotEditRules.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = ShotEditRules.swift; path = Sources/MixCutCore/ShotEditRules.swift; sourceTree = "<group>"; };
-7A0000000000000000000001 /* ExportCanvasReadbackTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExportCanvasReadbackTests.swift; sourceTree = "<group>"; };
-AF000000000000000000006C /* LogoOverlayAssetStoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LogoOverlayAssetStoreTests.swift; sourceTree = "<group>"; };
-AF000000000000000000006A /* LogoOverlayExportTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LogoOverlayExportTests.swift; sourceTree = "<group>"; };
-7C0000000000000000000001 /* ExportDeliveryTargetParsingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExportDeliveryTargetParsingTests.swift; sourceTree = "<group>"; };
-7A0000000000000000000002 /* ExportDurationGateTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExportDurationGateTests.swift; sourceTree = "<group>"; };
-AF0000000000000000000058 /* FolderMixIngestJoinTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FolderMixIngestJoinTests.swift; sourceTree = "<group>"; };
-AF0000000000000000000061 /* OverviewProjectionAppTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OverviewProjectionAppTests.swift; sourceTree = "<group>"; };
-7C0000000000000000000002 /* DubFixedRateRenderLaneTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DubFixedRateRenderLaneTests.swift; sourceTree = "<group>"; };
-7A0000000000000000000003 /* WhisperEvidenceDecodeTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WhisperEvidenceDecodeTests.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -781,7 +761,6 @@ AF0000000000000000000061 /* OverviewProjectionAppTests.swift */ = {isa = PBXFile
 		7882D14E196057770B59E53D = {
 			isa = PBXGroup;
 			children = (
-				7C0000000000000000000000 /* MixCutAppTests */,
 				E9E35020C8C6E8661088BDE7 /* MixCut */,
 				447BA75BCCBEC31888890E33 /* MixCut.entitlements */,
 				A96F2F5930768E1900D3B6E6 /* MixCutAppTests */,
@@ -811,23 +790,6 @@ AF0000000000000000000061 /* OverviewProjectionAppTests.swift */ = {isa = PBXFile
 				AF0000000000000000000068 /* LogoOverlayPanel.swift */,
 			);
 			path = Export;
-			sourceTree = "<group>";
-		};
-		7C0000000000000000000000 /* MixCutAppTests */ = {
-			isa = PBXGroup;
-			children = (
-				7A0000000000000000000003 /* WhisperEvidenceDecodeTests.swift */,
-				7C0000000000000000000002 /* DubFixedRateRenderLaneTests.swift */,
-				7A0000000000000000000002 /* ExportDurationGateTests.swift */,
-				AF0000000000000000000058 /* FolderMixIngestJoinTests.swift */,
-				AF0000000000000000000061 /* OverviewProjectionAppTests.swift */,
-				7C0000000000000000000001 /* ExportDeliveryTargetParsingTests.swift */,
-				7A0000000000000000000001 /* ExportCanvasReadbackTests.swift */,
-				AF000000000000000000006C /* LogoOverlayAssetStoreTests.swift */,
-				AF000000000000000000006A /* LogoOverlayExportTests.swift */,
-				7B0000000000000000000000 /* VoiceCloneServiceTests.swift */,
-			);
-			path = MixCutAppTests;
 			sourceTree = "<group>";
 		};
 		7DFBD2DFA4D61CB3A541A31D /* MixCutCore */ = {
@@ -1656,16 +1618,6 @@ AF0000000000000000000061 /* OverviewProjectionAppTests.swift */ = {isa = PBXFile
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				7D0000000000000000000002 /* WhisperEvidenceDecodeTests.swift in Sources */,
-				7B0000000000000000000002 /* DubFixedRateRenderLaneTests.swift in Sources */,
-				7D0000000000000000000001 /* ExportDurationGateTests.swift in Sources */,
-				AF0000000000000000000057 /* FolderMixIngestJoinTests.swift in Sources */,
-				AF0000000000000000000060 /* OverviewProjectionAppTests.swift in Sources */,
-				7B0000000000000000000001 /* ExportDeliveryTargetParsingTests.swift in Sources */,
-				7D0000000000000000000000 /* ExportCanvasReadbackTests.swift in Sources */,
-				AF000000000000000000006B /* LogoOverlayAssetStoreTests.swift in Sources */,
-				AF0000000000000000000069 /* LogoOverlayExportTests.swift in Sources */,
-				7A0000000000000000000000 /* VoiceCloneServiceTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

@@ -14,6 +14,12 @@
 用法：
     python3 Scripts/link_test_files.py                      # 首批那颗（默认）
     python3 Scripts/link_test_files.py ExportCanvasReadbackTests.swift
+
+⚠️ 2026-11-04 起：`MixCutAppTests` 这颗 target 已经是**同步组目录**
+   （`fileSystemSynchronizedGroups` ⇒ Xcode 按目录自动收文件），给它里面的文件补登记是冗余，
+   每构建一次多响一条 `Skipping duplicate build file`。本脚本对这种情况**默认拒绝**，
+   需要强行写入才加 `--force`。历史遗留的 10 颗冗余登记由
+   `check_pbx_registration.py` 的 `SYNC_REGISTERED` 名册钉住（不许再涨，清一颗就得同轮改小名册）。
 """
 import io
 import os
@@ -66,6 +72,30 @@ def main():
     if TEST_FILE in text:
         print("SKIP %s 已在pbxproj 中" % TEST_FILE)
         return 0
+
+    # 〔2026-11-04 新增的这道拦子〕同步组目录**不需要**手工登记，登记只会让它进两遍。
+    # 起因：给 `MixCutAppTests/FolderMixCategoryLimitTests.swift` 补登记时，App 腿实测那颗文件
+    # 本来就一直在编译执行（`Compiling …` 在册、判据跑绿、登记数为 0），而补完反而多响一条
+    # `Skipping duplicate build file`。⇒ 这支脚本对同步组 target 是一台**制造冗余**的机器，
+    # 必须默认拒绝，而不是靠用的人记得这件事。
+    # 生效条件：目标 target 声明了 `fileSystemSynchronizedGroups`，且本次要登记的目录正是它。
+    # 拦不住什么：只认"同一颗 target 同一颗目录"，别的 target 若确为经典分组照旧放行。
+    # 最坏代价：需要强行写入时用 `--force`（例如将来目录被改回经典分组）。
+    if "--force" not in sys.argv[1:]:
+        sync_ids = {}
+        for line in text.splitlines():
+            m = re.search(r"([0-9A-F]{24}) /\* .*? \*/ = \{isa = PBXFileSystemSynchronizedRootGroup;"
+                          r".*?path = ([^;]+);", line)
+            if m:
+                sync_ids[m.group(1)] = m.group(2).strip().strip('"')
+        tm0 = re.search(r'([A-F0-9]{24}) /\* %s \*/ = \{\s*\n\s*isa = PBXNativeTarget;(.*?)\n\t\t\};'
+                        % re.escape(TEST_TARGET), text, re.S)
+        fsg = re.search(r"fileSystemSynchronizedGroups = \((.*?)\);", tm0.group(2), re.S) if tm0 else None
+        owned = {sync_ids[i] for i in re.findall(r"([0-9A-F]{24})", fsg.group(1)) if i in sync_ids} if fsg else set()
+        if TEST_DIR in owned:
+            die("%s 是 %s 的**同步组目录**（fileSystemSynchronizedGroups），"
+                "Xcode 按目录自动收文件 ⇒ 手工登记是冗余，只会多一条 `Skipping duplicate build file`。"
+                "确实需要强行写入时加 --force" % (TEST_DIR, TEST_TARGET))
 
     # 备份（改工程前必做——本项目已因此翻车 5 次）
     if not os.path.exists(BACKUP):

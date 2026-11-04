@@ -492,7 +492,7 @@ suite 之间并行 ⇒ 子进程/临时目录压力一起上来，抛点在各�
   `MixCut/Services/VideoProcessing/FFmpegRunner.swift`、`MixCut/Services/ShotEdit/ShotCompositionService.swift`、
   `MixCut/ViewModels/ShotEditViewModel.swift`、`Sources/MixCutCore/SubtitleMaskMode.swift`（注释）、
   `Tests/MixCutCoreTests/MediaAvailabilityGuardTests.swift`（名册计数 6→8 ＋ 84→86）、
-  `scripts/check_pbx_registration.py`（EXPECTED 追加）、`scripts/link_test_files.py`（文件名改为可传参）、
+  `scripts/check_pbx_registration.py`（EXPECTED 追加）、`scripts/link_test_files.py`（文件名改为可传参）、〔**已改判 2026-11-04**：这条别照抄着往下用。`MixCutAppTests` 后来变成了**同步组目录**（target 声明 `fileSystemSynchronizedGroups`），Xcode 按目录自动收文件，再拿这支脚本补登记只会让文件进两遍、每构建响一条 `Skipping duplicate build file`；脚本已改为默认拒绝；2026-11-04 又把这 10 颗历史冗余登记连同那个与同步组指向同一目录的空经典组一并从工程里摘除（净删 48 行，每构建一次的 10 条 `Skipping duplicate build file` 归零），存量名册 `SYNC_REGISTERED` 同轮改空。当年那两颗 App 测试文件确实需要登记，是因为那时该 target 还是经典分组 ⇒ 这条记录对当时成立、对现在不成立〕
   `CLAUDE.md`、`PRODUCT_SPEC.md`、`docs/ROADMAP.md`、`MixCut.xcodeproj/project.pbxproj`（2 个新文件登记）
 - 〔上面这份名单停在 15 条那个状态，落后于实际。同日晚上又落了 3 个 App 测试文件与一批闸门，
   已在 §三 与提交历史里记账；2026-10-20 这一轮的清单见下〕

@@ -91,8 +91,44 @@ test_phase = set().union(*[phase_files[p] for t in targets
                            if t["type"] != "com.apple.product-type.application" for p in t["sources"]])
 in_test_dir = {n for r in on_disk if r.startswith("MixCutAppTests" + os.sep) for n in [os.path.basename(r)]}
 leaked_into_app = sorted(in_test_dir & app_phase)
+
+# 〔2026-11-04〕**同步组目录**里的文件不适用"三段齐全"。
+# `MixCutAppTests` 这颗 target 声明了 `fileSystemSynchronizedGroups`（对应一颗
+# PBXFileSystemSynchronizedRootGroup，path = MixCutAppTests）⇒ Xcode 按目录收文件，
+# 目录里新增一颗就自动进编译单元。本腿原先照样要求它登记，于是假红过一次
+# （FolderMixCategoryLimitTests.swift 报"缺三段"，而 App 腿实测它天天在跑）。
+# ⚠️ 逐行匹配：同步组正文里有 `explicitFileTypes = {};` 与 `explicitFolders = ();` 两对花括号，
+#    跨条目写 `[^}]*` 会在第一个 `}` 断掉 ⇒ 解析成空集，豁免会静默失效、假红复发。
+# 探针怎么复跑（合成工程 = 真工程正文改一处，仓库根仍是真实仓库）：
+#   抹掉 fileSystemSynchronizedGroups ⇒ 期望重新报「缺三段」，只报**未登记**那颗
+#     SKIP_XCODEBUILD=1 PBX_PATH=$W/no_sync.pbxproj bash scripts/check_project_integrity.sh
+#   把同步组的 path 指到磁盘上不存在的目录 ⇒ 期望报「判据失效」而不是通过
+#     SKIP_XCODEBUILD=1 PBX_PATH=$W/bogus_dir.pbxproj bash scripts/check_project_integrity.sh
+# 2026-11-04 两格都实跑过，读数与期望一致。
+sync_ids = {}
+for line in text.splitlines():
+    m = re.search(r"([0-9A-F]{24}) /\* .*? \*/ = \{isa = PBXFileSystemSynchronizedRootGroup;"
+                  r".*?path = ([^;]+);", line)
+    if m:
+        sync_ids[m.group(1)] = m.group(2).strip().strip('"')
+sync_dirs = set()
+for t in targets:
+    m = re.search(r"([0-9A-F]{24}) /\* %s \*/ = \{\n\t\t\tisa = PBXNativeTarget;(.*?)\n\t\t\};"
+                  % re.escape(t["name"]), text, re.S)
+    fsg = re.search(r"fileSystemSynchronizedGroups = \((.*?)\);", m.group(2), re.S) if m else None
+    if fsg:
+        sync_dirs |= {sync_ids[i] for i in re.findall(r"([0-9A-F]{24})", fsg.group(1)) if i in sync_ids}
+# 同步目录在取样面里是**顶层相对路径**（`os.walk` 出的 relpath 以仓库根为基准）
+sync_prefixes = tuple(d + os.sep for d in sorted(sync_dirs))
+exempt_sync = sorted({os.path.basename(r) for r in on_disk if r.startswith(sync_prefixes)})
+if sync_dirs and not exempt_sync:
+    print(f"FAIL[判据失效] 解析出同步目录 {sorted(sync_dirs)} 却与磁盘取样面无交集 ⇒ 判定链已断")
+    sys.exit(1)
+
 for n in sorted(set(names)):
     rel = next(r for r in on_disk if os.path.basename(r) == n)
+    if sync_prefixes and rel.startswith(sync_prefixes):
+        continue          # 同步目录：登记反而制造 `Skipping duplicate build file`（存量守恒由 check_pbx_registration.py 的名册管）
     want_phase = test_phase if rel.startswith("MixCutAppTests" + os.sep) else app_phase
     gaps = []
     if n not in build_files:
@@ -112,6 +148,9 @@ print(f"源码树 swift 文件: {len(on_disk)} 个（唯一文件名 {len(set(na
 print(f"pbxproj: BuildFile={len(build_files)} SourcesPhase={len(in_phase)} FileRef={len(filerefs)}")
 print(f"targets: {'、'.join(t['name'] for t in targets)}"
       f"（App target {len(app_targets)} 颗）；Sources phase 共 {len(phase_files)} 颗，被 target 引用 {len(referenced)} 颗")
+
+print(f"同步目录（按 target 的 fileSystemSynchronizedGroups 解析，不适用三段齐全）："
+      f"{'、'.join(sorted(sync_dirs)) or '无'}，豁免取样面 {len(exempt_sync)} 颗")
 
 failed = False
 if dupes:
