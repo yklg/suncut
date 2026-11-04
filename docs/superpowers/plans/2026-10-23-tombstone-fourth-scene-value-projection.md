@@ -71,7 +71,7 @@
 | A′ 只把 `displayableSegmentCount` 换回 `segments.count` | 一行，报错点回滚 | 无 | 无 | **不合格**：混剪补建的内部段重新被算进用户可见分镜数（界线丢一处），且下次再需要逐元素读时同一个洞原样重开 |
 | B 给 `.video` 补消费者 | `ContentView` 剪枝分支接住 payload 里已有的 video ids；`ProjectViewModel` 加一颗纯剪函数 | 只读 `change`，不改发布口、不改 `isPrunable` | 让「有没有人接得住才叫能剪」这条既有纪律第一次在视频档成立 | 根因层✓ 非遮盖✓ 不增耦合✓ |
 | B′ 顺带让视频删除咽喉也 note `.video` | 会翻 `UndoGraceMachine.swift:194` 那条特例与 UG-G13（它数的是 `scripts/check_undo_guards.sh:317` 那条 `.video` 分支） | 递归前提（`loadSegments` 首行 `flushNow()`）要一起重评 | —— | **本轮不做**，登记 C-2（跨模块契约变更，须单独评审） |
-| C 出口体内过门 | 在 `MixCut/Models/Video.swift:147` 与 `:150` 体内滤死对象 | 19 处调用方全部受影响 | —— | **不合格为主刀**：`.live` 形态已被门钉死不许跨边用（那条腿叫 `noEdgeLiveFaulting`，见 `Tests/MixCutCoreTests/TombstoneReadGuardTests.swift:1163`，它的报错文案写明「必须改为标识符优先」），而标识符优先要在出口体内 fetch ⇒ 把一次 UI 读变成两次存储访问；且那个相位还没测 |
+| C 出口体内过门 | 在 `MixCut/Models/Video.swift:147` 与 `:150` 体内滤死对象 | 19 处调用方全部受影响 | —— | **不合格为主刀**：`.live` 形态已被门钉死不许跨边用（那条腿叫 `noEdgeLiveFaulting`，见 `Tests/MixCutCoreTests/TombstoneReadGuardTests.swift:1374`，它的报错文案写明「必须改为标识符优先」），而标识符优先要在出口体内 fetch ⇒ 把一次 UI 读变成两次存储访问；且那个相位还没测 |
 | D 让门重新看见真源 + 补 E3 欠账 | 扫描面扩到 Models 出口；新门 G24/G25；T-33 名册改口 | 会让既有守卫**合法变红**，必须同笔销账 | 收口「真源在哪一层」与「门扫哪一层」不再分叉 | 根因层✓ 非遮盖✓ 不增耦合✓ |
 
 **推荐**：A + B 同笔落地，D 同笔补门并把 T-33/E1 那批合法红项一起销账；C 不作主刀、只作欠账 + 一格矩阵。理由：A 是唯一能**构造性消灭**这条失败面的做法（body 再也拿不到可死对象），B 是 A 的配套（值型行才谈得上按 id 剪；装引用时剪枝自己就要 fault），D 是防止「下一次收口又把热读点搬出门的射程」。
@@ -103,7 +103,7 @@
    `[Perf] ProjectOverview` 那行日志（`:106`）保持原样 —— 它是 E2 的现成验收点，改前读数 37ms / videos=30 / segs=135。
 3. `MixCut/ViewModels/ProjectViewModel.swift`：`pruneDeletedProjects`（`:329`）里那次「整颗清空快照」（`:334`）保留，但注释要改口 —— 现在快照装的是值，「成了一串死引用」这句话会变成假话。
 4. `MixCut/Views/Overview/ProjectOverviewView.swift`：`:145` 的 `snapshot.videos.isEmpty` → `snapshot.rows.isEmpty`；`:196` 的 `ForEach(snapshot.videos)` → `ForEach(snapshot.rows)`；
-   `VideoCard` 的入参 `video: Video` → `row: OverviewVideoRow`，body 内五处读数（`:427` 名字、`:432` 时长、`:435` 分辨率、`:438` 段数、`thumbnailPath` 在 `MixCut/Views/Overview/ProjectOverviewView.swift:471`）全部吃行内值，
+   `VideoCard` 的入参 `video: Video` → `row: OverviewVideoRow`，body 内五处读数（`:427` 名字、`:432` 时长、`:435` 分辨率、`:438` 段数、`thumbnailPath` 在 `MixCut/Views/Overview/ProjectOverviewView.swift:472`）全部吃行内值，
    `videoAspectRatio`（`:412`）改吃 `row.width`/`row.height`。
 5. `MixCut/Views/Overview/ProjectOverviewView.swift:41` prewarm 改 `snapshot.thumbnailPaths`（VM 侧派生的一颗计算属性，返回 `[String]`），**整行形状保持** `ThumbnailCache.shared.prewarm(paths: …, for: project.id)` 且不换行（D7）。
 
@@ -126,7 +126,7 @@
 4. 补 E3 欠的那条反例判据（第三轮评估写了「出口不许在已删项目/已删视频上被调用」，实扫全仓不存在）：App 腿真容器 —— 删一颗视频及其段 ⇒ 对**存活**项目调两颗出口，结果里既不含被删 id、也不得让被删段参与计数。
 5. T-33 名册改口（D5）：`Tests/MixCutCoreTests/FolderMixIngestGuardTests.swift:911` 那行的 (file, needle) 从「视图片每卡分镜数」改钉「VM 侧那颗按视频摊开段数的取数点」；
    同轮改口 `:900` 那句「19 处都挂上唯一出口」的计数与说明（V1 之后 ProjectOverviewView 里不再出现 `displayableSegmentCount` 这颗字面）。
-6. 现网那条注释也要一起扫：`MixCut/Models/Video.swift:143-146` 那段「逐卡读数请用 `displayableSegmentCount`，绝不要在 ForEach 里逐卡调」——V1 之后「逐卡调」这件事整体被禁了，注释若不改就成了下一轮的错误前提。
+6. 现网那条注释也要一起扫：`MixCut/Models/Video.swift:143-161` 那段「逐卡读数请用 `displayableSegmentCount`，绝不要在 ForEach 里逐卡调」——V1 之后「逐卡调」这件事整体被禁了，注释若不改就成了下一轮的错误前提。
 
 ### 笔 V4 —— C：不作主刀，登记 + 一格矩阵（见第八节）
 
@@ -136,7 +136,7 @@
 |---|---|---|---|
 | V-1 | 删项目 ⇒ 概览 `rows` 里对应 id 消失，且 `videoCount`/`segmentCount` 与剩下的行自洽 | App 腿（真容器，`MixCutAppTests`） | 证剪枝正确；**拦不住崩**（崩的相位造不出来） |
 | V-2 | G24 契约 + 写回 `videos: [Video]` 的变异 | `swift test` | 证「投影里再没有可死引用」这一构造性事实；拦不住别处的引用型投影 |
-| V-3 | 补建的内部段不计入概览每卡数（把 `Video.swift:150` 的实现退回成 `segments.count` ⇒ 必红） | App 腿 | 界线回归腿；证明 A 没把 K9 的语义换掉 |
+| V-3 | 补建的内部段不计入概览每卡数（把 `Video.swift:145-183` 的实现退回成 `segments.count` ⇒ 必红） | App 腿 | 界线回归腿；证明 A 没把 K9 的语义换掉 |
 | V-4 | 剪与算的纯判据（Core 值函数：给 rows + ids ⇒ 新计数） | `swift test` | 证重算不等于只剪；拦不住 UI 是否真调它（由 V-5 钉） |
 | V-5 | 剪枝分支「纯剪」形状：`reloadAfterUndo`（`MixCut/App/ContentView.swift:239-249`）那段里不许出现 `load`/`flushNow`/`fetchProjects`，且两颗 video 消费者各被点名一次 | shell 门（并入 `scripts/check_undo_guards.sh`） | 证 V2 没把递归引回来；拦不住剪枝语义对错 |
 | V-6 | 扩面后的 G08/门 5 基线与 T-33 名册逐条相等（改口表同步） | `swift test` | 证「门看得见真源」；这条**本身就是本轮的回归防线** |
@@ -182,3 +182,4 @@
 | 2026-10-23 | 建册 + 全部取证只读腿跑完 | `.ips` 现场行号链；活日志第 40029–40032 行；`swift test --filter TombstoneReadGuardTests` 24 条 / 2 known issues；七支 shell 门 rc=0；三档存量扫描 128/101/15 处；本文件 DOC CLEAN 待跑 |
 | 2026-11-03 | **笔 V1–V3 落地**（D1–D7 按推荐拍定；V4 仍为「C 不作主刀」的登记，零代码）：① `OverviewSnapshot` 从装 `[Video]` 改为装 `OverviewVideoRow` 值行 + `countRows` 全量值行（自建分镜仍计入分镜总数、不进卡片）；`refreshOverviewSnapshot` 一次读全并加 `isGoneFromGraph` 前置；`VideoCard` 入参改值行，body 内五处读数全部吃行内值；prewarm 走 `snapshot.thumbnailPaths`；② `pruneDeletedOverviewVideos` 接进 `ContentView.reloadAfterUndo`，与 `importVM.pruneDeletedVideos` 同笔，纯剪不 fetch；`UndoGraceMachine` 注释改口（`isPrunable` / `prunable` 一字未改）；③ G08 与门 5 取样面扩到 Views ∪ Models，G24/G24b 值型投影契约、G25/G25d VM 持引用名册（20 处 / 6 文件）、T-33 19→18 改口；④ App 腿 `OverviewProjectionAppTests` 2 条（删视频纯剪 + 删项目清空） | `swift test` **1421 通过 / 5 known issues / rc=0**（基线 1412 + 9：`OverviewProjectionPruneTests` 5 + G24/G24b/G25/G25d 4）；`MODE=typecheck` / `MODE=silgen` PASS（279 编译单元）；`xcodebuild build-for-testing` PASS（沙盒 `-load-plugin-library` 绕法，0 error；同步组导致 8 条 duplicate build-file warning，编译仍成功）；`check_pbx_registration` PASS；G08 42→47（Models +5）、门 5 35→39（Models +4）；12 支 shell 门 + DOC CLEAN 全 PASS；**App 测试执行腿未跑**——`TEST_HOST=SunCut.app` 会在用户活库上开库，按 `CLAUDE.md` 纪律交回用户；真机连删腿 T-1 同样未跑 |
 | 2026-11-03 | **App 测试执行腿补跑（用户授权）**：先备份活库四件 + 偏好 plist；临时关 Agent 服务、把 `lastOrphanGCAt` 推到当前时刻以跳过 GC；跑完还原 | `xcodebuild test-without-building -only-testing:MixCutAppTests` ⇒ **52 passed / 0 failed**；`overviewProjectionPrunesWithoutFetching`、`overviewProjectionClearsWhenSelectedProjectIsDeleted`、`mixCarrierStillNeedsParentAnalysis` 全绿；`Suncut.store` / `-shm` / `-wal` 与备份 SHA-256 逐字节相同，`launch-ledger` 与偏好已还原；SunCut 宿主进程退出。**T-1 真机连删腿仍未跑** |
+| 2026-11-04 | **T-1 真机手测通过（用户授权，在活库 APFS 克隆上操作）**：活库 13G clone 到 `.scratch/t1-root`，用户在副本 UI 上右键连删 8 个项目（含当前 `zjm`），等 5s 撤销宽限落库 | 13:03:28–13:03:52 连续 **8 条 `GraphSettle`**（辅助卖点/过渡/卖点/爆点/文件夹混剪/zjm/花/测试）；删 `zjm` 后 `ProjectOverview` 4ms / videos=0；**app 全程存活，日志无 `Fatal` / `OBJECT_NOT_FOUND`**；删后 0 项目；活库 `store/shm/wal/launch-ledger` SHA-256 与备份相同，偏好已从快照还原；测试克隆已删除。**文件夹混剪 900×600 真机版面仍未看** |
