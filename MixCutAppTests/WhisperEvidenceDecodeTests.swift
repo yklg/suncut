@@ -134,21 +134,30 @@ struct WhisperEvidenceDecodeTests {
         #expect((s.minTokenProb ?? 0) > EmptyLensPolicy.lowTokenProbCeil)
     }
 
-    @Test("WD-6 接出来的证据喂进判定器：概率层单独存在时一律不定罪，配上音频层才定")
+    @Test("WD-6 真证据喂进判定器：概率层单独不定罪，配上能量层或名单才定罪")
     func evidenceFeedsThePolicy() throws {
         let toneSeg = try #require(Self.decode(Self.realToneJSON).transcription.first)
         let toneSignals = ASRService.probabilityLayer(fromCppTokens: toneSeg.tokens)
         // 旧版这条期望 `.emptyLens` —— 那是拿编造的 0.93 no_speech_prob 喂出来的假结论。
-        // 现在实测的真证据只允许给 hasSpeech：概率层单独不能定罪（EL-2 从规则侧钉，这条从真实数据侧钉）。
-        #expect(EmptyLensPolicy.verdict(toneSignals) == .hasSpeech,
+        // 实测真证据单独存在时只允许给 hasSpeech：概率层不能定罪（EL-2 从规则侧钉，这条从真实数据侧钉）。
+        // ⚠️ text 传空串：这条真样本的文本「字幕志愿者 杨茜茜」本身就在套话名单里，
+        //    喂进去会被名单层定罪，那就测不到"只有概率层时会不会定罪"了（那是 EL-12 的活儿）。
+        #expect(EmptyLensPolicy.verdict(toneSignals, text: "") == .hasSpeech,
                 "真·幻觉样本的概率层竟能定罪 ⇒ verdict 里被加了概率分支")
-        // 同一条证据 + 导入期派生出的有声占比 ⇒ 才判得出空镜
+        // 同一条证据 + 导入期派生出的有声占比 ⇒ 判得出空镜，且依据是能量层
         var withAudio = toneSignals
         withAudio.voicedFraction = 0.0
-        #expect(EmptyLensPolicy.verdict(withAudio) == .emptyLens,
-                "音频层给到 0 占比还不判空镜 ⇒ C 块的定罪腿断了")
-        // 但闸还关着：本轮只记录证据，不改变行为
-        #expect(!EmptyLensPolicy.shouldSuppressTagging(.emptyLens))
+        #expect(EmptyLensPolicy.verdict(withAudio, text: "") == .emptyLens(.silentWindow),
+                "能量层给到 0 占比还不判空镜 ⇒ C 块的定罪腿断了")
+        // 名单层在没有音频证据时也能定罪（自建分镜路径就是这种形状）
+        let phrase = "字幕志愿者 杨茜茜"
+        #expect(EmptyLensPolicy.verdict(toneSignals, text: phrase) == .emptyLens(.knownPhrase(phrase)),
+                "命中固定套话却没定罪 ⇒ 名单层断了，带 BGM 的空镜会整批复发")
+        // 闸已开（2026-11-04 回测完成）：判成空镜就要拦打标
+        #expect(EmptyLensPolicy.shouldSuppressTagging(.emptyLens(.silentWindow)))
+        #expect(EmptyLensPolicy.shouldSuppressTagging(.emptyLens(.knownPhrase(phrase))))
+        #expect(!EmptyLensPolicy.shouldSuppressTagging(.hasSpeech),
+                "有声音频证据却被拦 ⇒ 放行侧被改坏了，真口播会整批丢标签")
     }
 
     // MARK: 另一条引擎分支（族，不是副本）

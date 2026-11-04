@@ -269,11 +269,11 @@ public enum SegmentRetakeRule {
     /// 单字重合（"的""一"）太常见，按单字判会天天误报，所以取二字组。
     // known-dead: 只有测试调用者（TC-115 用它钉锚的性质）。将来加第二颗锚时应由门面在启动期自检调用。
     public static func anchorIsContentFree(against sample: String) -> Bool {
-        let anchor = Array(hanziStream(ASRPolicy.retakeStyleAnchor))
+        let anchor = Array(contentStream(ASRPolicy.retakeStyleAnchor))
         guard anchor.count >= 2 else { return true }
         var anchorGrams = Set<String>()
         for i in 0...(anchor.count - 2) { anchorGrams.insert(String(anchor[i..<(i + 2)])) }
-        let sample = Array(hanziStream(sample))
+        let sample = Array(contentStream(sample))
         guard sample.count >= 2 else { return true }
         for i in 0...(sample.count - 2) where anchorGrams.contains(String(sample[i..<(i + 2)])) {
             return false
@@ -285,8 +285,8 @@ public enum SegmentRetakeRule {
     /// 单测与运行期探针共用这一份实现（守卫 G26 守它只有一处定义）。
     public static func containsAnchorEcho(_ text: String, anchor: String) -> Bool {
         let window = 6
-        let needle = Array(hanziStream(anchor))
-        let hay = hanziStream(text)
+        let needle = Array(contentStream(anchor))
+        let hay = contentStream(text)
         guard needle.count >= window, !hay.isEmpty else { return false }
         for i in 0...(needle.count - window) {
             if hay.contains(String(needle[i..<(i + window)])) { return true }
@@ -297,7 +297,11 @@ public enum SegmentRetakeRule {
     // MARK: - 私有小工具
 
     /// 只留汉字与字母数字（标点/空白在 whisper 输出里位置不定，参与比对会假阳/假阴）。
-    private static func hanziStream(_ text: String) -> String {
+    ///
+    /// ⚠️ 这是**全仓唯一**的"文本归一化"口径：锚的零交集比对（上面两处）与
+    /// `EmptyLensPolicy` 的已知套话命中共用它。另写一份归一化＝两套真源，
+    /// 而这两处对"标点算不算内容"的答案必须一致，否则同一条文本一处判命中、一处判不命中。
+    public static func contentStream(_ text: String) -> String {
         String(text.unicodeScalars.filter { scalar in
             CharacterSet.alphanumerics.contains(scalar)
         })

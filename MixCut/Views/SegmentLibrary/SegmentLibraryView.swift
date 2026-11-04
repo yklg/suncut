@@ -2148,6 +2148,7 @@ struct SemanticTypeTag: View {
         case .productPositioning: return .teal
         case .usageEducation: return .indigo
         case .transition: return .gray
+        case .emptyShot: return .brown
         }
     }
 }

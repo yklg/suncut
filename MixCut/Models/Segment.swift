@@ -26,6 +26,16 @@ enum SemanticType: String, Codable, CaseIterable, Identifiable {
     case productPositioning = "产品定位"
     case usageEducation = "产品使用教育"
     case transition = "过渡"
+    /// 空镜 —— **机器专属标签**：只由 `EmptyLensPolicy` 的判定写入，
+    /// ⚠️ **不许**出现在任何 AI prompt 的可选标签列表里（那条判据见 `EmptyLensTagBoundaryTests`）。
+    /// 理由：空镜是"这段音频里没有人说话"，而模型只拿到文本，看幻觉文本是看不出静音的；
+    /// 让它可选，等于给它一条凭文本编造静音结论的口子。判据本身也不靠模型：
+    /// 吃的是 silencedetect 的有声占比与 whisper 的固定幻觉套话。
+    /// 为什么写成标签而不是"留空"：留空会被两处 `if types.isEmpty → [.transition]` 兜底
+    /// 和启动期 `UPDATE … WHERE ZSEMANTICTYPESDATA IS NULL` 那条补数据 SQL 重新盖章成「过渡」——
+    /// 三处默认值都会把"被拦下"这件事静默撤销掉（2026-11-04 实读发现）。
+    /// 写成标签还顺带满足"可见、可筛、可手改（＝翻案入口）"，且不动 schema。
+    case emptyShot = "空镜"
 
     var id: String { rawValue }
 
@@ -43,6 +53,7 @@ enum SemanticType: String, Codable, CaseIterable, Identifiable {
         case .productPositioning: return "teal"
         case .usageEducation: return "indigo"
         case .transition: return "gray"
+        case .emptyShot: return "brown"
         }
     }
 }

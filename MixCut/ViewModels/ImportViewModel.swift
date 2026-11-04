@@ -556,6 +556,16 @@ final class ImportViewModel {
             } else if seg.semanticTypes.isEmpty {
                 seg.semanticTypes = [.transition]
             }
+            // 空镜闸的第二处出口 —— 自建分镜（用户自己上传的文件整听整打）。
+            // 这条路径不调 `analyzeLocally` ⇒ 没有 silencePeriods，能量层拿不到输入，
+            // 只有名单层能生效；不接这一处，最容易撞空镜的那类素材会整批绕过闸。
+            // ⚠️ 全仓拦打标只有这两处出口（这里 + `applyEmptyLensGate`），新增第三条要同轮挂上。
+            let selfBuiltVerdict = EmptyLensPolicy.verdict(EmptyLensSignals(), text: seg.text)
+            if EmptyLensPolicy.shouldSuppressTagging(selfBuiltVerdict) {
+                MixLog.info("[空镜闸] \(destURL.lastPathComponent) 自建分镜 拦下打标 "
+                            + "依据=\(Self.emptyLensBasisText(selfBuiltVerdict)) 文本=\(seg.text.prefix(16))")
+                seg.semanticTypes = [.emptyShot]
+            }
 
             // 8) 就绪
             video.status = .completed
@@ -800,10 +810,10 @@ final class ImportViewModel {
                 format: "整片保留：%.1fs / %d 句，未调用模型切分",
                 video.duration, asr.sentences.count
             )
-            // 整片保留只有一条覆盖全片的段 —— 它不是空镜回测的主要对象，但出口在这里，
-            // 少挂一条就等于"这类素材一条数都取不到"，而那种缺失在日志里看不出来。
-            recordEmptyLensReadout(video.segments, localAnalysis: localAnalysis,
-                                   asr: asr, videoName: video.name)
+            // 整片保留只有一条覆盖全片的段，且这一支不走逐段重听 ⇒ 文本此刻已是终态，直接判。
+            // 少挂这条出口，"整片就一段"的素材就永远不经过空镜闸。
+            applyEmptyLensGate(video.segments, localAnalysis: localAnalysis,
+                               asr: asr, videoName: video.name)
             await generateSegmentThumbnails(segments: video.segments, videoPath: video.localPath)
             MixLog.info(" 整片保留: video=\(video.name), \(video.segmentationGuardNote ?? "")")
             return .success
@@ -850,16 +860,16 @@ final class ImportViewModel {
             MixLog.info(" 分镜规划改写: video=\(video.name), \(note)")
         }
 
-        // 台账必须排在逐段重听**之前**：那一步会花钱重跑 ASR，而回测要的是"开闸前这条分镜
-        // 本来会被怎么判"——放在后面读到的就是被重听改写过的文本，取到的是改后的现场。
-        recordEmptyLensReadout(video.segments, localAnalysis: localAnalysis,
-                               asr: asr, videoName: video.name)
-
         // 台词以「逐分镜各自切音频独立 ASR」为准覆盖：整片流式 ASR 绝对时间戳会漂移、
         // 按整片时间戳切出的分镜台词会错位；单段短音频 ASR 永远准。边界已由本地场景/静音+AI 定好，
         // 这里只重识别各分镜台词（失败段保留 commitAIPartition 给的原文/AI 文本）。
         phase = .transcribing
         await autoReidentifySegments(video, context: context)
+
+        // 空镜闸排在逐段重听**之后**：名单层吃文本，而重听会改写文本 ⇒ 判定必须用终态文本，
+        // 否则拦完再看新文本，依据与屏上的台词会对不上。
+        applyEmptyLensGate(video.segments, localAnalysis: localAnalysis,
+                           asr: asr, videoName: video.name)
 
         await generateSegmentThumbnails(
             segments: video.segments,
@@ -869,28 +879,36 @@ final class ImportViewModel {
         return .success
     }
 
-    /// C 块空镜识别的**只读回测台账**：逐条分镜摊开「窗口 / 有声占比 / 逐 token 概率 / 判定」。
+    /// C 块空镜闸的**执行点**：逐条分镜判一次，判成空镜 ⇒ 语义标签只写「空镜」、
+    /// 覆盖掉 AI 刚给的那批类型；台词文本与判定依据一律保留（留痕可翻案 —— 翻案入口是
+    /// 分镜属性面板里手动改标签，那条路径不经过这里）。
     ///
-    /// 为什么要这颗开关而不是直接改行为：`EmptyLensPolicy.gateOpen` 现在是 **false**，而开闸的
-    /// 前置纪律是"先在他的真分镜上只读回测、逐条摊开原值"（计划 §五 第 3 项）。这批数字既不落库
-    /// （不占 schema、不为它迁移活库）也不上屏，除了日志没有第二个去处 —— 没有它，`voicedFractionCeil
-    /// = 0.05` 就永远只是一句"看起来合理"的话，而本仓纪律是静态核对 ≠ 跑过。
+    /// 判定本住在 Core（`EmptyLensPolicy`），这里只做接线与落库：两条定罪腿是
+    /// ①窗口内有声占比 ≤ 0.20（能量层，回测在 `EmptyLensPolicy.voicedFractionCeil` 注释里）
+    /// ②整段文本命中 whisper 固定幻觉套话（名单层，专为**带 BGM 的空镜**而活 ——
+    ///   那类素材能量层读出来是占比 1.000，看不见）。
     ///
-    /// 生效条件：`#if DEBUG` 内 **且** 环境变量 `MIXCUT_DEBUG_EMPTY_LENS_READOUT=1`；
-    /// 不设、设错值一律不跑（注入永远不能变成默认态）。守法与 `debugSaveHolds`、
-    /// `FileHelper.swift:17-25` 那颗假库开关同族。
-    /// 拦不住什么：它**不写任何状态**（不动 text / semanticTypes / status），所以既不能证明阈值
-    /// 该开，也不能证明闸已开 —— 它只出数。
-    /// 最坏代价：每个视频多 N 行日志（N = 分镜数）加一次纯算术的区间交集，不起新进程、不重新探测。
+    /// 为什么覆盖成标签「空镜」而不是把标签**留空**：留空会被三处默认值悄悄撤销 ——
+    /// `AIAnalysisService.tagSingleSegment` 的 `if types.isEmpty { [.transition] }`、
+    /// 本文件自建分镜那处的同名兜底，以及启动期 `MixCutApp.fixMissingSemanticTypes`
+    /// 那条 `UPDATE … WHERE ZSEMANTICTYPESDATA IS NULL`。写一个非空标签绕开全部三处，
+    /// 还顺带满足"可见、可筛、可手改"，且不动 schema（值变化，不是加列）。
     ///
-    /// ⚠️ 两个调用点（整片保留分支 / 正常切分分支）就是建段的两条出口，少挂一条就漏一种素材形状。
-    private func recordEmptyLensReadout(_ segments: [Segment],
-                                        localAnalysis: VideoLocalAnalysis,
-                                        asr: TranscriptionResult,
-                                        videoName: String) {
-        #if DEBUG
-        guard ProcessInfo.processInfo.environment["MIXCUT_DEBUG_EMPTY_LENS_READOUT"] == "1" else { return }
+    /// 生效条件：**无开关**，由 `EmptyLensPolicy.gateOpen` 这一颗总闸控制（2026-11-04 已开）。
+    /// 拦不住什么：`undetermined` 一律放行；纯音乐被转写成非套话内容（如乐器名）也放行 ——
+    ///   见 `EmptyLensPolicy` 文件头"拦不住什么"。
+    /// 最坏代价：真口播恰好以套话开头 ⇒ 被误拦（依据记进日志，可手改翻案）。
+    ///
+    /// ⚠️ 两个调用点就是建段的两条出口（整片保留分支 / 正常切分分支），少挂一条就漏一种素材形状。
+    /// 正常切分分支里这一句必须排在 `autoReidentifySegments` **之后**：名单层吃文本，
+    /// 而逐段重听会改写文本 —— 排在前面用的是被改写前的旧字，判定依据就不是终态依据。
+    /// （能量层只看时间窗，不受改写影响；这条顺序是为名单层定的。）
+    private func applyEmptyLensGate(_ segments: [Segment],
+                                    localAnalysis: VideoLocalAnalysis,
+                                    asr: TranscriptionResult,
+                                    videoName: String) {
         let silences = localAnalysis.silencePeriods.map { ($0.start, $0.end) }
+        let readout = Self.emptyLensReadoutEnabled
         for seg in segments.sorted(by: { $0.startTime < $1.startTime }) {
             // 分镜窗口压在多条 whisper 段上 ⇒ 概率层按 token 数加权合成（口径只住在 Core 那一处）
             let overlapping = asr.rawSentences.filter { $0.start < seg.endTime && $0.end > seg.startTime }
@@ -898,18 +916,55 @@ final class ImportViewModel {
                 overlapping.compactMap(\.emptyLensSignals))
             signals.voicedFraction = EmptyLensPolicy.voicedFraction(
                 windowStart: seg.startTime, windowEnd: seg.endTime, silentIntervals: silences)
-            let verdict = EmptyLensPolicy.verdict(signals)
-            let tf = seg.text.isEmpty ? "-" : String(seg.text.prefix(12))
-            MixLog.info("[空镜台账] \(videoName) 段\(seg.segmentIndex) "
-                        + "窗[\(String(format: "%.2f", seg.startTime)),\(String(format: "%.2f", seg.endTime))] "
-                        + "占比=\(signals.voicedFraction.map { String(format: "%.3f", $0) } ?? "无静音数据") "
-                        + "颗数=\(signals.tokenCount.map(String.init) ?? "无概率") "
-                        + "均值=\(signals.meanTokenProb.map { String(format: "%.4f", $0) } ?? "-") "
-                        + "最低=\(signals.minTokenProb.map { String(format: "%.4f", $0) } ?? "-") "
-                        + "低置占比=\(signals.lowTokenProbFraction.map { String(format: "%.3f", $0) } ?? "-") "
-                        + "判定=\(verdict.rawValue) 句数=\(overlapping.count) 文本=\(tf)")
+            let verdict = EmptyLensPolicy.verdict(signals, text: seg.text)
+            guard EmptyLensPolicy.shouldSuppressTagging(verdict) else {
+                if readout { Self.logEmptyLensReadout(videoName, seg, signals, verdict, overlapping.count) }
+                continue
+            }
+            let before = seg.semanticTypes.map(\.rawValue).joined(separator: "/")
+            seg.semanticTypes = [.emptyShot]
+            // 覆盖什么、凭什么覆盖，必须一起出日志：屏上只剩一颗「空镜」标签时，
+            // 这条是唯一能说"依据是哪条腿、原来是什么"的地方。
+            MixLog.info("[空镜闸] \(videoName) 段\(seg.segmentIndex) 拦下打标 依据=\(Self.emptyLensBasisText(verdict)) "
+                        + "原判=\(before.isEmpty ? "无" : before) 文本=\(seg.text.prefix(16))")
+            if readout { Self.logEmptyLensReadout(videoName, seg, signals, verdict, overlapping.count) }
         }
+    }
+
+    /// 只读回测台账的开关：`#if DEBUG` 内 **且** `MIXCUT_DEBUG_EMPTY_LENS_READOUT=1`。
+    /// 不设、设错值一律不打（注入永远不能变成默认态），守法与 `debugSaveHolds`、
+    /// `FileHelper.swift:17-25` 那颗假库开关同族。它只多打日志，**不影响任何判定**。
+    private static var emptyLensReadoutEnabled: Bool {
+        #if DEBUG
+        return ProcessInfo.processInfo.environment["MIXCUT_DEBUG_EMPTY_LENS_READOUT"] == "1"
+        #else
+        return false
         #endif
+    }
+
+    private static func emptyLensBasisText(_ v: EmptyLensVerdict) -> String {
+        switch v {
+        case .emptyLens(.silentWindow): return "能量层:占比≤\(EmptyLensPolicy.voicedFractionCeil)"
+        case .emptyLens(.knownPhrase(let p)): return "名单层:命中「\(p)」"
+        case .hasSpeech: return "有声证据"
+        case .undetermined: return "证据不足"
+        }
+    }
+
+    /// 逐条分镜摊开原始读数（窗口／占比／颗数／均值／最低／低置占比／判定）。
+    /// 开闸之后它仍是唯一能复核"阈值该不该动"的地方 —— 屏上只显示结论，不显示数。
+    private static func logEmptyLensReadout(_ videoName: String, _ seg: Segment,
+                                            _ signals: EmptyLensSignals,
+                                            _ verdict: EmptyLensVerdict, _ sentenceCount: Int) {
+        let tf = seg.text.isEmpty ? "-" : String(seg.text.prefix(12))
+        MixLog.info("[空镜台账] \(videoName) 段\(seg.segmentIndex) "
+                    + "窗[\(String(format: "%.2f", seg.startTime)),\(String(format: "%.2f", seg.endTime))] "
+                    + "占比=\(signals.voicedFraction.map { String(format: "%.3f", $0) } ?? "无静音数据") "
+                    + "颗数=\(signals.tokenCount.map(String.init) ?? "无概率") "
+                    + "均值=\(signals.meanTokenProb.map { String(format: "%.4f", $0) } ?? "-") "
+                    + "最低=\(signals.minTokenProb.map { String(format: "%.4f", $0) } ?? "-") "
+                    + "低置占比=\(signals.lowTokenProbFraction.map { String(format: "%.3f", $0) } ?? "-") "
+                    + "判定=\(verdict.label) 句数=\(sentenceCount) 文本=\(tf)")
     }
 
     // MARK: - 视频删除（解除关联 vs 真删除）

@@ -223,7 +223,7 @@
 | ~~**G-f**~~ | 〔已作废，见 R19〕原要求"对 `VideoStatus` 的 switch 不得带 `default:`" | — | 它只为 D19 的新枚举服务。④ 不加枚举 ⇒ **整块取消**：不必改 4 处 UI 映射、不必加这条守卫。实测留档（6 处 switch 仅 2 处穷尽、4 处带 default：`ImportView.swift:529/:1084/:1381`、`MixCutApp.swift:827`）**仍然有效**——它是"将来真要加状态时"的已知地形，别重测一遍 |
 | **G-g** | 计划文档里的 `文件:行号` 引用必须仍落在文件长度内 | `docs/superpowers/plans/*.md` | 直接把本轮 `check_doc.py` 的那条腿搬进仓；本仓**无 remote、钩子是空壳**，没有 CI 会替我们兜行号腐烂 |
 | **G-h** | 新通路关键路径必须打 `[FolderMix]` 日志前缀（扫描 / 择片 / 建 N 方案 / 丢段四处） | `FolderMix*`、`importClipsWithoutAnalysis` | 数前缀的写法照既有先例：`check_navigation_readiness_guards.sh` 的 G07 用 `expect_count` 数 `[Readiness]`。不加前缀 ⇒ 桌面端报障只能靠猜 |
-| **G-i** | 视频扩展名字面量（`"mp4"`/`"mov"`/`"avi"`/`"m4v"`/`"mkv"` 的数组形态）全仓只许出现在 `Sources/MixCutCore/FolderMixScanner.swift` 一处 | 全部 `MixCut/**` + `Sources/**` | Step 1 已经把三份旧判据收成一处（`ImportView.swift:476` / `MixCutApp.swift:1144` / `ImportViewModel.swift:1375` 现全走 `VideoFileFormat`）。这条守的是"下一个消费者又自己抄一份"—— 半迁移 = 0。**豁免**：文案里以自然语言提到容器格式（如分镜库上传提示 `SegmentLibraryView.swift:511` 那句「mp4/mov」）不算判据副本，它不是白名单而是提示语 |
+| **G-i** | 视频扩展名字面量（`"mp4"`/`"mov"`/`"avi"`/`"m4v"`/`"mkv"` 的数组形态）全仓只许出现在 `Sources/MixCutCore/FolderMixScanner.swift` 一处 | 全部 `MixCut/**` + `Sources/**` | Step 1 已经把三份旧判据收成一处（`ImportView.swift:476` / `MixCutApp.swift:1144` / `ImportViewModel.swift:1430` 现全走 `VideoFileFormat`）。这条守的是"下一个消费者又自己抄一份"—— 半迁移 = 0。**豁免**：文案里以自然语言提到容器格式（如分镜库上传提示 `SegmentLibraryView.swift:511` 那句「mp4/mov」）不算判据副本，它不是白名单而是提示语 |
 | **G-j** | `struct SplitMix64` 全仓只许有一份定义 | 全部 `MixCut/**` + `Sources/**` + `Tests/**` | Step 1 把 `ProjectVideoDedupTests` 的 private 副本收编进 Core（`FolderMixPicker.swift`），并把三处引用它的注释同轮改口（`OrphanFileFinderTests.swift:121`、`WhisperModelCatalogTests.swift:38`、`SegmentTranscribeRuleTests.swift:224`）。同算法由 `FolderMixPickerTests.P12` 的四条 golden 读数钉住 ⇒ 迁移零行为变化。这条守的是仓内已两次记过的裁定「复制随机源 = 第二份真源」 |
 
 - `docs/ROADMAP.md:135` 的「批量导入」条目结案 —— 〔已落地 2026-10-20，见第八节 Step 6〕。
@@ -448,7 +448,7 @@ Step 1–7 落地后的收口状态。左列是第 1–11 条编号；"机器取
 | 校验和读不出（精确档） | **给它独占一键**（`unreadable:<path>`），不退回路径、不并入任何素材 | 日志逐名 + 类别行仍在 | 退回路径会让它与另一颗同内容素材并键 ⇒ 用户以为开关生效，实际那一格是猜的 |
 | 还原会话时目录读不到（外接盘被拔 / 改名 / 权限） | **保留用户选择 + 红字让他重选**（不清排列与勾选） | `errorMessage` 两行：读不到的原因 + 「你的类别顺序与勾选都还在」 | 目录可读性只由 IO 面报（`rootError`），VM 不自己裸问 `fileExists`（G-M01 名册） |
 | 用户在入库/探针途中点「停止」 | **停止 ≠ 删除**（档 G）：已入库与已建项目保留，未建方案不出现 | statusText 明说 + 日志 `[FolderMix] 用户停止` | FMX-20 结案给既有三件：G12 真删名册 + CR-5（service 零 delete）+ 真机第 9 步 |
-| 单文件读不出时长（损坏/格式不支持） | **放行 + 标记**，逐文件名上报 | 沿用 `importSelfSegments` 既有硬规则：`failedUnreadable` 非空必须 toast 且列前 3 个文件名（`ImportViewModel.swift:572-573`） | 判据：不得回到"静默 continue 让文件凭空消失" |
+| 单文件读不出时长（损坏/格式不支持） | **放行 + 标记**，逐文件名上报 | 沿用 `importSelfSegments` 既有硬规则：`failedUnreadable` 非空必须 toast 且列前 3 个文件名（`ImportViewModel.swift:582-583`） | 判据：不得回到"静默 continue 让文件凭空消失" |
 | 落盘失败（磁盘满 / 无权限 / 外接盘拔出） | **放行 + 标记**，该类候选减少 | 同上 `failedCopy` 通道（`:562`）；开工前 `DiskSpaceBudget` 预检报总量 | 预检读数与实际拷贝失败数须可对账 |
 | **`computeFileHash` 返回 nil**（IO 抖动 / 内存压力） | **拒绝该文件**（不再退 UUID 目录名） | 走 `failedUnreadable` 同型通道，逐文件名 + 原因上报 | ⚠ 现状是 `:426-429` 用 UUID 当目录名继续入库，**并且跳过 `:412` 的去重分支** ⇒ 去重整体失效，同一文件会重复入库成多行 Video、各带一条整片段，把 D3 的"不回放"直接击穿。C 一次几十条 ⇒ 命中概率被放大。判据：`Videos/<uuid>/` 形态的行数必须恒为 0 |
 | 抽片中该类别 used 已耗尽 | **放行 + 标记**（R3 自动重置并回报 `resetCategories`） | 预览卡标「该类已循环，第 k 条起会与前几条重复」 | 必验"重置后确实允许重复"且界面不假装还是新的 |

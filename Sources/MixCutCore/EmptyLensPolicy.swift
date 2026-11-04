@@ -43,8 +43,11 @@ import Foundation
 // ⇒ **mean p 不能定罪**：最强的那条幻觉（0.9238839）和真口播（0.9832814）只差 0.06，
 //   而真口播里一个生僻词/英文品牌 token 就会把 min p 拉低。
 //   早前联网调研说的"静音段幻觉是高置信度输出"在本地被复现了，本文件的判定规则
-//   因此**只许让音频层定罪**，概率层降级为留痕与回测取样点。
-//   判据里的黄金值由 EL-7 逐位复现，"不能定罪"这条由 EL-2／EL-3／EL-11 钉住。
+//   因此**概率层不参与定罪**（定罪只许能量层与套话名单层），概率字段留作痕迹与回测取样点。
+//   判据里的黄金值由 EL-7 逐位复现，"不能定罪"这条由 EL-2／EL-3 钉住。
+//   ⚠️ 另一条被实测**否掉**的候选是"字数密度层"（认出的字太少就算空镜）：他库内
+//   `过渡/14.mp4` 的「请不吝点赞 订阅 转发 打赏」密度 2.06 字/秒，而三条已知真口播素材是
+//   1.84–6.52 字/秒 —— 区间重叠，密度分不开。这一条 2026-11-04 回测结论，别再造这一层。
 //
 // ## 音频层这一轮能接上多少（也是实测/实查，不是设想）
 //
@@ -56,8 +59,9 @@ import Foundation
 //   （数字被丢），且唯一活调用点在导出侧 `concat` 里 —— 导入期根本没有这颗数据。
 //   ⇒ 所以 signals 里没有 `rmsLevelDb` 字段；要它就得新探测，本轮不做。
 // - 自建分镜路径（`ImportViewModel.importSelfSegments`）**不调 `analyzeLocally`**
-//   ⇒ 那条路径上 silencePeriods 不存在，只能拿到概率层 ⇒ 按本文件规则恒为
-//   `undetermined`（＝不拦）。这是范围事实，不是漏接。
+//   ⇒ 那条路径上 silencePeriods 不存在，能量层拿不到证据。但套话名单层**只看文本**，
+//   所以那条路径不是全盲：命中名单的段照样判空镜，没命中的才是 `undetermined`（＝不拦）。
+//   这是范围事实，不是漏接。
 // ============================================================================
 
 /// 一段音频上能拿到的"有没有人说话"的证据。全部可选 ——
@@ -119,13 +123,39 @@ public struct EmptyLensSignals: Codable, Equatable, Hashable, Sendable {
     }
 }
 
-public enum EmptyLensVerdict: String, Equatable, Sendable {
-    /// 证据足够认定"这段没人说话" ⇒ 台词不写、不打语义标签、记为 `.emptyLens` 终态档
-    case emptyLens
+/// 定罪依据 —— **必须带出来**，不能只给一个布尔。
+/// 「留痕可翻案」要求屏上和库里都能回答"这段凭什么被判空镜"，而两条腿的置信度与代价不同：
+/// 安静窗口是硬证据（音频里没有声音），命中套话是模式证据（音频可能有声音、只是内容固定）。
+public enum EmptyLensBasis: Codable, Equatable, Sendable {
+    /// 窗口内有声占比 ≤ `voicedFractionCeil`
+    case silentWindow
+    /// 整段文本逐字命中 `knownHallucinationPhrases` 里某条 whisper 固定幻觉
+    case knownPhrase(String)
+}
+
+public enum EmptyLensVerdict: Codable, Equatable, Sendable {
+    /// 证据足够认定"这段没人说话" ⇒ 不打语义标签、台词留痕、记 `basis` 供翻案
+    case emptyLens(EmptyLensBasis)
     /// 有说话的证据 ⇒ 走既有链路
     case hasSpeech
     /// 证据不足 ⇒ **按 hasSpeech 处理**（保守：宁可留一条错标，不可静默丢掉一条真口播）
     case undetermined
+
+    /// 给日志与屏上的短标签（`basis` 的原文要另读，别把套话整句塞进列名）
+    public var label: String {
+        switch self {
+        case .emptyLens(.silentWindow): return "emptyLens:silent"
+        case .emptyLens(.knownPhrase):  return "emptyLens:phrase"
+        case .hasSpeech:                return "hasSpeech"
+        case .undetermined:             return "undetermined"
+        }
+    }
+
+    /// 只给"是不是空镜"，不带依据 —— 供只关心结论的调用方（判定别在这一层分叉）
+    public var isEmptyLens: Bool {
+        if case .emptyLens = self { return true }
+        return false
+    }
 }
 
 public enum EmptyLensPolicy {
@@ -140,10 +170,91 @@ public enum EmptyLensPolicy {
     /// 所以未经大样本回测是可接受的；一旦有人想把它升格成定罪阈值，必须先回测。
     public static let lowTokenProbCeil: Double = 0.2
 
-    /// 有声占比上界：一段里几乎全是静音/杂音 ⇒ **唯一的定罪证据**。
+    /// 有声占比上界：一段里几乎全是静音/杂音 ⇒ 定罪证据之一。
     /// 与 `SceneDetectionService.detectSilence` 的 `-30dB / 0.3s` 口径配套。
-    /// ⚠️ 未经回测；开闸前须在他的真分镜上摊开每条原值。
-    public static let voicedFractionCeil: Double = 0.05
+    ///
+    /// **0.20 是回测定出来的，不是拍的**（2026-11-04，他的真库 `~/Desktop/褚橙` 全 108 条 +
+    /// 分层抽 22 条逐段跑识别，台架逐位复现过 App 的读数）：
+    /// - 整片分布是**双峰**的：100/108 条 ≥0.90、4 条 0.70–0.90、4 条 <0.15，
+    ///   **0.15–0.70 之间一条都没有** ⇒ 这条线只能落在两峰之间的空档里，0.20 在档内。
+    /// - 抬到 0.20 共拦 44/277 段，来源只有 4 条素材：`file_v3_…mov`(整片 0.082)、
+    ///   `李巍/卖点/12（吃）.mp4`(0.095)、`李巍/过渡/11.mp4`(0.080，**用户确认没人说话**)、
+    ///   `李巍/过渡/4.0.mp4`(0.000) ⇒ **零已知误杀**。
+    /// - 为什么不是留在 0.05：0.05 会漏掉 `file_v3` 那段占比 0.160 的窗口 —— 它 11.5 秒里
+    ///   只有 1.8 秒冒声，whisper 就认出一个置信 2.8% 的「鸡」字，正是要拦的形状。
+    /// - 为什么不再往上抬：0.25 与 0.20 抓的是同一批段，多出来的 3 段仍出自这 4 条；
+    ///   而线越高越靠近"说话中间有长停顿"的真口播 —— 库里**目前还没有这种样本**，
+    ///   所以再抬就是没有依据的冒险。
+    public static let voicedFractionCeil: Double = 0.20
+
+    // ── 第二层：whisper 的固定幻觉套话 ────────────────────────────────────
+    // 为什么必须有这一层（也是回测定出来的）：**带 BGM 的空镜在能量层上是隐身的** ——
+    // 音乐一直响 ⇒ 占比 1.000。而他库里这类素材占绝大多数（100/108 条 ≥0.90）。
+    // 更糟的是这类幻觉的**字数密度和真口播重叠**：`李巍/过渡/14.mp4` 认出
+    // 「请不吝点赞 订阅 转发 打赏」= 2.06 字/秒，而三条已知真口播素材是 1.84–6.52 字/秒
+    // ⇒ 所以"字数太少就是空镜"这条判据被实测**否掉**，不建；改用固定套话名单。
+    //
+    // 名单里的每一条都有**出处**（在他的真库里出现次数或我的复现样本），不许往里加猜的：
+    // 这些字符串是 whisper 训练数据里"静音/纯音乐段的标配答案"，可枚举且稳定。
+
+    /// 已实测复现的 whisper 固定幻觉文本。**只加有出处的，一条都不许多**。
+    public static let knownHallucinationPhrases: [String] = [
+        // 中文静音幻觉的头号常客。本仓两次独立复现：2s 数字零静音探针 + 他库内 2 条素材
+        "优优独播剧场——YoYo Television Series Exclusive",   // 4.0.mp4、辅助卖点/17.mp4
+        // 他截图里抱怨的那一句。李巍/过渡/14.mp4 整片占比 1.000（一直在响），全靠这条拦住
+        "请不吝点赞 订阅 转发 打赏",
+        // 外语字幕组水印式幻觉。李巍/过渡/11.mp4（用户确认没人说话）
+        "字幕由 Amara.org 社区提供",
+        // 2s 纯正弦音探针复现出来的另一条标配
+        "字幕志愿者 杨茜茜",
+    ]
+
+    /// 整段文本是否就是某条已知套话（**归一化后前缀匹配**，不是子串）。
+    ///
+    /// 归一化复用 `SegmentRetakeRule.contentStream`（只留汉字与字母数字）⇒ 空格、逗号、
+    /// 全半角破折号都不影响命中；whisper 同一句话在不同素材里标点位置不同，不做归一化就漏。
+    ///
+    /// ⚠️ 为什么是"前缀"而不是"子串"：子串会把真口播「大家先点个赞，别急着划走」也判成空镜 ——
+    /// 那是**误杀真话**。前缀只放过"整段开头就是这套话"的文本，也就是幻觉的典型形状；
+    /// 代价是"前半句真话＋后半句套话"这种混合段拦不住（保守方向，可接受）。
+    /// 代价还有另一头：真口播若恰好以这套话开头会被误杀 ⇒ 留痕可翻案，且命中原文会记进 basis。
+    ///
+    /// 名单条目当锚时的最短长度（归一化后）。
+    /// 「嗯」「好的」这类高频短句一旦进名单，前缀匹配会吞掉海量真口播 ⇒ 它们没资格当锚。
+    /// ⚠️ 这个数同时被默认参数、卫生检查与判据 EL-15 引用；改它要连那三处一起想清楚。
+    public static let minPhraseAnchorCount: Int = 8
+
+    /// - Returns: 命中的那条名单原文（进日志与库里当翻案依据），未命中 nil。
+    ///
+    /// 注入缝（`phrases` / `minAnchorCount`）只为判据而存在，**默认值就是生产值**：
+    /// 生效条件 —— 不传参时与生产路径逐字同一条；拦不住什么 —— 生产代码不许传自定义名单，
+    /// 那会造出第二套判定（本仓的规矩是一条判据一个真源）；最坏代价 —— 名字被误用，
+    /// 但两条判据（EL-13 的前缀/子串、EL-15 的短条目下限）都靠这两个参数才有对照物，
+    /// 没有它们这两条是恒绿的（2026-11-04 变异实测：把前缀改成子串、把 8 改成 1，
+    /// 原判据一批都没红）。
+    public static func knownHallucinationHit(_ text: String,
+                                             phrases: [String] = knownHallucinationPhrases,
+                                             minAnchorCount: Int = minPhraseAnchorCount) -> String? {
+        let needle = SegmentRetakeRule.contentStream(text)
+        guard !needle.isEmpty else { return nil }
+        for phrase in phrases {
+            let hay = SegmentRetakeRule.contentStream(phrase)
+            // 名单条目本身要够长才准当锚：短到几个字的条目会前缀命中大量真口播
+            guard hay.count >= minAnchorCount else { continue }
+            if needle.hasPrefix(hay) { return phrase }
+        }
+        return nil
+    }
+
+    /// 名单条目卫生检查：每条归一化后都必须 ≥ `minPhraseAnchorCount` 颗，否则它没资格当锚。
+    /// 判据 EL-15 用它 —— 只测"短条目不生效"是不够的，那把下限改成 1 也照样绿。
+    public static var shortlistedPhraseViolations: [String] {
+        knownHallucinationPhrases
+            .map { ($0, SegmentRetakeRule.contentStream($0).count) }
+            .filter { $0.1 < minPhraseAnchorCount }
+            .map { "\($0.0)（归一化后只有 \($0.1) 颗）" }
+    }
+
 
     // ── 音频层派生（纯函数，不新增探测）──────────────────────────────────
 
@@ -211,23 +322,37 @@ public enum EmptyLensPolicy {
 
     // ── 判定 ────────────────────────────────────────────────────────────
 
-    /// 只读判定，**不产生副作用**。
+    /// 只读判定，**不产生副作用**。两条腿**并联**，任一给出强证据即判空镜。
     ///
-    /// 生效条件：**只有音频层能判 `.emptyLens`**（`voicedFraction ≤ voicedFractionCeil`）。
-    /// 概率层单独存在时最多给出 `hasSpeech` / `undetermined`。
+    /// 顺序有意：**先能量、后名单**。两者同时命中时（例：`李巍/过渡/4.0.mp4` 整片零有声
+    /// 且文本正是「优优独播剧场——YoYo…」），库里记 `silentWindow` —— "连声音都没有"
+    /// 比"文本长得像套话"更难反驳，翻案时该先看它。
     ///
-    /// 为什么概率层不定罪：实测数字静音幻觉的 mean p = 0.924，与真口播的 0.983 只差
-    /// 0.06（见文件头三对照表）。拿它定罪＝每天误杀真口播。
+    /// ⚠️ 名单层必须排在能量层的 `hasSpeech` **之前**判：带 BGM 的空镜能量层会说"一直在响"
+    /// （占比 1.000），若能量层先给出 hasSpeech 就 return，名单层永远没有机会 ——
+    /// 而那正是他库里 100/108 条素材的形状。
     ///
-    /// 拦不住什么：
-    /// 1. 一段里"半句有人说话、半句是杂音"—— 要靠逐段音频重听，不在此列；
-    /// 2. 自建分镜路径没有 silencePeriods（见文件头"范围事实"）⇒ 恒 `undetermined`；
-    /// 3. 已知套话黑名单 / 字数÷时长比异常这两层，用户本轮**未选**（见计划 §五 第 3 项）。
+    /// 概率层（`tokens[].p`）**不参与定罪**：实测数字静音幻觉的 mean p = 0.9238839，
+    /// 与真口播的 0.9832814 只差 0.06（见文件头三对照表）；拿它定罪＝每天误杀真口播。
     ///
-    /// 最坏代价：真口播被误判成空镜 ⇒ 该段不打标（不是丢数据，台词留痕可翻案）。
-    public static func verdict(_ s: EmptyLensSignals) -> EmptyLensVerdict {
+    /// 拦不住什么（都有实测出处，不是设想）：
+    /// 1. **纯音乐、且转写结果不是名单里的固定套话** —— 例：`李巍/辅助卖点/19.mp4` 用户确认
+    ///    没人说话，whisper 把乐器声认成「Zither Harp」，能量层看不见、名单也没有这一条。
+    ///    要拦只能靠人声/伴奏分离的能量比（本仓有 demucs，但对未分离的素材是新探测）
+    ///    或语义层判"像不像卖货话术"（花钱）。两条都没选，先记为已知漏口。
+    /// 2. 一段里"半句有人说话、半句是杂音"—— 要靠逐段音频重听，不在此列。
+    /// 3. 真口播若恰好以名单里的套话开头会被误杀 ⇒ 命中原文记进 `basis`，台词留痕可翻案。
+    ///
+    /// 最坏代价：真口播被误判成空镜 ⇒ 该段不打语义标签（不是丢数据，文本与依据都还在）。
+    public static func verdict(_ s: EmptyLensSignals, text: String) -> EmptyLensVerdict {
+        if let v = s.voicedFraction, v.isFinite, v <= voicedFractionCeil {
+            return .emptyLens(.silentWindow)
+        }
+        if let phrase = knownHallucinationHit(text) {
+            return .emptyLens(.knownPhrase(phrase))
+        }
         if let v = s.voicedFraction, v.isFinite {
-            return v <= voicedFractionCeil ? .emptyLens : .hasSpeech
+            return .hasSpeech
         }
         // 概率层走到这里只贡献"我看到过证据"这件事，绝不单独定罪。
         // ⚠️ 口径是"四颗里任意一颗给了有限值"，不是只看 tokenCount：
@@ -241,12 +366,21 @@ public enum EmptyLensPolicy {
 
     /// 该结论要不要**拦下打标**。
     ///
-    /// ⚠️ 这是整块唯一的"拦/不拦"开关。默认**关**（`gateOpen = false`）——
-    /// 按计划 §五 的纪律，先在他的真分镜上只读回测、摊开每条原值，再决定开。
-    /// 开闸前本函数恒返回 false，于是 C 块只**记录**证据、不改变行为。
-    public static let gateOpen: Bool = false
+    /// **2026-11-04 开闸**（原来写死 false，纪律是"先在他的真素材上只读回测再开"）：
+    /// 回测已完成 —— 全库 108 条的占比双峰、分层 22 条 277 段的拦截表、
+    /// 以及用户对 4 条样本的人工确认（`过渡/14`、`过渡/11`、`辅助卖点/17`、`辅助卖点/19` 均无人说话），
+    /// 读数与依据逐条记在上面的 `voicedFractionCeil` 与名单注释里，不是"看起来合理"。
+    ///
+    /// 开闸的确切范围：**只有 `verdict == .emptyLens` 的段不写语义标签**；
+    /// 台词文本、命中依据（哪条腿／哪句套话）、逐 token 证据一律保留 ⇒ 可翻案。
+    /// `undetermined` 与 `hasSpeech` 走原链路，行为与开闸前完全一致。
+    ///
+    /// ⚠️ 这颗开关**不管**逐段重听（`SegmentRetakeRule.shouldAutoRetake`）：空镜段被判后
+    /// 文本仍在（留痕要求），而非空文本 ⇒ 那条死循环（RP-13c）不由这里解，属 M1 终态档，
+    /// 仍是独立一笔。别把它记成"开闸就把重听也停了"。
+    public static let gateOpen: Bool = true
 
     public static func shouldSuppressTagging(_ v: EmptyLensVerdict) -> Bool {
-        gateOpen && v == .emptyLens
+        gateOpen && v.isEmptyLens
     }
 }
