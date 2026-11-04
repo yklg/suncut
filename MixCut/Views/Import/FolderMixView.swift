@@ -107,7 +107,12 @@ struct FolderMixView: View {
                 Text("\(vm.orderedCategories.count) 类").font(DesignTokens.Typography.micro)
                     .foregroundStyle(.secondary)
             }
-            if vm.scan == nil {
+            if let limit = vm.categoryLimitError {
+                Text(limit)
+                    .font(DesignTokens.Typography.caption)
+                    .foregroundStyle(DesignTokens.Palette.Status.danger)
+                    .fixedSize(horizontal: false, vertical: true)
+            } else if vm.scan == nil {
                 emptyHint("先选一个素材根目录。它下面的每个一级子文件夹会成为一个类别。")
             } else {
                 ForEach(Array(vm.orderedCategories.enumerated()), id: \.element) { offset, name in

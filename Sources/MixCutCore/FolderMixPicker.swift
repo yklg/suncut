@@ -327,6 +327,14 @@ public enum FolderMixPickerError: Error, Equatable, Sendable {
 }
 
 public enum FolderMixLimits {
+    /// 一级子文件夹（类别）的硬上限。为什么是 24：D15 的 900×600 离屏探针实测，
+    /// 24 类时类别列底部到页脚只剩约 30pt，25 类起会与页脚争空间；整页又不许加纵向滚动。
+    public static let maxCategories = 24
+    /// 超限时的统一人话；`nil` = 未超限。扫描/还原两条入口都吃这一句，避免两处各写文案。
+    public static func categoryLimitMessage(count: Int) -> String? {
+        guard count > maxCategories else { return nil }
+        return "识别到 \(count) 个一级子文件夹，超过 \(maxCategories) 类上限；请先合并子文件夹再选目录。"
+    }
     /// 默认软上限。越过它不是硬墙：页脚出红字预估 + 必须勾「我已确认」（D24）。
     public static let defaultSoftLimit = 50
     /// 条数控件的钳位区间。

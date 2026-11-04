@@ -51,6 +51,9 @@ final class FolderMixViewModel {
 
     // MARK: 扫描与入库读数
     private(set) var scan: FolderMixScanResult?
+    /// 类别数超过硬上限（`FolderMixLimits.maxCategories`）时的拦截原因。
+    /// 单独一颗，不复用 `scanError`：后者是「目录读不到」，还原路径要按两种原因分别处理。
+    private(set) var categoryLimitError: String?
     private(set) var rejections: [MaterialFolderRejection] = []
     private(set) var nestedFolderNames: [String] = []
     private(set) var scanError: String?
@@ -176,6 +179,15 @@ final class FolderMixViewModel {
         // 由 `MediaAvailabilityGuardTests` G-M01 逐文件名册盯着，多一处就要改一次名册；
         // 而这颗本来也不该由 VM 自己问 —— 扫一次既知道在不在，也知道读不读得动。
         beginScan(root: url, context: context, preserveSelection: true)
+        if let limitError = categoryLimitError {
+            // 超限时不把旧类别列表放回视图（25 类会再次把页脚顶掉）；存档原样留着，
+            // 用户合并子文件夹后重选同一目录，下一次扫描仍能按存档恢复顺序与勾选。
+            orderedCategories = []
+            enabledCategories = []
+            errorMessage = limitError
+            statusText = "类别数超过上限，未生成候选；请先合并一级子文件夹。"
+            return false
+        }
         if let ioError = scanError {
             // 目录失效（外接盘被拔/改名/权限）：**保留用户的选择**，只出红字让他重选，
             // 不静默清状态 —— 清了等于把他的排列与勾选一起丢掉，而那与目录在不在无关。
@@ -233,6 +245,9 @@ final class FolderMixViewModel {
     ///   重扫不该把它重置回"非空类默认全勾"。新选目录传 false（默认）。
     func beginScan(root: URL, context: ModelContext, preserveSelection: Bool = false) {
         rootURL = root
+        // 新一轮扫描先清旧错误：修好目录/合并子文件夹后重选，不该还挂着上一轮的红字。
+        errorMessage = nil
+        categoryLimitError = nil
         isBusy = true
         defer { isBusy = false }
         stopProbes()
@@ -243,6 +258,23 @@ final class FolderMixViewModel {
         nestedFolderNames = io.nestedDirectoryNames
 
         let result = FolderMixScanner.scan(io.directories)
+        if let limitMessage = FolderMixLimits.categoryLimitMessage(count: result.categories.count) {
+            categoryLimitError = limitMessage
+            scan = nil
+            orderedCategories = []
+            materials = []
+            // 候选账本不直接写空字典：走唯一重建口（T-22 的「只有一个赋值 + 不许清空」）。
+            // 这里语义上是“整批作废”，不是失败分支偷偷清空左栏；错误横幅会明确说出来。
+            rebuildCandidates()
+            rows = []
+            droppedRows = []
+            enabledCategories = []
+            stopProbes()
+            errorMessage = limitMessage
+            statusText = "类别数超过上限，未生成候选；请先合并一级子文件夹。"
+            MixLog.error("[FolderMix] \(limitMessage)")
+            return
+        }
         scan = result
         // 排列默认 = 扫描顺序（Finder 口径的 localizedStandardCompare，见 MaterialFolderScanner）；
         // 空类别也进列表：D13 标灰但不阻断，用户看得见"为什么这一格是空的"。
