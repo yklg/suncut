@@ -169,19 +169,24 @@ struct SegmentTranscribeRuleTests {
     func skippedSegmentsDoNotPolluteBatchTally() {
         let sliced = "秋冬一到嘴就干，这果子咬一口全是水。"
         // 判定本身：整片切片 + 非空 ⇒ 不必再听；空段 / 来源不是整片切片 ⇒ 必须听
-        #expect(!SegmentRetakeRule.shouldAutoRetake(currentText: sliced, currentSource: .fullVideoSlice))
-        #expect(SegmentRetakeRule.shouldAutoRetake(currentText: "", currentSource: .fullVideoSlice))
-        #expect(SegmentRetakeRule.shouldAutoRetake(currentText: sliced, currentSource: .unknownLegacy))
+        #expect(!SegmentRetakeRule.shouldAutoRetake(currentText: sliced, currentSource: .fullVideoSlice,
+                                                   isEmptyLensSettled: false))
+        #expect(SegmentRetakeRule.shouldAutoRetake(currentText: "", currentSource: .fullVideoSlice,
+                                                   isEmptyLensSettled: false))
+        #expect(SegmentRetakeRule.shouldAutoRetake(currentText: sliced, currentSource: .unknownLegacy,
+                                                   isEmptyLensSettled: false))
 
         // 计数诚实：跳过的段一条 outcome 都不该有，否则"7 段全跳过"会被报成"7 段拿到字"
         let seven = Array(repeating: sliced, count: 7)
         var ranSliced: [SegmentTranscribeOutcome] = []
         var ranLegacy: [SegmentTranscribeOutcome] = []
         for text in seven {
-            if SegmentRetakeRule.shouldAutoRetake(currentText: text, currentSource: .fullVideoSlice) {
+            if SegmentRetakeRule.shouldAutoRetake(currentText: text, currentSource: .fullVideoSlice,
+                                                  isEmptyLensSettled: false) {
                 ranSliced.append(.replaced)
             }
-            if SegmentRetakeRule.shouldAutoRetake(currentText: text, currentSource: .unknownLegacy) {
+            if SegmentRetakeRule.shouldAutoRetake(currentText: text, currentSource: .unknownLegacy,
+                                                  isEmptyLensSettled: false) {
                 ranLegacy.append(.replaced)
             }
         }
@@ -190,6 +195,28 @@ struct SegmentTranscribeRuleTests {
         #expect(ranLegacy.count == 7, "来源在说谎的边缘（旧数据兜底）必须全跑，一条都不许省")
         let t = SegmentBatchPolicy.tally(ranLegacy)
         #expect(t.gotText == 7 && t.failed == 0 && t.refused == 0 && t.cancelled == 0)
+    }
+
+    /// M1 空镜终态档：机器判定"这段没人说话"之后，空文本就是**结论**而不是缺口。
+    /// 四条腿都要有 —— 只钉"空镜不重听"这一条，它会退化成一颗恒真的开关。
+    @Test("TC-SB-03b 空镜终态档：空文本+已判空镜 ⇒ 不重听；其余三种组合仍按原口径")
+    func emptyLensIsTerminalState() {
+        // ① 终态生效：不再逐段重听（§Q-4 实测逐段比整片贵 2.9 倍）
+        #expect(!SegmentRetakeRule.shouldAutoRetake(currentText: "", currentSource: .fullVideoSlice,
+                                                   isEmptyLensSettled: true),
+                "空镜每次重跑都再听一遍、再幻觉一次 —— RP-13c 钉的就是这件事")
+        // ② 反向对照：同一段没被打上「空镜」⇒ 仍然要听（证明①靠的是这颗入参，不是空段被整体放行）
+        #expect(SegmentRetakeRule.shouldAutoRetake(currentText: "", currentSource: .fullVideoSlice,
+                                                   isEmptyLensSettled: false))
+        // ③ 标签不许顺手放过"来源在说谎"那一档：错切的句子否则再也修不回来
+        #expect(SegmentRetakeRule.shouldAutoRetake(currentText: "秋冬一到嘴就干",
+                                                   currentSource: .unknownLegacy,
+                                                   isEmptyLensSettled: true),
+                "空镜标签压过了来源可信度这一判据 ⇒ 兜底文本永远没机会被重听纠正")
+        // ④ 全空白（只有换行/空格）等同空文本 ⇒ 也算终态
+        #expect(!SegmentRetakeRule.shouldAutoRetake(currentText: "  \n\t ",
+                                                   currentSource: .fullVideoSlice,
+                                                   isEmptyLensSettled: true))
     }
 
     // MARK: TC-SB-01 停止规则的边界档（TC-113 只测了 limit-1 / limit 两点）

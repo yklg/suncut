@@ -1509,7 +1509,10 @@ final class ImportViewModel {
                 break
             }
             if auto && !SegmentRetakeRule.shouldAutoRetake(
-                currentText: seg.text, currentSource: seg.textSource) {
+                currentText: seg.text, currentSource: seg.textSource,
+                // 空镜终态档：这段的"空文本"是机器判出来的结论，不是漏切 ⇒ 别再逐段重听
+                // （逐段比整片贵 2.9 倍；用户手动摘掉「空镜」标签即恢复重听队列）
+                isEmptyLensSettled: seg.semanticTypes.contains(.emptyShot)) {
                 carriedOver += 1
                 continue
             }

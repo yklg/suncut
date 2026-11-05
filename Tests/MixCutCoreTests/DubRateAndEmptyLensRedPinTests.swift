@@ -69,22 +69,24 @@ struct EmptyLensNotAFailureTests {
         #expect(stop == .tooManyConsecutiveFailures(3), "真失败没触发停批：\(stop)")
     }
 
-    /// 现存缺陷的第二半：`shouldAutoRetake` 见文本空就判"该重听" ⇒ 被误判的空镜每次重跑
-    /// 分析都**再听一遍、再幻觉一次**（逐段重听实测比整片贵 2.9 倍）。
-    /// 这一转今天也红，因为它期望"空镜不该重听"。
-    @Test("RP-13c 空镜段不得每次重跑都再听一遍")
+    /// **本条原为红钉，M1 空镜终态档落地后摘标**（2026-11-05）。
+    ///
+    /// 缺陷本体：`shouldAutoRetake` 见文本空就判"该重听" ⇒ 被判成空镜的段每次重跑分析都
+    /// **再听一遍、再幻觉一次**（§Q-4 实测逐段比整片贵 2.9 倍）。
+    /// 修法是给判据加第三颗必填入参 `isEmptyLensSettled`，其真源就是「空镜」标签本身
+    /// （`EmptyLensPolicy` 唯一写入方），不另存布尔 —— 同一个事实不留两份真源，
+    /// 也不让 schema 指纹白漂一次。
+    ///
+    /// 这条留着不删，钉的是"终态档不许被后来的人悄悄摘掉"：两向往常开各一腿。
+    @Test("RP-13c 空镜段不得每次重跑都再听一遍（终态档已落地）")
     func emptyLensMustNotBeRetaken() {
-        // 前置事实：今天"空文本 + 整片切片来源"= 判该重听。
-        #expect(SegmentRetakeRule.shouldAutoRetake(currentText: "", currentSource: .fullVideoSlice),
-                "前置事实变了：shouldAutoRetake 对空文本不再默认重听 ⇒ 本钉需重读")
-
-        withKnownIssue("空文本一律判「该重听」，但空镜的空是**正确答案**不是漏切 ⇒ 每次重跑分析都对同一段 B-roll 再听一遍、再幻觉一次。C 块终态档落地后此转应红着逼摘标。见计划 §四 二阶效应第 1 行") {
-            // 期望：区分得出来"没人说话"⇒ 不重听。今天没有这个输入维度，故必红。
-            let isSilentBRoll = true
-            let shouldRetake = SegmentRetakeRule.shouldAutoRetake(currentText: "",
-                                                                  currentSource: .fullVideoSlice)
-            #expect(!(shouldRetake && isSilentBRoll), "空镜被排进了逐段重听队列")
-        }
+        #expect(!SegmentRetakeRule.shouldAutoRetake(currentText: "", currentSource: .fullVideoSlice,
+                                                   isEmptyLensSettled: true),
+                "终态档被摘掉了 ⇒ 空镜又回到每次重跑都再听一遍、再幻觉一次")
+        // 反向那一半也必须还成立：没判空镜的空段照旧要听（防"空段一律放行"这种糊法）
+        #expect(SegmentRetakeRule.shouldAutoRetake(currentText: "", currentSource: .fullVideoSlice,
+                                                   isEmptyLensSettled: false),
+                "空段一律放行 ⇒ 真漏切再也没机会补听，这颗开关就成了恒真")
     }
 }
 

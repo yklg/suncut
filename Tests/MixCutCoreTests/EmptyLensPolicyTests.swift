@@ -193,9 +193,14 @@ struct EmptyLensPolicyTests {
         // 没开的两格：hasSpeech 与 undetermined 一律放行（保守：宁可留错标，不可丢真口播）
         #expect(!EmptyLensPolicy.shouldSuppressTagging(.hasSpeech))
         #expect(!EmptyLensPolicy.shouldSuppressTagging(.undetermined))
-        // ⚠️ 这颗开关**不管**逐段重听：那是 M1 终态档，另一笔。这里钉一句防混记。
-        #expect(SegmentRetakeRule.shouldAutoRetake(currentText: "", currentSource: .fullVideoSlice),
-                "空文本仍该重听（RP-13c 那条死循环归 M1，不许被这颗闸顺手改掉而不留痕）")
+        // ⚠️ 这颗开关**不管**逐段重听 —— 重听的终态档是另一个入参（M1，2026-11-05 落地）。
+        //    两向都钉住，谁也不许顺手改谁：没判空镜的空段照旧要听，判了空镜才免听。
+        #expect(SegmentRetakeRule.shouldAutoRetake(currentText: "", currentSource: .fullVideoSlice,
+                                                   isEmptyLensSettled: false),
+                "空镜闸顺手把逐段重听也改了 ⇒ 打标与重听混进一颗开关，将来摘标时会漏掉另一半")
+        #expect(!SegmentRetakeRule.shouldAutoRetake(currentText: "", currentSource: .fullVideoSlice,
+                                                   isEmptyLensSettled: true),
+                "终态档失效：被判空镜的段每次重跑都再听一遍、再幻觉一次")
     }
 
     @Test("EL-11 自建分镜路径（拿不到静音区间）被名单层补了一半")

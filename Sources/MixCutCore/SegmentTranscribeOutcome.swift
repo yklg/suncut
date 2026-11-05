@@ -258,11 +258,25 @@ public enum SegmentRetakeRule {
     /// 只有两种情形仍要补认，且都跟"整片那句话到底切到没切到"有关：
     /// ① 一个字也没切到（空段）；② 台词不是整片切片来的（来源在说谎的边缘：旧数据、
     ///    模型建议文本兜底、手改、重听过的），这时候整片口径帮不上忙，必须真听。
+    ///
+    /// 第三个入参 `isEmptyLensSettled`（必填、无默认值）＝**空镜终态档**：
+    /// 这段已被机器判成「空镜」（没人说话），那么"文本为空"就是**正确答案**而不是漏切 ⇒
+    /// 不许再排进逐段重听队列。没有这颗输入维度之前，每次重跑分析都对同一段 B-roll
+    /// 再听一遍、再幻觉一次（§Q-4 那颗贵 2.9 倍的雷），RP-13c 从落地起就钉着这件事。
+    ///
+    /// 为什么直接吃标签而不是新加一个 `@Model` 字段：标签本身就是这道判断的**落库形态**
+    /// （`EmptyLensPolicy` 唯一写入方），再存一颗布尔就是同一个事实两份真源，
+    /// 还会让 schema 指纹漂、开库备份门白触发一次。副作用是**可逆且正确**的：
+    /// 用户手动摘掉「空镜」标签，这段就重新进入重听队列 —— 那正是"人不认可机器判断"时该有的行为。
+    ///
     /// 手动那颗「逐段重听」按钮**不走这里** —— 用户点名要重听就整条都听。
     public static func shouldAutoRetake(currentText: String,
-                                        currentSource: TranscriptSource) -> Bool {
+                                        currentSource: TranscriptSource,
+                                        isEmptyLensSettled: Bool) -> Bool {
         if currentSource != .fullVideoSlice { return true }
-        return currentText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        let blank = currentText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        if blank && isEmptyLensSettled { return false }   // 空镜的空是结论，不是缺口
+        return blank
     }
 
     /// 锚与业务文本是否零交集：共享任一长度 ≥2 的连续汉字片段即判为**有**交集。

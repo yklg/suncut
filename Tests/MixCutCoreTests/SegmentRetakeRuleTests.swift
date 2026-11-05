@@ -113,22 +113,32 @@ struct SegmentRetakeRuleTests {
         }
     }
 
-    @Test("TC-134 自动链只补「整片那边没给出完整句子」的段（判定只看来源档与空不空）")
+    @Test("TC-134 自动链只补「整片那边没给出完整句子」的段（判定看来源档、空不空、以及空镜终态）")
     func autoRetakeFillsOnlyWhatTheWholeVideoPassMissed() {
         // 边界已按句子收尾落点 ⇒ 切片就是完整句子，同一台模型再听一遍只是把同一句话重新错一次
         // （§Q-4：逐段比整片贵 2.9 倍、逐字一致仅 3/12）。
+        // ⚠️ 第三颗入参 `isEmptyLensSettled`（M1 终态档）在本条一律给 false ——
+        //    这里钉的是"来源档 + 空不空"这两档的原口径；终态档那一腿归 TC-SB-03b 与 RP-13c。
+        //    标题以前写"只看来源档与空不空"，加了三方判据后那句话就是假话，已同轮改掉。
         #expect(!SegmentRetakeRule.shouldAutoRetake(currentText: "秋冬一到嘴就干",
-                                                    currentSource: .fullVideoSlice))
+                                                    currentSource: .fullVideoSlice,
+                                                    isEmptyLensSettled: false))
         // 空段 ⇒ 整片一个字也没切到，必须补
-        #expect(SegmentRetakeRule.shouldAutoRetake(currentText: "", currentSource: .fullVideoSlice))
+        #expect(SegmentRetakeRule.shouldAutoRetake(currentText: "", currentSource: .fullVideoSlice,
+                                                   isEmptyLensSettled: false))
         #expect(SegmentRetakeRule.shouldAutoRetake(currentText: "  \u{3000}\n",
-                                                   currentSource: .fullVideoSlice),
+                                                   currentSource: .fullVideoSlice,
+                                                   isEmptyLensSettled: false),
                 "全角空格与换行也算没字：留着空白冒充「有台词」就等于永远不补")
         // 来源不是整片切片 ⇒ 整片口径帮不上它，一律真听（旧数据、模型兜底文本、手改、重听过的…）
         var checked = 0
         for src in TranscriptSource.allCases where src != .fullVideoSlice {
-            #expect(SegmentRetakeRule.shouldAutoRetake(currentText: "有字", currentSource: src),
+            #expect(SegmentRetakeRule.shouldAutoRetake(currentText: "有字", currentSource: src,
+                                                       isEmptyLensSettled: false),
                     "\(src.rawValue)：这一档的字不是整片切出来的，不许跳过")
+            #expect(SegmentRetakeRule.shouldAutoRetake(currentText: "", currentSource: src,
+                                                       isEmptyLensSettled: true),
+                    "空镜终态档越界了：来源本身在说谎时，免听要把这一档也真听一遍")
             checked += 1
         }
         #expect(checked >= 6, "取样面太窄说明 TranscriptSource 变了而这里没跟上：\(checked)")

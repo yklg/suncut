@@ -375,9 +375,11 @@ public enum EmptyLensPolicy {
     /// 台词文本、命中依据（哪条腿／哪句套话）、逐 token 证据一律保留 ⇒ 可翻案。
     /// `undetermined` 与 `hasSpeech` 走原链路，行为与开闸前完全一致。
     ///
-    /// ⚠️ 这颗开关**不管**逐段重听（`SegmentRetakeRule.shouldAutoRetake`）：空镜段被判后
-    /// 文本仍在（留痕要求），而非空文本 ⇒ 那条死循环（RP-13c）不由这里解，属 M1 终态档，
-    /// 仍是独立一笔。别把它记成"开闸就把重听也停了"。
+    /// ⚠️ 这颗开关**只管打标**，不管逐段重听：重听的终态档在
+    /// `SegmentRetakeRule.shouldAutoRetake(isEmptyLensSettled:)`（M1，2026-11-05 落地），
+    /// 它吃的真源就是这里写下的「空镜」标签 —— 同一件事、一处写入、两处读取。
+    /// 别把两件事记成一颗开关：摘掉标签会同时恢复打标与重听，那是刻意设计（人不认可机器判断时
+    /// 该有的行为），不是这里漏了什么。
     public static let gateOpen: Bool = true
 
     public static func shouldSuppressTagging(_ v: EmptyLensVerdict) -> Bool {
