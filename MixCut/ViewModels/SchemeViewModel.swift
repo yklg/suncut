@@ -1114,32 +1114,29 @@ extension SchemeViewModel {
         guard fps > 0 else { return nil }
 
         let ep = segment.effectivePicture
-        let resolved = PictureWindowPolicy.resolveWindowStart(
-            override: schemeSeg.windowStartOverrideFrame, segmentStartFrame: ep.startFrame)
-        let originalFrames = max(0, ep.endFrame - ep.startFrame)
-        let windowFloorEnd = resolved.startFrame + originalFrames
-
-        // 天花板：同素材下一格起点 / 源片末尾（`capacityEndFrame` 是唯一口径）
         let sibling = segment.nextSameSourceStartFrame
-        let ceilingEnd = PictureWindowPolicy.capacityEndFrame(
-            pictureIsReplaced: ep.isReplaced, pictureEndFrame: windowFloorEnd,
-            sourceDurationSeconds: video.duration, fps: fps, siblingStartFrame: sibling)
-        let sourceEndOnly = PictureWindowPolicy.capacityEndFrame(
-            pictureIsReplaced: ep.isReplaced, pictureEndFrame: windowFloorEnd,
-            sourceDurationSeconds: video.duration, fps: fps, siblingStartFrame: nil)
-        let ceilingSource: SlotWindowSnapshot.Ceiling =
-            (sibling != nil && ceilingEnd < sourceEndOnly) ? .nextSegment : .sourceEnd
-
         let dub = schemeSeg.selectedSegmentDubId.flatMap { id in
             segment.segmentDubs.first { $0.id == id }
         }
         let hasDub = dub?.audioFilePath?.isEmpty == false
         let dubSeconds = hasDub ? (dub?.audioDuration ?? 0) : 0
 
-        guard let w = PictureWindowPolicy.derive(startFrame: resolved.startFrame,
-                                                 endFrame: windowFloorEnd,
-                                                 sourceEndFrame: ceilingEnd,
-                                                 dubSeconds: dubSeconds, fps: fps) else { return nil }
+        // 窗口四步组合整颗走 Core 的 `resolveSlotWindow`（与导出侧、生成侧预算同一个形状）
+        let read = PictureWindowPolicy.resolveSlotWindow(
+            startOverrideFrame: schemeSeg.windowStartOverrideFrame,
+            pictureStartFrame: ep.startFrame, pictureEndFrame: ep.endFrame,
+            pictureIsReplaced: ep.isReplaced,
+            sourceDurationSeconds: video.duration, fps: fps,
+            siblingStartFrame: sibling,
+            dubSeconds: dubSeconds)
+        // 天花板**来源**要单独问一次"没有下一格时能到哪儿"，才知道现在报的是哪一档
+        let sourceEndOnly = PictureWindowPolicy.capacityEndFrame(
+            pictureIsReplaced: ep.isReplaced,
+            pictureEndFrame: read.resolvedStartFrame + read.originalFrames,
+            sourceDurationSeconds: video.duration, fps: fps, siblingStartFrame: nil)
+        let ceilingSource: SlotWindowSnapshot.Ceiling =
+            (sibling != nil && read.ceilingEndFrame < sourceEndOnly) ? .nextSegment : .sourceEnd
+        guard let w = read.window else { return nil }
 
         let tolerance = DubLengthGate.measuredToleranceSeconds
         let tolFrames = FrameTime.frame(seconds: tolerance, fps: fps)
@@ -1169,11 +1166,11 @@ extension SchemeViewModel {
             isAuto: isAuto,
             startFrame: w.startFrame,
             endFrame: w.endFrame,
-            roomFrames: max(0, ceilingEnd - w.endFrame),
+            roomFrames: max(0, read.ceilingEndFrame - w.endFrame),
             shortfallFrames: shortfall,
             ceilingSource: ceilingSource,
-            lengthSource: dubFrames > originalFrames ? .dub : .shot,
-            clampedFrom: resolved.clampedFrom,
+            lengthSource: dubFrames > read.originalFrames ? .dub : .shot,
+            clampedFrom: read.clampedFrom,
             brollSeconds: brollSeconds,
             shortfallCovered: deliverable || brollSeconds > 0)
     }

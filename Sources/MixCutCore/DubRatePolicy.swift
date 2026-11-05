@@ -201,11 +201,15 @@ public struct DubLengthRejected: Error, CustomStringConvertible, Equatable, Send
     public var description: String {
         switch reason {
         case .estimateOver(let est, let cap):
-            // 说的是"可续画面"而不是"画面"：数字是「分镜起点 → 源片末尾」的长度。
-            // 只写"画面"会让用户去改一句本来不用改的台词 —— 他不知道画面还能往后接。
-            return String(format: "文案约 %.1fs，超过可续画面 %.1fs（画面已能往后接到源片末尾），请先改短台词", est, cap)
+            // 说的是"这一格能给的画面"而不是"分镜时长"：数字里含两截 ——
+            // ① 画面往后能续到的部分（到源片末尾，或到同素材下一格分镜的起点），② 素材库里排得上的空镜。
+            // 只写"画面"会让用户去改一句本来不用改的台词；只写"能续到源片末尾"对中间格又是谎话
+            //（那里的天花板其实是下一格的脸，续无可续时才轮到空镜）。
+            return String(format: "文案约 %.1fs，超过这一格能给的画面 %.1fs"
+                                + "（可续画面与可插空镜都已算满），请先改短台词", est, cap)
         case .measuredOver(let audio, let cap):
-            return String(format: "配音实测 %.1fs，超过可续画面 %.1fs（画面已接到源片末尾），请先改短台词", audio, cap)
+            return String(format: "配音实测 %.1fs，超过这一格能给的画面 %.1fs"
+                                + "（可续画面与可插空镜都已算满），请先改短台词", audio, cap)
         case .undecidable:
             return "画面可续长度未知，无法判配音是否超长"
         }

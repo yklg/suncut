@@ -192,3 +192,82 @@ public struct PicturePieceSource: Equatable, Sendable {
         self.endFrame = endFrame; self.fps = fps
     }
 }
+
+// MARK: - 跨槽占用账（生成侧容量用）
+
+/// 一条方案**按槽位顺序**重放占用账，算出目标格**实际**还能垫几秒空镜。
+///
+/// ## 为什么不能只算本槽
+///
+/// 空镜的纪律是"每片整条片子只许用一次"。逐格各自许诺整个池子会得到：每一格在生成时
+/// 都"接得住"，导出时却因为账被吃光而拦下来 —— 那时 TTS 费用已经花掉了。
+/// 这是本仓最贵的一类两处口径分叉（同 PW-12 那条跨接缝不变式），所以生成侧必须用
+/// **与 `DubExportInput.from` 完全同一个重放顺序**（槽位顺序 + 同一本 `consumed` 账）。
+///
+/// ## 收缩规则
+///
+/// 设 h(x) = 「把目标格的需求当成 x 重放一遍后，**所有有需求的槽**都接得住」。
+/// x 越大越难成立（单调），所以可垫量 = 满足 h 的最大 x。
+/// 若 h(0) 都不成立（别的槽今天就已经接不住），返回 **0** —— 池子已经赔光了，
+/// 再往这一格灌长文案只会多拦一条片子，不给虚假承诺。
+public enum SchemeBrollBudget {
+
+    /// - Parameters:
+    ///   - demands: 按槽位顺序排列的需求。非目标格填**其现有配音**算出的差额（没配音填 0）。
+    ///   - targetIndex: 目标格下标。
+    ///   - granularitySeconds: 收缩步长，由调用方传（一般是一帧的秒数）；必填、无默认值 ——
+    ///     写死一个步长就等于让不同帧率的方案用同一个精度。
+    public static func brollSecondsAvailable(demands: [BrollDemand],
+                                             targetIndex: Int,
+                                             supplies: [BrollSupply],
+                                             granularitySeconds: Double) -> Double {
+        guard demands.indices.contains(targetIndex),
+              granularitySeconds.isFinite, granularitySeconds > 0 else { return 0 }
+        var base = demands
+        base[targetIndex] = BrollDemand(neededSeconds: 0,
+                                        toleranceSeconds: demands[targetIndex].toleranceSeconds,
+                                        slotSegmentLabel: demands[targetIndex].slotSegmentLabel,
+                                        windowSourceKey: demands[targetIndex].windowSourceKey,
+                                        windowStartFrame: demands[targetIndex].windowStartFrame,
+                                        windowEndFrame: demands[targetIndex].windowEndFrame)
+        guard replayAllFilled(base, supplies: supplies) else { return 0 }
+
+        let target = demands[targetIndex]
+        guard target.neededSeconds > target.toleranceSeconds else { return 0 }
+        // 上界：本槽需求，且不超过"整池能给的量"（否则二分白跑）
+        let poolTotal = supplies.filter { $0.frames > 0 && $0.fps > 0 }
+            .reduce(0.0) { $0 + $1.seconds() }
+        var high = min(target.neededSeconds, poolTotal)
+        var low = 0.0
+        var best = 0.0
+        while low <= high {
+            let mid = (low + high) / 2
+            var trial = demands
+            trial[targetIndex] = BrollDemand(neededSeconds: mid,
+                                            toleranceSeconds: target.toleranceSeconds,
+                                            slotSegmentLabel: target.slotSegmentLabel,
+                                            windowSourceKey: target.windowSourceKey,
+                                            windowStartFrame: target.windowStartFrame,
+                                            windowEndFrame: target.windowEndFrame)
+            if replayAllFilled(trial, supplies: supplies) {
+                best = mid
+                low = mid + granularitySeconds
+            } else {
+                high = mid - granularitySeconds
+            }
+        }
+        // 容差以内的需求**一片都不占**（`BrollPolicy` 就是这么跳过的）⇒ 归零，
+        // 别把二分步长的残渣（0.025 这类）当"能垫半帧"报给调用方。
+        return best > target.toleranceSeconds ? best : 0
+    }
+
+    /// 重放一遍占用账，看**所有有需求的槽**是否都接得住。
+    private static func replayAllFilled(_ demands: [BrollDemand], supplies: [BrollSupply]) -> Bool {
+        var consumed = Set<String>()
+        for demand in demands where demand.neededSeconds > demand.toleranceSeconds {
+            let plan = BrollPolicy.plan(demand, supplies: supplies, consumed: &consumed)
+            if !plan.filled { return false }
+        }
+        return true
+    }
+}

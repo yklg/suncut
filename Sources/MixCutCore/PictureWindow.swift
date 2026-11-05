@@ -265,4 +265,58 @@ public enum PictureWindowPolicy {
                              frames: frames, requiredFrames: frames,
                              shortfallFrames: 0, mode: .unchanged)
     }
+
+    /// 一个槽位在给定配音时长下的**完整窗口读数**：起点覆盖 → 画面地板 → 可续天花板 → 派生。
+    ///
+    /// 为什么必须有这颗：这四步的组合三个地方都要走 —— 导出建输入（`dubWindow`）、
+    /// 界面投影（`SchemeViewModel.slotWindow`）、生成侧的空镜容量预算
+    /// （`DubbingViewModel.brollSecondsAvailable`）。各写一遍就等于三条腿可以各自漂：
+    /// 本仓为"档位→宽高"抄了 7 份，代价是 41 条成片被渠道拒收（见 `DubRatePolicy.swift` 文件头）。
+    ///
+    /// 返回一律非可选：`resolveWindowStart` / `capacityEndFrame` 这两步不会失败，会失败的只有
+    /// `derive` ⇒ 把"派生不出来"做成 `readout.window == nil`，调用方仍拿得到天花板与夹回信息去**上报**，
+    /// 不必为了打日志把那两步再写一遍（再写一遍就是要它漂的时候漂）。
+    public static func resolveSlotWindow(startOverrideFrame: Int?,
+                                          pictureStartFrame: Int, pictureEndFrame: Int,
+                                          pictureIsReplaced: Bool,
+                                          sourceDurationSeconds: Double, fps: Double,
+                                          siblingStartFrame: Int?,
+                                          dubSeconds: Double) -> SlotWindowReadout {
+        let resolved = resolveWindowStart(override: startOverrideFrame,
+                                          segmentStartFrame: pictureStartFrame)
+        let originalFrames = max(0, pictureEndFrame - pictureStartFrame)
+        let floorEnd = resolved.startFrame + originalFrames
+        let ceiling = capacityEndFrame(pictureIsReplaced: pictureIsReplaced,
+                                       pictureEndFrame: floorEnd,
+                                       sourceDurationSeconds: sourceDurationSeconds,
+                                       fps: fps, siblingStartFrame: siblingStartFrame)
+        let w = derive(startFrame: resolved.startFrame, endFrame: floorEnd,
+                       sourceEndFrame: ceiling, dubSeconds: dubSeconds, fps: fps)
+        return SlotWindowReadout(window: w, resolvedStartFrame: resolved.startFrame,
+                                 ceilingEndFrame: ceiling,
+                                 clampedFrom: resolved.clampedFrom,
+                                 originalFrames: originalFrames)
+    }
+}
+
+/// `resolveSlotWindow` 的读数：窗口本体 + 调用方还要用到的四样上下文。
+public struct SlotWindowReadout: Equatable, Sendable {
+    /// 派生出来的窗口；`nil` = 前提不成立 ⇒ 调用方**必须上报**，不许静默换成 `fallback`
+    /// （那颗把差额报成 0，看着像"接得住"，是同一颗雷的另一种埋法）
+    public let window: PictureWindow?
+    /// 夹过之后的窗口起点（覆盖被夹掉时这里就是夹后的值）
+    public let resolvedStartFrame: Int
+    /// 可续到的最远帧（天花板）—— 界面要说"还能续多少"、预算要判"够不够"
+    public let ceilingEndFrame: Int
+    /// 起点覆盖被夹回时的原值（nil = 没被夹）
+    public let clampedFrom: Int?
+    /// 画面自己的长度（挪起点只平移、不缩放的那条地板）
+    public let originalFrames: Int
+
+    public init(window: PictureWindow?, resolvedStartFrame: Int, ceilingEndFrame: Int,
+                clampedFrom: Int?, originalFrames: Int) {
+        self.window = window; self.resolvedStartFrame = resolvedStartFrame
+        self.ceilingEndFrame = ceilingEndFrame; self.clampedFrom = clampedFrom
+        self.originalFrames = originalFrames
+    }
 }

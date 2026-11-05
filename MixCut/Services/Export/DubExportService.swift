@@ -182,36 +182,30 @@ struct DubExportInput: Sendable {
             // 窗口**可以长于分镜**：语速固定之后配音更长是常态（B-2 已放宽超字闸），
             // 接不满的那部分由素材库的「空镜」段垫满 —— 见下面的 `brollFill`。
             func dubWindow(for dub: SegmentDub) -> PictureWindow {
-                // 起点：本槽的手改覆盖优先（只许往前挪），否则用画面自己的起点帧。
+                // 四步组合（覆盖→地板→天花板→派生）整颗走 `resolveSlotWindow`：
+                // 导出、界面投影、生成侧预算三条腿必须同形，各写一遍就是等着漂（PW-22 钉这颗）。
+                let read = PictureWindowPolicy.resolveSlotWindow(
+                    startOverrideFrame: schemeSeg.windowStartOverrideFrame,
+                    pictureStartFrame: ep.startFrame, pictureEndFrame: ep.endFrame,
+                    pictureIsReplaced: ep.isReplaced,
+                    sourceDurationSeconds: video.duration, fps: fps,
+                    siblingStartFrame: segment.nextSameSourceStartFrame,
+                    dubSeconds: dub.audioDuration)
                 // 覆盖被夹掉时必须出日志 —— 默默改用户填的数是"屏上一个数、库里另一个数"那一族。
-                let resolved = PictureWindowPolicy.resolveWindowStart(
-                    override: schemeSeg.windowStartOverrideFrame, segmentStartFrame: ep.startFrame)
-                if let from = resolved.clampedFrom {
+                if let from = read.clampedFrom {
                     MixLog.error("[画面窗口] 起点覆盖被夹回 segment=\(segment.segmentIndex) "
-                                 + "填=\(from) 夹到=\(resolved.startFrame) "
+                                 + "填=\(from) 夹到=\(read.resolvedStartFrame) "
                                  + "上限=画面起点 \(ep.startFrame)（往后挪会让本槽画面盖进下一槽）")
                 }
-                // 画面自身的长度仍是地板：挪起点只是平移区间，不该把这段变短
-                let windowFloorEnd = resolved.startFrame + max(0, ep.endFrame - ep.startFrame)
-                let capacityEnd = PictureWindowPolicy.capacityEndFrame(
-                    pictureIsReplaced: ep.isReplaced, pictureEndFrame: windowFloorEnd,
-                    sourceDurationSeconds: video.duration, fps: fps,
-                    siblingStartFrame: segment.nextSameSourceStartFrame)
-                if let w = PictureWindowPolicy.derive(startFrame: resolved.startFrame,
-                                                      endFrame: windowFloorEnd,
-                                                      sourceEndFrame: capacityEnd,
-                                                      dubSeconds: dub.audioDuration, fps: fps) {
-                    return w
-                }
+                if let w = read.window { return w }
                 // 派生不出来就退回"不扩窗"，但**必须上报**：这颗回退会把 shortfall 报成 0，
                 // 悄悄用就等于把"我不知道"伪装成"接得住"（Core 那边同一句话写着）。
                 MixLog.error("[画面窗口] 派生失败，按原画面区间导出 segment=\(segment.segmentIndex) "
                              + "画面[\(ep.startFrame),\(ep.endFrame)) dub=\(dub.audioDuration)s "
-                             + "可续到=\(capacityEnd) fps=\(fps)")
+                             + "可续到=\(read.ceilingEndFrame) fps=\(fps)")
                 // 回退也保住用户填的起点（只丢"接长"这一件事，不丢平移）
-                return PictureWindowPolicy.fallback(startFrame: resolved.startFrame,
-                                                    endFrame: resolved.startFrame
-                                                        + max(0, ep.endFrame - ep.startFrame))
+                return PictureWindowPolicy.fallback(startFrame: read.resolvedStartFrame,
+                                                    endFrame: read.resolvedStartFrame + read.originalFrames)
             }
             // 差额超出实测容差 ⇒ 先试**插空镜**接住；接不住才判这条方案不可导。
             // 必须在起 ffmpeg 之前判完：渲染到一半才失败会留下只有半条内容的 mp4（`ExportService.swift:211-213` 的 moov 事故）。

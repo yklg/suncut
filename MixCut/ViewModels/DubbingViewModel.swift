@@ -1158,11 +1158,18 @@ final class DubbingViewModel {
         // 容量整颗交给 Core（`capacitySeconds`）：这里只负责"调不调"，不负责算 ——
         // 自己写一遍 `seconds(frame: capacityFrames(...))` 的话，改成 pictureSeconds
         // 也能骗过形状扫描（2026-11-05 变异实测过），所以不留这个口子。
-        let capacitySeconds = PictureWindowPolicy.capacitySeconds(
+        let pictureCapacitySeconds = PictureWindowPolicy.capacitySeconds(
             pictureStartFrame: gatePicture.startFrame, pictureEndFrame: gatePicture.endFrame,
             pictureIsReplaced: gatePicture.isReplaced,
             sourceDurationSeconds: video.duration, fps: gateFps,
             siblingStartFrame: segment.nextSameSourceStartFrame)
+        // 容量的第二截：**能插的空镜**（B 块差额承接）。不加这一截，中间格（后面紧贴下一格分镜、
+        // 画面续无可续）只要文案偏长一点就仍在花钱之前被拒 —— 那正是用户要"插空镜"的原因。
+        // ⚠️ 这颗必须按**整条方案的占用账**算（`SchemeBrollBudget`），不能只看本槽的池子：
+        //    空镜每片只许用一次，逐格各自许诺整个池子就会"生成放行、导出拦下"，白烧一次 TTS。
+        let estimatedSeconds = DubVoiceCalibration().estimatedSeconds(for: dub.rewrittenText)
+        let capacitySeconds = pictureCapacitySeconds
+            + DubbingViewModel.brollSecondsAvailable(for: segment, candidateAudioSeconds: estimatedSeconds)
 
         // **作业闸门**：估算超字就在发 TTS 请求之前拒掉 —— 派单一旦发起就是云端计费，
         // 拒回它已经来不及（同 U07 判"顺序"的理由）。
@@ -1239,6 +1246,11 @@ final class DubbingViewModel {
             // 这道天然在花钱之后（实测值只有合成完才有），刻意**不进** U07 的名册 ——
             // U07 查的是 ensureNoActiveJob 与 jobs.begin 的先后，与本闸不是同一对。
             // 理由与代价写在这里，别只留在计划文档里：见 DubRatePolicy.swift 的文件头。
+            // 实测可能比估算长 ⇒ 空镜那一截按**实测**重算一次（池子还剩多少取决于本槽要多少）。
+            // 名字沿用 `capacitySeconds`：PW-15 钉的是 `capacitySeconds: capacitySeconds` 这个形状，
+            // 改成别的名字那道闸就看不见这颗调用 —— 保持两处同形是刻意的，不是将就判据。
+            let capacitySeconds = pictureCapacitySeconds + DubbingViewModel.brollSecondsAvailable(
+                for: segment, candidateAudioSeconds: result.rawDuration)
             if case .reject(let reason) = DubLengthGate.postCheck(audioSeconds: result.rawDuration,
                                                                   capacitySeconds: capacitySeconds) {
                 let rejected = DubLengthRejected(reason)
@@ -1897,5 +1909,92 @@ final class DubbingViewModel {
                     && $0.direction == .reverse }
         }
         return isReverse ? .userScriptReverse : .productScript
+    }
+}
+
+// MARK: - 生成侧容量里的「可插空镜」那一截（B 块差额承接）
+
+extension DubbingViewModel {
+
+    /// 本槽在**当前方案的空镜占用账**下实际还能垫几秒（超字闸容量的第二截）。
+    ///
+    /// 三处必须与导出侧同形：同一个池子筛法（只认「空镜」标签、滤掉本片已在用的分镜、
+    /// 查画面文件在不在）、同一个槽位顺序、同一本"每片至多用一次"的占用账。
+    /// 少任何一条就会出现**生成放行、导出拦下** —— 那时 TTS 费用已经花掉了
+    /// （同 PW-12 那条跨接缝不变式，本仓最贵的一类分叉）。
+    ///
+    /// 同一分镜挂在多条方案里时取**最小值**：任何一条方案接不住，都不该再往里灌更长的文案。
+    /// 分镜不属于任何方案（素材库直接合成）时返回 0 —— 没有槽位顺序可言，不猜。
+    @MainActor
+    static func brollSecondsAvailable(for segment: Segment, candidateAudioSeconds: Double) -> Double {
+        guard let video = segment.video, video.fps > 0,
+              !segment.schemeSegments.isEmpty else { return 0 }
+        var worst: Double?
+        var seen = Set<UUID>()
+        for slot in segment.schemeSegments {
+            guard let scheme = slot.scheme, !seen.contains(scheme.id) else { continue }
+            seen.insert(scheme.id)
+            let avail = brollSecondsAvailable(in: scheme, for: slot,
+                                              candidateAudioSeconds: candidateAudioSeconds)
+            worst = worst == nil ? avail : Swift.min(worst!, avail)
+        }
+        return max(0, worst ?? 0)
+    }
+
+    /// 单条方案口径的重放：按槽位顺序建需求，交给 `SchemeBrollBudget`（与导出同一个顺序）。
+    @MainActor
+    private static func brollSecondsAvailable(in scheme: MixScheme, for targetSlot: SchemeSegment,
+                                              candidateAudioSeconds: Double) -> Double {
+        guard let project = scheme.project, let fps = targetSlot.segment?.video?.fps, fps > 0 else { return 0 }
+        let ordered = scheme.orderedSegments
+        // 本片已经在用的分镜不许当自己的空镜（同导出侧那条筛）
+        let inScheme = Set(ordered.compactMap { $0.segment?.segmentIndex })
+        let pool = project.brollSupplies
+            .filter { !inScheme.contains($0.label) }
+            .filter { FileHelper.isMaterialFilePresent(path: $0.videoPath) }
+        guard !pool.isEmpty else { return 0 }
+
+        var demands: [BrollDemand] = []
+        var targetIndex = 0
+        for (i, ss) in ordered.enumerated() {
+            if ss.id == targetSlot.id { targetIndex = i }
+            // 目标格代入"这一版文案预计要多少"，其余格代入它们**现有配音**的差额
+            let audio = ss.id == targetSlot.id ? candidateAudioSeconds : existingDubSeconds(of: ss)
+            demands.append(brollDemand(of: ss, audioSeconds: audio))
+        }
+        guard demands.indices.contains(targetIndex) else { return 0 }
+        return SchemeBrollBudget.brollSecondsAvailable(
+            demands: demands, targetIndex: targetIndex, supplies: pool,
+            granularitySeconds: FrameTime.seconds(frame: 1, fps: fps))
+    }
+
+    /// 一格对空镜的需求 = 窗口接不住配音的那几秒。
+    /// 四步组合走 `resolveSlotWindow`（与导出、界面投影同一个形状，不各写一遍）。
+    private static func brollDemand(of ss: SchemeSegment, audioSeconds: Double) -> BrollDemand {
+        let tolerance = DubLengthGate.measuredToleranceSeconds
+        let empty = BrollDemand(neededSeconds: 0, toleranceSeconds: tolerance,
+                                slotSegmentLabel: ss.segment?.segmentIndex ?? "",
+                                windowSourceKey: "", windowStartFrame: 0, windowEndFrame: 0)
+        guard let segment = ss.segment, let video = segment.video, video.fps > 0 else { return empty }
+        let ep = segment.effectivePicture
+        let read = PictureWindowPolicy.resolveSlotWindow(
+            startOverrideFrame: ss.windowStartOverrideFrame,
+            pictureStartFrame: ep.startFrame, pictureEndFrame: ep.endFrame,
+            pictureIsReplaced: ep.isReplaced,
+            sourceDurationSeconds: video.duration, fps: video.fps,
+            siblingStartFrame: segment.nextSameSourceStartFrame,
+            dubSeconds: audioSeconds)
+        guard let w = read.window else { return empty }   // 派生不出来 ⇒ 报零需求，只少拿不多放行
+        return BrollDemand(neededSeconds: FrameTime.seconds(frame: w.shortfallFrames, fps: video.fps),
+                           toleranceSeconds: tolerance,
+                           slotSegmentLabel: segment.segmentIndex,
+                           windowSourceKey: segment.pictureSourceKey,
+                           windowStartFrame: w.startFrame, windowEndFrame: w.endFrame)
+    }
+
+    /// 该槽**现有**配音的实测时长（没绑定或没生成 ⇒ 0 需求，不占池子）。
+    private static func existingDubSeconds(of ss: SchemeSegment) -> Double {
+        guard let segment = ss.segment, let id = ss.selectedSegmentDubId else { return 0 }
+        return segment.effectiveDubVariants.first { $0.id == id }?.audioDuration ?? 0
     }
 }

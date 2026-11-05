@@ -157,6 +157,90 @@ struct BrollFillPlanTests {
     }
 }
 
+@Suite("BF · 生成侧的空镜预算（跨槽占用账）")
+struct SchemeBrollBudgetTests {
+
+    // 预算这颗存在的理由：空镜"每片至多用一次"。生成侧若只看本槽的池子，
+    // 就会对每一格都许诺整个池子 ⇒ 生成放行、导出拦下，而那时 TTS 钱已经花掉了。
+    private func budget(_ demands: [BrollDemand], target: Int, supplies: [BrollSupply]) -> Double {
+        SchemeBrollBudget.brollSecondsAvailable(demands: demands, targetIndex: target,
+                                                supplies: supplies, granularitySeconds: 0.04)
+    }
+
+    @Test("BF-17 池子够 ⇒ 本槽需求全额可得")
+    func fullNeedWhenPoolIsBigEnough() {
+        let got = budget([demand(needed: 2.0)], target: 0, supplies: [supply("seg_009", 0, 100)])
+        #expect(got >= 1.95 && got <= 2.0,
+                "池子够却给不满需求 ⇒ 超字闸仍会拒一条本来接得住的文案（got \(got)）")
+    }
+
+    @Test("BF-18 池子只有一半 ⇒ 只报一半，不许许诺整池")
+    func partialPoolIsReportedPartially() {
+        let got = budget([demand(needed: 2.0)], target: 0, supplies: [supply("seg_009", 0, 25)])
+        #expect(got >= 0.95 && got <= 1.06,
+                "1s 的池子却报 2s ⇒ 导出侧一定接不满，钱白花（got \(got)）")
+    }
+
+    @Test("BF-19 前面的槽已把池子吃光 ⇒ 本槽预算为 0")
+    func earlierSlotExhaustsPool() {
+        let demands = [demand(needed: 2.0, slot: "seg_001"), demand(needed: 2.0, slot: "seg_002")]
+        let got = budget(demands, target: 1, supplies: [supply("seg_009", 0, 50)])
+        #expect(got == 0, "池子已被前一格占掉还给第二格许诺 ⇒ 两格都以为接得住（got \(got)）")
+    }
+
+    @Test("BF-20 后面的槽已有配音占了池子 ⇒ 不许把它的量抢来给自己")
+    func laterExistingNeedIsReserved() {
+        // 目标格在前（位置 0），第二格**已经生成过**一条差 2s 的配音，池子总共只有 2s
+        let demands = [demand(needed: 2.0, slot: "seg_001"), demand(needed: 2.0, slot: "seg_002")]
+        let got = budget(demands, target: 0, supplies: [supply("seg_009", 0, 50)])
+        #expect(got == 0,
+                "抢走了已花钱那条配音该用的空镜 ⇒ 导出时前一格接住、后一格被拦，等于把已生成的配音作废")
+    }
+
+    @Test("BF-21 反向对照：池子够两格用时，本槽照样拿满（证 BF-20 不是恒 0）")
+    func poolBigEnoughForBoth() {
+        let demands = [demand(needed: 2.0, slot: "seg_001"), demand(needed: 2.0, slot: "seg_002")]
+        let got = budget(demands, target: 0, supplies: [supply("seg_009", 0, 50), supply("seg_010", 0, 50)])
+        #expect(got >= 1.95,
+                "池子明明够两格却报 0 ⇒ 超字闸退化成 B-2 之前的硬拒，用户还得改短台词")
+    }
+
+    @Test("BF-22 没需求 / 没池子 / 下标越界 ⇒ 一律 0，不猜")
+    func degenerateInputsYieldZero() {
+        #expect(budget([demand(needed: 0)], target: 0, supplies: [supply("seg_009", 0, 100)]) == 0)
+        #expect(budget([demand(needed: 2.0)], target: 0, supplies: []) == 0)
+        #expect(SchemeBrollBudget.brollSecondsAvailable(demands: [demand(needed: 2.0)], targetIndex: 5,
+                                                       supplies: [supply("seg_009", 0, 100)],
+                                                       granularitySeconds: 0.04) == 0)
+        #expect(SchemeBrollBudget.brollSecondsAvailable(demands: [demand(needed: 2.0)], targetIndex: 0,
+                                                       supplies: [supply("seg_009", 0, 100)],
+                                                       granularitySeconds: 0) == 0,
+                "步长给 0 会转不完 ⇒ 这颗必须拒收非法步长")
+    }
+
+    @Test("BF-23 自证：把预算填回需求再重放，别的槽照样接得住（这数可兑现）")
+    func promisedNumberIsHonorable() {
+        // 两条各 2s 的空镜；本格要 3s、后格要 2s ⇒ 本格最多只能拿满**一条** 2s：
+        // 拿 2.5s 会同时占用两条（用掉半片=整片被占，纪律 2），后格就饿死。
+        let supplies = [supply("seg_009", 0, 50), supply("seg_010", 0, 50)]
+        let got = budget([demand(needed: 3.0, slot: "seg_001"), demand(needed: 2.0, slot: "seg_002")],
+                         target: 0, supplies: supplies)
+        #expect(got >= 1.95 && got <= 2.05, "只能拿满第一条 2s（实得 \(got)）")
+        // 把预算填回本格需求再问后格：它照样该拿满 2s，否则这颗数是空头承诺
+        let after = budget([demand(needed: got, slot: "seg_001"), demand(needed: 2.0, slot: "seg_002")],
+                           target: 1, supplies: supplies)
+        #expect(after >= 1.95,
+                "按预算分配后另一格反而接不住 ⇒ 生成侧拿这颗数放行、导出侧却拦（白烧 TTS）")
+    }
+
+    @Test("BF-24 容差以内的需求不占池子 ⇒ 预算归零，不留步长残渣")
+    func withinToleranceBudgetIsExactlyZero() {
+        let got = budget([demand(needed: 3.0, slot: "seg_001"), demand(needed: 0.04, slot: "seg_002")],
+                         target: 1, supplies: [supply("seg_009", 0, 75)])
+        #expect(got == 0, "0.04s 的需求一片都不占 ⇒ 报 0.02x 这种二分残渣等于允许可见的半帧空镜")
+    }
+}
+
 @Suite("BF · 多段画面滤镜图")
 struct BrollGraphTests {
 

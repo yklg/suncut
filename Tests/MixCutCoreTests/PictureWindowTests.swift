@@ -430,6 +430,54 @@ struct PictureWindowTests {
         #expect(PictureWindowPolicy.shortfallText(shortfallFrames: 50, fps: 25) == "配音差 2.00s")
         #expect(PictureWindowPolicy.shortfallText(shortfallFrames: 1, fps: 25) == "配音差 0.04s")
     }
+
+    @Test("PW-21 四步组合一颗走通：覆盖→地板→天花板→派生，与手算逐步同值")
+    func resolveSlotWindowMatchesStepByStep() throws {
+        // 画面 [100,200)@25fps=4s；源片 60s；配音 8s=200 帧 ⇒ 天花板 1500，窗口该接到 [100,300)
+        let r = PictureWindowPolicy.resolveSlotWindow(
+            startOverrideFrame: nil, pictureStartFrame: 100, pictureEndFrame: 200,
+            pictureIsReplaced: false, sourceDurationSeconds: 60, fps: 25,
+            siblingStartFrame: nil, dubSeconds: 8.0)
+        let w = try #require(r.window)
+        #expect(w.startFrame == 100 && w.endFrame == 300, "组合颗与三步手算不同值 ⇒ 三条腿开始各走各的")
+        #expect(r.ceilingEndFrame == 1500 && r.originalFrames == 100 && r.clampedFrom == nil)
+        #expect(w.shortfallFrames == 0)
+
+        // 往前挪到 60：长度不缩（平移），窗尾仍是 60+240=300? 需求 200 帧 ⇒ 尾 = max(60+100, 60+200)=260
+        let moved = PictureWindowPolicy.resolveSlotWindow(
+            startOverrideFrame: 60, pictureStartFrame: 100, pictureEndFrame: 200,
+            pictureIsReplaced: false, sourceDurationSeconds: 60, fps: 25,
+            siblingStartFrame: nil, dubSeconds: 8.0)
+        #expect(moved.window?.startFrame == 60 && moved.window?.endFrame == 260)
+        #expect(moved.resolvedStartFrame == 60 && moved.clampedFrom == nil)
+
+        // 往后挪（150 > 画面起点）⇒ 夹回 100，并把原值交回（界面要能说"你填的不作数"）
+        let clamped = PictureWindowPolicy.resolveSlotWindow(
+            startOverrideFrame: 150, pictureStartFrame: 100, pictureEndFrame: 200,
+            pictureIsReplaced: false, sourceDurationSeconds: 60, fps: 25,
+            siblingStartFrame: nil, dubSeconds: 2.0)
+        #expect(clamped.clampedFrom == 150 && clamped.resolvedStartFrame == 100)
+        #expect(clamped.window?.endFrame == 200, "配音 2s 比画面短 ⇒ 窗口就是画面本身")
+
+        // 同素材下一格紧贴 ⇒ 天花板压低到它的起点，窗口不许吃进它的画面
+        let glued = PictureWindowPolicy.resolveSlotWindow(
+            startOverrideFrame: nil, pictureStartFrame: 100, pictureEndFrame: 200,
+            pictureIsReplaced: false, sourceDurationSeconds: 60, fps: 25,
+            siblingStartFrame: 200, dubSeconds: 8.0)
+        #expect(glued.ceilingEndFrame == 200)
+        #expect(glued.window?.endFrame == 200 && glued.window?.shortfallFrames == 100)
+    }
+
+    @Test("PW-22 反向对照：前提不成立时 window=nil，但天花板/起点仍交得出来（供上报）")
+    func readoutStillReportsContextWhenDerivationFails() {
+        let bad = PictureWindowPolicy.resolveSlotWindow(
+            startOverrideFrame: nil, pictureStartFrame: 100, pictureEndFrame: 200,
+            pictureIsReplaced: false, sourceDurationSeconds: 60, fps: 0,
+            siblingStartFrame: nil, dubSeconds: 8.0)
+        #expect(bad.window == nil, "fps 非正还派生出窗口 ⇒ 会算出垃圾帧数")
+        #expect(bad.resolvedStartFrame == 100 && bad.originalFrames == 100,
+                "派生失败时读数也要保住上下文 —— 日志没有天花板与画面区间就等于'我不知道'说不清")
+    }
 }
 
 /// 找出"调用超字闸却没把可续容量传进去"的位置（返回违规说明，空数组即全部合规）。
