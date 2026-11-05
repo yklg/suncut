@@ -109,7 +109,7 @@ struct CaptionWindowSingleBasisTests {
         // 三组"闸会放行"的输入：短于画面、恰等、容差内略超
         let cases: [(audio: Double, picture: Double)] = [(3, 5), (5, 5), (5.02, 5)]
         for c in cases {
-            #expect(DubLengthGate.postCheck(audioSeconds: c.audio, pictureSeconds: c.picture) == .pass,
+            #expect(DubLengthGate.postCheck(audioSeconds: c.audio, capacitySeconds: c.picture) == .pass,
                     "前置不成立：(\(c.audio), \(c.picture)) 竟被闸拒了 ⇒ 本条的推理链断了")
             let lines = SentenceTimingAligner.align(text: text, words: [],
                                                     audioDuration: c.audio,
@@ -126,7 +126,7 @@ struct CaptionWindowSingleBasisTests {
         }
 
         // 反向对照：超出闸容差的那组会被拒，且它才是真正触发"字幕比口播短一大截"的输入
-        #expect(DubLengthGate.postCheck(audioSeconds: 8, pictureSeconds: 5) != .pass,
+        #expect(DubLengthGate.postCheck(audioSeconds: 8, capacitySeconds: 5) != .pass,
                 "前置不成立：(8,5) 竟被闸放行")
         let clipped = SentenceTimingAligner.align(text: text, words: [],
                                                   audioDuration: 8, segmentDuration: 5)

@@ -1032,3 +1032,101 @@ final class SchemeViewModel {
         return scheme
     }
 }
+
+// MARK: - 槽位画面窗口投影（B 块 ①；G26 投影名册覆盖）
+
+/// 一个方案槽位的画面窗口**值型事实**。
+///
+/// 为什么是投影、而不是让视图自己算：视图读模型是本仓两道守卫的刀口
+/// （G08 关系裸读、G26 值型投影名册），而窗口的派生口径只许住
+/// `PictureWindowPolicy` 一处。视图只渲染这里的字段，**不碰 `derive`**。
+///
+/// 与 `OverviewSnapshot` / `SegmentCardSnapshot` 同族：字段全是值，
+/// 不许出现模型类名（G26 扫存储属性，`init` 吃模型是合法的转换入口）。
+struct SlotWindowSnapshot: Equatable, Sendable {
+    /// 可续到头的原因 —— 文案要据此说"源片末尾"还是"下一格起点"
+    enum Ceiling: String, Sendable { case sourceEnd, nextSegment }
+    /// 窗口长度由谁决定 —— 配音更长时是 `.dub`，否则画面自己说了算（`.shot`）
+    enum Length: String, Sendable { case dub, shot }
+
+    let hasDub: Bool
+    let isAuto: Bool
+    let startFrame: Int
+    let endFrame: Int
+    /// 窗口之后还能续多少帧（`ceiling − endFrame`，不小于 0）
+    let roomFrames: Int
+    /// 差额**已按容差折算**：> 0 才是"装不下、导出会被拦"；容差内的溢出按 0 报
+    let shortfallFrames: Int
+    let ceilingSource: Ceiling
+    let lengthSource: Length
+    /// 用户填了但被夹回的原值（nil = 没被夹；恰等起点也不算被夹）
+    let clampedFrom: Int?
+}
+
+extension SchemeViewModel {
+
+    /// 槽位窗口投影。**纯读**：不写库、不改状态。
+    ///
+    /// - Returns: `nil` = 前提不成立（无视频 / fps 非正）。**不猜、不灰显** ——
+    ///   调用方拿到 nil 就不渲染「窗」行；给它一个假窗口比不显示更糟。
+    ///   注意与 `hasDub == false` 的区别：那是"这一格没配音"的**合法状态**，
+    ///   窗口等于画面本身，投影照常返回。
+    func slotWindow(_ schemeSeg: SchemeSegment, segment: Segment) -> SlotWindowSnapshot? {
+        guard let video = segment.video else { return nil }
+        let fps = video.fps > 0 ? video.fps : 0
+        guard fps > 0 else { return nil }
+
+        let ep = segment.effectivePicture
+        let resolved = PictureWindowPolicy.resolveWindowStart(
+            override: schemeSeg.windowStartOverrideFrame, segmentStartFrame: ep.startFrame)
+        let originalFrames = max(0, ep.endFrame - ep.startFrame)
+        let windowFloorEnd = resolved.startFrame + originalFrames
+
+        // 天花板：同素材下一格起点 / 源片末尾（`capacityEndFrame` 是唯一口径）
+        let sibling = segment.nextSameSourceStartFrame
+        let ceilingEnd = PictureWindowPolicy.capacityEndFrame(
+            pictureIsReplaced: ep.isReplaced, pictureEndFrame: windowFloorEnd,
+            sourceDurationSeconds: video.duration, fps: fps, siblingStartFrame: sibling)
+        let sourceEndOnly = PictureWindowPolicy.capacityEndFrame(
+            pictureIsReplaced: ep.isReplaced, pictureEndFrame: windowFloorEnd,
+            sourceDurationSeconds: video.duration, fps: fps, siblingStartFrame: nil)
+        let ceilingSource: SlotWindowSnapshot.Ceiling =
+            (sibling != nil && ceilingEnd < sourceEndOnly) ? .nextSegment : .sourceEnd
+
+        let dub = schemeSeg.selectedSegmentDubId.flatMap { id in
+            segment.segmentDubs.first { $0.id == id }
+        }
+        let hasDub = dub?.audioFilePath?.isEmpty == false
+        let dubSeconds = hasDub ? (dub?.audioDuration ?? 0) : 0
+
+        guard let w = PictureWindowPolicy.derive(startFrame: resolved.startFrame,
+                                                 endFrame: windowFloorEnd,
+                                                 sourceEndFrame: ceilingEnd,
+                                                 dubSeconds: dubSeconds, fps: fps) else { return nil }
+
+        let tolFrames = FrameTime.frame(seconds: DubLengthGate.measuredToleranceSeconds, fps: fps)
+        let shortfall = w.shortfallFrames > tolFrames ? w.shortfallFrames : 0
+        let dubFrames = FrameTime.frame(seconds: dubSeconds, fps: fps)
+        let isAuto = schemeSeg.windowStartOverrideFrame == nil
+            || schemeSeg.windowStartOverrideFrame == resolved.startFrame
+
+        return SlotWindowSnapshot(
+            hasDub: hasDub,
+            isAuto: isAuto,
+            startFrame: w.startFrame,
+            endFrame: w.endFrame,
+            roomFrames: max(0, ceilingEnd - w.endFrame),
+            shortfallFrames: shortfall,
+            ceilingSource: ceilingSource,
+            lengthSource: dubFrames > originalFrames ? .dub : .shot,
+            clampedFrom: resolved.clampedFrom)
+    }
+
+    /// 窗口起点的**唯一写入口**（nil = 回到自动）。
+    ///
+    /// 只做赋值，不 save：调用方持有 `ModelContext`，按既有纪律落盘。
+    /// 放在 VM 而不是视图里，是为了让 SN-12 能扫出"全仓只有这一处写"。
+    func setWindowStartOverride(_ schemeSeg: SchemeSegment, frame: Int?) {
+        schemeSeg.windowStartOverrideFrame = frame
+    }
+}

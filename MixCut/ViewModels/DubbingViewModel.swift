@@ -1146,15 +1146,31 @@ final class DubbingViewModel {
         // 复现（缺省 `.unknownLegacy` ⇒ 按落库的 atempoFactor/trailingSilence 原样重渲）。
         let policy: DubAlignmentPolicy = .fixedRate
         let rate = DubRateResolution.resolve(explicit: nil, videoPreference: video.dubSpeechRate)
+        // 分镜自己的画面时长：仍是 finalize 的 padding 基准（配音短了用它算 trailingSilence）。
         let pictureSeconds = segment.duration
+        // B-2：**超字闸的基准换成"画面可续到的长度"**（分镜起点 → 源片末尾）。
+        // 语速固定后配音不再被压回画面，于是"比原画面长 0.4s"这类文案原来是硬拒；
+        // 现在只要画面往后还续得到就该放行 —— 这正是 B 块给用户的收益：不用为了几帧改短台词。
+        // ⚠️ 口径必须与导出侧同一颗函数（`PictureWindowPolicy.capacityEndFrame`），
+        //    两侧一分叉就会出现"生成时放行、导出时装不下"，而那时 TTS 费用已经花掉了。
+        let gateFps = video.fps > 0 ? video.fps : 30
+        let gatePicture = segment.effectivePicture
+        // 容量整颗交给 Core（`capacitySeconds`）：这里只负责"调不调"，不负责算 ——
+        // 自己写一遍 `seconds(frame: capacityFrames(...))` 的话，改成 pictureSeconds
+        // 也能骗过形状扫描（2026-11-05 变异实测过），所以不留这个口子。
+        let capacitySeconds = PictureWindowPolicy.capacitySeconds(
+            pictureStartFrame: gatePicture.startFrame, pictureEndFrame: gatePicture.endFrame,
+            pictureIsReplaced: gatePicture.isReplaced,
+            sourceDurationSeconds: video.duration, fps: gateFps,
+            siblingStartFrame: segment.nextSameSourceStartFrame)
 
         // **作业闸门**：估算超字就在发 TTS 请求之前拒掉 —— 派单一旦发起就是云端计费，
         // 拒回它已经来不及（同 U07 判"顺序"的理由）。
         // 放在 busyDubIDs.insert 之后、任何 client 调用之前。
         if case .reject(let reason) = DubLengthGate.preCheck(text: dub.rewrittenText,
-                                                             pictureSeconds: pictureSeconds) {
+                                                             capacitySeconds: capacitySeconds) {
             let rejected = DubLengthRejected(reason)
-            MixLog.info("[DubGate] 估算超字拒合成 dub=\(dub.id) segment=\(segment.segmentIndex)：\(rejected)")
+            MixLog.info("[DubGate] 估算超字拒合成 dub=\(dub.id) segment=\(segment.segmentIndex)：\(rejected) 画面=\(String(format: "%.2f", pictureSeconds))s 可续=\(String(format: "%.2f", capacitySeconds))s")
             dub.status = .pending
             try? context.save()
             if !silent {
@@ -1224,7 +1240,7 @@ final class DubbingViewModel {
             // U07 查的是 ensureNoActiveJob 与 jobs.begin 的先后，与本闸不是同一对。
             // 理由与代价写在这里，别只留在计划文档里：见 DubRatePolicy.swift 的文件头。
             if case .reject(let reason) = DubLengthGate.postCheck(audioSeconds: result.rawDuration,
-                                                                  pictureSeconds: target) {
+                                                                  capacitySeconds: capacitySeconds) {
                 let rejected = DubLengthRejected(reason)
                 MixLog.info("[DubGate] 实测超字丢弃 dub=\(dub.id) segment=\(segment.segmentIndex)：\(rejected)")
                 try? FileManager.default.removeItem(atPath: result.wavPath)   // 别把 wav 留在临时目录

@@ -21,6 +21,21 @@ final class SchemeSegment: Identifiable {
     /// 带默认值轻量迁移；keepOriginal 普通方案不使用此字段。
     var preferredVoiceChoiceRaw: String?
 
+    /// 画面窗口起点的**手改覆盖值**（B 块第 14 条），单位是画面来源自己的帧号。
+    ///
+    /// nil = 自动：起点就是分镜自己的起点，窗口长度由该槽所选配音的实测时长派生
+    /// （`PictureWindowPolicy.derive`，不落库）。只有"人改过"才需要存，所以这颗字段
+    /// 存的是**覆盖值而不是派生值** —— 存派生值就等于多一处会与配音长度分叉的真源。
+    ///
+    /// 只许 ≤ 分镜起点（往前挪多带前摇）。往后挪会让本槽画面盖进下一槽里，
+    /// 同一段源画面在成片中连续出现两次 ⇒ 看起来就是卡顿，与已拍死的
+    /// "不重复用同一分镜"同族。夹取与理由都在 `PictureWindowPolicy.resolveWindowStart`，
+    /// 读侧（导出）与写侧（界面）都走那一颗，不在这里重复判。
+    ///
+    /// 带默认值属轻量迁移（同 `preferredVoiceChoiceRaw`）；旧库该行读出 nil = 自动，
+    /// 与"没人改过"同义，不会冒充成某个具体帧号。
+    var windowStartOverrideFrame: Int?
+
     init(position: Int, reasoning: String? = nil, positionReasoning: String? = nil) {
         self.id = UUID()
         self.position = position

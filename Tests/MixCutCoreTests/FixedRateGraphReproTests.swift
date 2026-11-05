@@ -88,7 +88,7 @@ struct FixedRateGraphReproTests {
         // 场景：文案偏短 —— raw 1.4s 塞 2.0s 画面。
         let picture = Double(Self.endFrame - Self.startFrame) / Self.fps
         let raw = 1.4
-        #expect(DubLengthGate.postCheck(audioSeconds: raw, pictureSeconds: picture) == .pass)
+        #expect(DubLengthGate.postCheck(audioSeconds: raw, capacitySeconds: picture) == .pass)
         let plan = AudioAligner.plan(targetDuration: picture, audioDuration: raw,
                                      fps: Self.fps, policy: .fixedRate)
         #expect(plan.atempoFactor == 1.0, "新口径竟变速了")
@@ -106,7 +106,7 @@ struct FixedRateGraphReproTests {
     @Test("G-6 偏长的输入根本不该走到导出：闸必须拒（前移的证据）")
     func overlongNeverReachesGraph() {
         let picture = Double(Self.endFrame - Self.startFrame) / Self.fps   // 2.0s
-        #expect(DubLengthGate.postCheck(audioSeconds: 2.6, pictureSeconds: picture) != .pass,
+        #expect(DubLengthGate.postCheck(audioSeconds: 2.6, capacitySeconds: picture) != .pass,
                 "2.6s 配音塞 2.0s 画面竟放行 ⇒ 前移失效，导出会音画分叉")
         // 而旧口径会把它压进画面 —— 那正是语速跳变的来源，对照着钉住。
         // 2.6 / 2.0 = 正好 1.3：这里必须钉**精确值**而不是 `> 1.3`，

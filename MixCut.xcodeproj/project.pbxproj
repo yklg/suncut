@@ -157,6 +157,7 @@
 		AC0000000000000000000011 /* KnowledgeLibraryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AD0000000000000000000011 /* KnowledgeLibraryView.swift */; };
 		AC0000000000000000000012 /* AudioTrackPolicy.swift in Sources */ = {isa = PBXBuildFile; fileRef = AD0000000000000000000012 /* AudioTrackPolicy.swift */; };
 		AC0000000000000000000026 /* EmptyLensPolicy.swift in Sources */ = {isa = PBXBuildFile; fileRef = AD0000000000000000000025 /* EmptyLensPolicy.swift */; };
+		AC0000000000000000000027 /* PictureWindow.swift in Sources */ = {isa = PBXBuildFile; fileRef = AD0000000000000000000028 /* PictureWindow.swift */; };
 		AC0000000000000000000025 /* DubRatePolicy.swift in Sources */ = {isa = PBXBuildFile; fileRef = AD0000000000000000000026 /* DubRatePolicy.swift */; };
 		AC0000000000000000000013 /* BM25Index.swift in Sources */ = {isa = PBXBuildFile; fileRef = AD0000000000000000000013 /* BM25Index.swift */; };
 		AC0000000000000000000014 /* VectorIndex.swift in Sources */ = {isa = PBXBuildFile; fileRef = AD0000000000000000000014 /* VectorIndex.swift */; };
@@ -481,6 +482,7 @@
 		AD0000000000000000000011 /* KnowledgeLibraryView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KnowledgeLibraryView.swift; sourceTree = "<group>"; };
 		AD0000000000000000000012 /* AudioTrackPolicy.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = AudioTrackPolicy.swift; path = Sources/MixCutCore/AudioTrackPolicy.swift; sourceTree = "<group>"; };
 		AD0000000000000000000025 /* EmptyLensPolicy.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = EmptyLensPolicy.swift; path = Sources/MixCutCore/EmptyLensPolicy.swift; sourceTree = "<group>"; };
+		AD0000000000000000000028 /* PictureWindow.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = PictureWindow.swift; path = Sources/MixCutCore/PictureWindow.swift; sourceTree = "<group>"; };
 		AD0000000000000000000026 /* DubRatePolicy.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = DubRatePolicy.swift; path = Sources/MixCutCore/DubRatePolicy.swift; sourceTree = "<group>"; };
 		AD0000000000000000000013 /* BM25Index.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = BM25Index.swift; path = Sources/MixCutCore/BM25Index.swift; sourceTree = "<group>"; };
 		AD0000000000000000000014 /* VectorIndex.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = VectorIndex.swift; path = Sources/MixCutCore/VectorIndex.swift; sourceTree = "<group>"; };
@@ -881,6 +883,7 @@
 				AD0000000000000000000007 /* ScriptFlowPhase.swift */,
 				AD0000000000000000000012 /* AudioTrackPolicy.swift */,
 				AD0000000000000000000025 /* EmptyLensPolicy.swift */,
+				AD0000000000000000000028 /* PictureWindow.swift */,
 				AD0000000000000000000026 /* DubRatePolicy.swift */,
 				AD0000000000000000000013 /* BM25Index.swift */,
 				AD0000000000000000000014 /* VectorIndex.swift */,
@@ -1553,6 +1556,7 @@
 				AC0000000000000000000007 /* ScriptFlowPhase.swift in Sources */,
 				AC0000000000000000000012 /* AudioTrackPolicy.swift in Sources */,
 				AC0000000000000000000026 /* EmptyLensPolicy.swift in Sources */,
+				AC0000000000000000000027 /* PictureWindow.swift in Sources */,
 				AC0000000000000000000025 /* DubRatePolicy.swift in Sources */,
 				AC0000000000000000000013 /* BM25Index.swift in Sources */,
 				AC0000000000000000000014 /* VectorIndex.swift in Sources */,

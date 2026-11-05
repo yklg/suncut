@@ -98,19 +98,24 @@ public struct DubVoiceCalibration: Equatable, Sendable {
 /// 是无害的（残差交 `trailingSilence`）。⇒ 已删除，由本类型取代。
 public enum DubLengthGate {
 
-    /// 实测超出画面时允许的容差（秒）。
+    /// 实测超出**可续画面**时允许的容差（秒）。
     ///
     /// 取绝对值而不是"一帧"：本闸管的是"话有没有说完"这种量级，半帧噪声不影响它；
     /// 把 fps 引进判据只会多一个能填错的口子。
     public static let measuredToleranceSeconds: Double = 0.05
 
     /// 拒绝原因。结构化，供面板逐槽显示"超了多少"，也供 MCP 返回体与导出失败清单复用。
+    ///
+    /// ⚠️ 载荷字段叫 `capacitySeconds` 而不叫 `pictureSeconds`，是 B 块 B-2 那一改的结果：
+    /// 基准从"分镜自己的画面时长"换成"画面**能续到的长度**"（分镜起点 → 源片末尾）。
+    /// 名字不改就等于让参数说假话 —— 屏上显示的秒数会被读成"分镜就这么长"，
+    /// 而那时用户会去改短一句本来根本不用改的台词。
     public enum Rejection: Equatable, Sendable {
-        /// 合成前：估算时长已超画面
-        case estimateOver(estimatedSeconds: Double, pictureSeconds: Double)
-        /// 合成后：实测音频时长超画面
-        case measuredOver(audioSeconds: Double, pictureSeconds: Double)
-        /// 无法判：画面时长缺失/非正。按**拒绝**处理 —— 放行一条不知道会不会超的配音，
+        /// 合成前：估算时长已超过可续画面
+        case estimateOver(estimatedSeconds: Double, capacitySeconds: Double)
+        /// 合成后：实测音频时长超过可续画面
+        case measuredOver(audioSeconds: Double, capacitySeconds: Double)
+        /// 无法判：容量缺失/非正。按**拒绝**处理 —— 放行一条不知道会不会超的配音，
         /// 等于把"绝不超画面"的承诺换成运气。
         case undecidable
     }
@@ -124,21 +129,21 @@ public enum DubLengthGate {
     ///
     /// 空文本不算超字（交上游的"没词就别合成"处理），本闸只管长度。
     public static func preCheck(text: String,
-                                pictureSeconds: Double,
+                                capacitySeconds: Double,
                                 calibration: DubVoiceCalibration = DubVoiceCalibration()) -> Verdict {
-        guard pictureSeconds.isFinite, pictureSeconds > 0 else { return .reject(.undecidable) }
+        guard capacitySeconds.isFinite, capacitySeconds > 0 else { return .reject(.undecidable) }
         guard SpeechDuration.spokenCharacterCount(text) > 0 else { return .pass }
         let estimated = calibration.estimatedSeconds(for: text)
-        guard estimated > pictureSeconds else { return .pass }
-        return .reject(.estimateOver(estimatedSeconds: estimated, pictureSeconds: pictureSeconds))
+        guard estimated > capacitySeconds else { return .pass }
+        return .reject(.estimateOver(estimatedSeconds: estimated, capacitySeconds: capacitySeconds))
     }
 
     /// 合成后判据（真值）。
-    public static func postCheck(audioSeconds: Double, pictureSeconds: Double) -> Verdict {
-        guard pictureSeconds.isFinite, pictureSeconds > 0 else { return .reject(.undecidable) }
+    public static func postCheck(audioSeconds: Double, capacitySeconds: Double) -> Verdict {
+        guard capacitySeconds.isFinite, capacitySeconds > 0 else { return .reject(.undecidable) }
         guard audioSeconds.isFinite, audioSeconds > 0 else { return .reject(.undecidable) }
-        guard audioSeconds > pictureSeconds + measuredToleranceSeconds else { return .pass }
-        return .reject(.measuredOver(audioSeconds: audioSeconds, pictureSeconds: pictureSeconds))
+        guard audioSeconds > capacitySeconds + measuredToleranceSeconds else { return .pass }
+        return .reject(.measuredOver(audioSeconds: audioSeconds, capacitySeconds: capacitySeconds))
     }
 }
 
@@ -195,12 +200,14 @@ public struct DubLengthRejected: Error, CustomStringConvertible, Equatable, Send
 
     public var description: String {
         switch reason {
-        case .estimateOver(let est, let pic):
-            return String(format: "文案约 %.1fs，超过画面 %.1fs，请先改短台词", est, pic)
-        case .measuredOver(let audio, let pic):
-            return String(format: "配音实测 %.1fs，超过画面 %.1fs，请先改短台词", audio, pic)
+        case .estimateOver(let est, let cap):
+            // 说的是"可续画面"而不是"画面"：数字是「分镜起点 → 源片末尾」的长度。
+            // 只写"画面"会让用户去改一句本来不用改的台词 —— 他不知道画面还能往后接。
+            return String(format: "文案约 %.1fs，超过可续画面 %.1fs（画面已能往后接到源片末尾），请先改短台词", est, cap)
+        case .measuredOver(let audio, let cap):
+            return String(format: "配音实测 %.1fs，超过可续画面 %.1fs（画面已接到源片末尾），请先改短台词", audio, cap)
         case .undecidable:
-            return "画面时长未知，无法判配音是否超长"
+            return "画面可续长度未知，无法判配音是否超长"
         }
     }
 }

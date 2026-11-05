@@ -520,6 +520,11 @@ struct TombstoneReadGuardTests {
         (#"MixCut/Models/Project.swift"#, "displayableSegments", #"for video in associatedVideos { out.append(contentsOf: video.displayableSegments) }"#, 1),
         (#"MixCut/Models/Project.swift"#, "segments", #"associatedVideos.reduce(0) { $0 + $1.segments.count }"#, 1),
         (#"MixCut/Models/ProjectVideo.swift"#, "projectVideos", #"if let existing = project.projectVideos.first(where: { $0.video?.id == video.id }) {"#, 1),
+        // 〔2026-11-05 B 块画面窗口新增〕同素材下一格分镜的起点 = 窗口可续的天花板。
+        // 登记理由：它是模型层自己的关系读（与上面 5 条同族，不是 UI 止血刀口上的欠账），
+        // 且刻意走 `displayableSegments` 那颗可见性出口 —— 隐藏行不算"下一格"。
+        // 它把命中总数从 47 抬到 48：新增即红是这座门在正常工作，销账要同时改这张表。
+        (#"MixCut/Models/Segment.swift"#, "displayableSegments", #"return video.displayableSegments"#, 1),
         (#"MixCut/Views/Export/ExportView.swift"#, "orderedSchemes", #"ForEach(strategy.orderedSchemes) { scheme in"#, 1),
         (#"MixCut/Views/Export/ExportView.swift"#, "orderedSchemes", #"let ids = Set(strategy.orderedSchemes.map(\.id))"#, 2),
         (#"MixCut/Views/Export/ExportView.swift"#, "orderedSchemes", #"let schemeIDs = Set(strategy.orderedSchemes.map(\.id))"#, 1),
@@ -589,11 +594,12 @@ struct TombstoneReadGuardTests {
                 "SegmentLibraryView 没有任何命中 ⇒ 取样面没覆盖崩点所在文件，下面的零断言是空的")
         #expect(!got.keys.contains { $0.hasPrefix("MixCut/Views/SegmentLibrary/SegmentLibraryView.swift|segments|") },
                 "本次 SIGTRAP 的直接触发点（SegmentLibraryView 读 video.segments）又回来了")
-        // 数量锁：实得 47（2026-11-03 V3 扩面后 = 原 42 + Models 出口 5 条；
+        // 数量锁：实得 48（2026-11-05 B 块加窗口上界的一处新读，已同轮登记；
+        //            上一版 47 = 2026-11-03 V3 扩面后 = 原 42 + Models 出口 5 条；
         // 历史：M2 曾新增 `segmentDubs` 遍历与 `video.segments.contains` 两处读取）。
         // ⚠️ 数字**由生成腿读出**（`TOMBSTONE_DUMP_BASELINE=1 swift test --filter dumpBaselineForRegeneration`，
         // 看 `.scratch/guard_baseline_new.txt` 首行 TOTAL_HITS），不是手数。
-        #expect(hits.count == 47, "命中总数应为 47（2026-11-03 V3 扩面后由 G08d 重生成），实得 \(hits.count)")
+        #expect(hits.count == 48, "命中总数应为 48（47 + 2026-11-05 B 块窗口上界那一处新读），实得 \(hits.count)")
     }
 
     @Test("G08c 敏感性变异：往真实取样面里注入一处新裸读，门必须立刻认出来")
@@ -1536,3 +1542,126 @@ struct PredicateChainGuardTests {
                 "自有列比较被误伤")
     }
 }
+
+// MARK: - G26 · 值型投影名册（*Snapshot 的**存储属性**只许装值）
+
+// 为什么必须是"存储属性"而不是"整段源码里有没有提到模型名"：
+// `SegmentCardSnapshot` 的 `init(_ segment: Segment)` 是**转换入口**，合法且必要；
+// 按"整段含模型名"判会把这类正常写法当场判红（存量 3 个 Snapshot 里就有 1 个）。
+// 口径与 G25 一致：只看**存储属性**（计算属性/闭包体不算），并允许 init 参数吃模型。
+// 与 G20 分工：G20 管"init 里不许跨关系读"，G26 管"存下来的是值"。
+
+/// 从一份 Swift 源码里取出所有 `struct *Snapshot` 的结构体体（含花括号）。
+private func g26SnapshotBodies(in code: String) -> [(name: String, body: String)] {
+    var out: [(String, String)] = []
+    let chars = Array(code)
+    let marker = Array("struct ")
+    var i = 0
+    while i + marker.count <= chars.count {
+        guard Array(chars[i..<(i + marker.count)]) == marker else { i += 1; continue }
+        var j = i + marker.count
+        var name = ""
+        while j < chars.count, chars[j].isLetter || chars[j].isNumber || chars[j] == "_" {
+            name.append(chars[j]); j += 1
+        }
+        guard name.hasSuffix("Snapshot") else { i = max(j, i + 1); continue }
+        while j < chars.count, chars[j] != "{" { j += 1 }
+        guard j < chars.count else { break }
+        var depth = 0
+        var body = ""
+        while j < chars.count {
+            let c = chars[j]
+            if c == "{" { depth += 1 }
+            if c == "}" { depth -= 1 }
+            body.append(c)
+            j += 1
+            if depth == 0 { break }
+        }
+        out.append((name, body))
+        i = j
+    }
+    return out
+}
+
+/// 结构体**顶层**（深度 1）的存储属性：名字 + 类型串。计算属性与带闭包初始化的行不参与。
+private func g26StoredPropertyTypes(in body: String) -> [(name: String, type: String)] {
+    var out: [(String, String)] = []
+    var depth = 0
+    for raw in body.split(separator: "\n", omittingEmptySubsequences: false) {
+        let line = raw.trimmingCharacters(in: .whitespaces)
+        if depth == 1,
+           line.range(of: #"^(?:@\w+\s+)*(?:let|var)\s+\w+\s*:\s*[^{\n]+$"#,
+                      options: .regularExpression) != nil,
+           !line.hasPrefix("//"),
+           let colon = line.firstIndex(of: ":") {
+            let head = String(line[..<colon]).split(separator: " ").last.map(String.init) ?? "?"
+            let type = String(line[line.index(after: colon)...]).trimmingCharacters(in: .whitespaces)
+            out.append((head, type))
+        }
+        for ch in raw { if ch == "{" { depth += 1 } else if ch == "}" { depth -= 1 } }
+    }
+    return out
+}
+
+@Suite("G26 · 值型投影名册")
+struct ValueProjectionRosterTests {
+
+    private static let scanRoots = ["MixCut/Views", "MixCut/ViewModels", "Sources/MixCutCore"]
+
+    @Test("G26 每个 *Snapshot 的存储属性里都不许出现模型类名")
+    func snapshotsHoldOnlyValues() {
+        let models = RelationshipReadScan.modelTypeNames(modelSources: modelSources())
+        guard !models.isEmpty else {
+            Issue.record("取不到模型类名 ⇒ 判据无法成立，不判通过"); return
+        }
+        var scanned: [String] = []
+        var bad: [String] = []
+        for root in Self.scanRoots {
+            for rel in swiftFiles(under: root) {
+                guard let raw = load(rel) else { continue }
+                let code = RelationshipReadScan.codeOnly(raw)
+                for (name, body) in g26SnapshotBodies(in: code) {
+                    scanned.append(name)
+                    for (prop, type) in g26StoredPropertyTypes(in: body) {
+                        for m in models where type.range(of: "\\b\(m)\\b", options: .regularExpression) != nil {
+                            bad.append("\(rel) · \(name).\(prop): \(type)（含模型 \(m)）")
+                        }
+                    }
+                }
+            }
+        }
+        #expect(bad.isEmpty, "投影把模型存下来了 ⇒ 视图会持有活对象（真删后读死对象那一族的入口）：\(bad)")
+        // 探针根自证：少于 3 个说明取样面塌了（存量已知 3 个），这时上面的绿是空跑
+        #expect(scanned.count >= 3, "只扫到 \(scanned.count) 个 *Snapshot（\(scanned)）⇒ 取样面不全，本条不算通过")
+    }
+
+    @Test("G26b 口径自证：init 吃模型不算违规；存储属性里放模型必须红")
+    func semanticsAreHonest() {
+        let models: Set<String> = ["Segment"]
+        func mentionsModel(_ body: String) -> Bool {
+            g26StoredPropertyTypes(in: body).contains { _, type in
+                models.contains { type.range(of: "\\b\($0)\\b", options: .regularExpression) != nil }
+            }
+        }
+        // 正腿：转换入口合法（存量 SegmentCardSnapshot 就是这个形状，判它红会假红一片）
+        let converter = """
+        struct AaaSnapshot: Identifiable {
+            let id: UUID
+            init(_ segment: Segment) { id = segment.id }
+        }
+        """
+        let aBodies = g26SnapshotBodies(in: converter)
+        #expect(aBodies.count == 1 && !mentionsModel(aBodies[0].body),
+                "init 里接受模型被判成违规 ⇒ 存量 SegmentCardSnapshot 会假红，口径与 G25 不一致")
+        // 负腿：真把模型存下来必须判出来（否则上面那格是恒绿）
+        let holder = """
+        struct BbbSnapshot {
+            let seg: Segment
+        }
+        """
+        let bBodies = g26SnapshotBodies(in: holder)
+        #expect(bBodies.count == 1 && mentionsModel(bBodies[0].body),
+                "存储属性里放模型都没判出来 ⇒ G26 这条判据没有牙")
+    }
+}
+

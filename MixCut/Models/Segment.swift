@@ -345,6 +345,31 @@ final class Segment: Identifiable {
     /// 分镜帧数
     var frameCount: Int { max(0, endFrame - startFrame) }
 
+    /// **同素材**里排在本段之后的最近分镜起点 —— 画面窗口可续的天花板（B 块）。
+    ///
+    /// 一条源视频会被切成多个分镜，所以"往后续帧"能吃到的余量往往不是源片末尾，
+    /// 而是下一格分镜的脸。漏掉这层的后果（本仓 2026-11-05 实测）：前一段接长到
+    /// [0,200) 而后一段本来就是 [100,200) ⇒ 同一段画面在成片里连播两遍。
+    ///
+    /// nil = 本段之后没有别的分镜了（通常是最后一段）⇒ 可以放心续到源片末尾。
+    ///
+    /// ⚠️ 条件是 `>=`，不是 `>`：导入即切分出来的分镜本来就该首尾相接，
+    /// 用 `>` 会把"紧贴的下一格"读成"没有兄弟"，于是照旧续进它的画面 ——
+    /// 这个差一在 2026-11-05 被 BR-4 当场抓出（当时段2 起点 100 恰等段1 尾帧 100）。
+    ///
+    /// ⚠️ 走 `displayableSegments` 这颗可见性唯一出口，不裸读 `video.segments`：
+    ///   ① 混剪内部整片段(`mixInternalWholeClip`)那类隐藏行不是一段真剪辑，拿它当"下一格"
+    ///      会把可续余量误算成 0，画面白白接不长；
+    ///   ② 本仓真删后读关系集合出过 SIGTRAP（守卫 G08 守的就是这一族），可见性收口
+    ///      一律走这颗出口，新增读点必须同轮在 `TombstoneReadGuardTests.baseline` 登记。
+    /// 读侧与写侧（生成超字闸、导出窗口）都只从这里取，别各写一遍 filter。
+    var nextSameSourceStartFrame: Int? {
+        guard let video else { return nil }
+        return video.displayableSegments
+            .filter { $0.id != id && $0.startFrame >= endFrame }
+            .map(\.startFrame).min()
+    }
+
     /// 台词来源的读侧。存量字符串认不出时按 `unknownLegacy` 处理 —— 猜一个引擎名，
     /// 就是把"不知道"伪装成数据（本项目已定过的纪律）。
     var textSource: TranscriptSource {

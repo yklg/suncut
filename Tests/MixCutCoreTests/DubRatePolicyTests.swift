@@ -21,12 +21,12 @@ struct DubLengthGatePreCheckTests {
 
     @Test("T7-1 估算恰等画面时长 ⇒ 放行（边界取「不超过」而非「严格小于」）")
     func exactlyFitsPasses() {
-        #expect(DubLengthGate.preCheck(text: Self.text43, pictureSeconds: 10) == .pass)
+        #expect(DubLengthGate.preCheck(text: Self.text43, capacitySeconds: 10) == .pass)
     }
 
     @Test("T7-2 估算超画面 ⇒ 拒绝，并回显估算值与画面值")
     func overEstimateRejects() {
-        let v = DubLengthGate.preCheck(text: Self.text44, pictureSeconds: 10)
+        let v = DubLengthGate.preCheck(text: Self.text44, capacitySeconds: 10)
         guard case .reject(.estimateOver(let est, let pic)) = v else {
             Issue.record("超字应报 estimateOver，实得 \(v)")
             return
@@ -41,16 +41,16 @@ struct DubLengthGatePreCheckTests {
     @Test("T10 偏短不得被误拒（旧 atempoFactor 的 0.5 下界不许抄回来）")
     func shortTextMustNotBeRejected() {
         let short = String(repeating: "字", count: 10)      // ≈2.33s，画面 10s
-        #expect(DubLengthGate.preCheck(text: short, pictureSeconds: 10) == .pass,
+        #expect(DubLengthGate.preCheck(text: short, capacitySeconds: 10) == .pass,
                 "偏短被拒 ⇒ 有人把旧的 0.5 下界搬进了新闸")
         // 反向对照：短到接近零也放行（闸只管长度上限，不管"太短"）
-        #expect(DubLengthGate.preCheck(text: "一个字", pictureSeconds: 10) == .pass)
+        #expect(DubLengthGate.preCheck(text: "一个字", capacitySeconds: 10) == .pass)
     }
 
     @Test("T7-3 空文本与纯空白不判超字（交上游'没词就别合成'处理）")
     func emptyTextIsNotAnOverflow() {
         for t in ["", "   ", "\n\t "] {
-            #expect(DubLengthGate.preCheck(text: t, pictureSeconds: 10) == .pass,
+            #expect(DubLengthGate.preCheck(text: t, capacitySeconds: 10) == .pass,
                     "空文本被当成超字：\(t.debugDescription)")
         }
     }
@@ -58,7 +58,7 @@ struct DubLengthGatePreCheckTests {
     @Test("T7-4 画面时长缺失/非正 ⇒ 判不可决并按拒绝处理，不许放行")
     func unknownPictureDurationRejects() {
         for bad in [0.0, -1.0, Double.nan, Double.infinity] {
-            let v = DubLengthGate.preCheck(text: Self.text43, pictureSeconds: bad)
+            let v = DubLengthGate.preCheck(text: Self.text43, capacitySeconds: bad)
             #expect(v == .reject(.undecidable), "picture=\(bad) 应拒，实得 \(v)")
         }
     }
@@ -68,8 +68,29 @@ struct DubLengthGatePreCheckTests {
         // 旧判据放行 factor 到 2.0 ⇒ 86 字（≈20s）塞 10s 画面也过。
         // 这条钉死：新闸必须拒掉它。若有人把上限改回 2.0，本转会红。
         let doubled = String(repeating: "字", count: 86)
-        #expect(DubLengthGate.preCheck(text: doubled, pictureSeconds: 10) != .pass,
+        #expect(DubLengthGate.preCheck(text: doubled, capacitySeconds: 10) != .pass,
                 "86 字塞 10s 画面被放行 ⇒ 闸退回了旧的 0.5–2.0 区间")
+    }
+
+    @Test("B2-1 放宽的是**基准**不是阈值：同一句文案，续得到就放行、续不到照旧拒")
+    func wideningIsOnCapacityNotOnTheLimit() {
+        // text43 ≈ 43 字 ÷ 4.3 字/秒 ≈ 10s（未校准档），画面只有 6s。
+        // 旧口径（基准=分镜画面时长）必拒；B-2 之后：
+        //   · 画面往后还能续 4s（源片末尾在 10s 处）⇒ 放行 —— 这就是 B 块给用户的收益
+        //   · 源片已到末尾、续无可续（容量 == 画面 == 6s）⇒ 仍拒 —— 证明放的是"能续多长"，
+        //     不是把 1.0 倍这个上限放宽了。两格的唯一差别只有 capacitySeconds 这一个入参。
+        let overShot = DubLengthGate.preCheck(text: Self.text43, capacitySeconds: 10)
+        #expect(overShot == .pass,
+                "画面可续到 10s 却仍被拒 ⇒ B-2 的基准没接上，用户还得为几帧改短台词")
+        let noRoom = DubLengthGate.preCheck(text: Self.text43, capacitySeconds: 6)
+        #expect(noRoom != .pass,
+                "续无可续还被放行 ⇒ 阈值被真的放宽了，那会产出一批装不下的配音")
+        // 载荷回显的必须是容量，否则屏上会显示一个用户没见过的数
+        if case .reject(.estimateOver(let est, let cap)) = noRoom {
+            #expect(cap == 6 && est > 6, "回显值不对：est=\(est) cap=\(cap)")
+        } else {
+            Issue.record("应报 estimateOver，实得 \(noRoom)")
+        }
     }
 }
 
@@ -80,7 +101,7 @@ struct DubLengthGatePostCheckTests {
 
     @Test("实测超画面 ⇒ 拒绝并回显两个原值")
     func measuredOverRejects() {
-        let v = DubLengthGate.postCheck(audioSeconds: 8, pictureSeconds: 5)
+        let v = DubLengthGate.postCheck(audioSeconds: 8, capacitySeconds: 5)
         guard case .reject(.measuredOver(let audio, let pic)) = v else {
             Issue.record("应报 measuredOver，实得 \(v)"); return
         }
@@ -90,21 +111,21 @@ struct DubLengthGatePostCheckTests {
     @Test("容差内放行（半帧噪声不该算超字）")
     func withinTolerancePasses() {
         let tol = DubLengthGate.measuredToleranceSeconds
-        #expect(DubLengthGate.postCheck(audioSeconds: 5 + tol * 0.5, pictureSeconds: 5) == .pass)
-        #expect(DubLengthGate.postCheck(audioSeconds: 5, pictureSeconds: 5) == .pass)
+        #expect(DubLengthGate.postCheck(audioSeconds: 5 + tol * 0.5, capacitySeconds: 5) == .pass)
+        #expect(DubLengthGate.postCheck(audioSeconds: 5, capacitySeconds: 5) == .pass)
     }
 
     @Test("超出容差即拒 —— 反向对照：容差不许被放宽成无上限")
     func beyondToleranceRejects() {
         let tol = DubLengthGate.measuredToleranceSeconds
-        #expect(DubLengthGate.postCheck(audioSeconds: 5 + tol * 2, pictureSeconds: 5) != .pass,
+        #expect(DubLengthGate.postCheck(audioSeconds: 5 + tol * 2, capacitySeconds: 5) != .pass,
                 "超容差被放行 ⇒ 实测闸形同虚设")
     }
 
     @Test("音频时长非法（0 / 负 / NaN）⇒ 判不可决，不许读成'很短所以没事'")
     func badAudioDurationIsUndecidable() {
         for bad in [0.0, -3.0, Double.nan, Double.infinity] {
-            #expect(DubLengthGate.postCheck(audioSeconds: bad, pictureSeconds: 5) == .reject(.undecidable),
+            #expect(DubLengthGate.postCheck(audioSeconds: bad, capacitySeconds: 5) == .reject(.undecidable),
                     "audio=\(bad) 应判不可决")
         }
     }
@@ -189,7 +210,7 @@ struct DubRateLimitsTests {
         let fast = DubVoiceCalibration(charsPerSecond: 8.6).estimatedSeconds(for: text)
         #expect(abs(slow - 10) < 0.01 && abs(fast - 5) < 0.01, "slow=\(slow) fast=\(fast)")
         // 闸要吃这颗档：同一稿字，用快口档就不该被拒
-        #expect(DubLengthGate.preCheck(text: text, pictureSeconds: 10,
+        #expect(DubLengthGate.preCheck(text: text, capacitySeconds: 10,
                                       calibration: DubVoiceCalibration(charsPerSecond: 8.6)) == .pass)
     }
 }
@@ -202,8 +223,8 @@ struct DubLengthRejectedTests {
     @Test("三档拒绝各有非空文案，且都指向'改短台词'而不是'变速'")
     func messagesPointAtRewriteNotRetempo() {
         let cases: [DubLengthGate.Rejection] = [
-            .estimateOver(estimatedSeconds: 12.3, pictureSeconds: 10),
-            .measuredOver(audioSeconds: 11.1, pictureSeconds: 10),
+            .estimateOver(estimatedSeconds: 12.3, capacitySeconds: 10),
+            .measuredOver(audioSeconds: 11.1, capacitySeconds: 10),
             .undecidable,
         ]
         for c in cases {
@@ -212,7 +233,7 @@ struct DubLengthRejectedTests {
             #expect(!msg.contains("变速") && !msg.contains("atempo"),
                     "文案把用户往变速上指：\(msg)")
         }
-        #expect(DubLengthRejected(.estimateOver(estimatedSeconds: 12.3, pictureSeconds: 10))
+        #expect(DubLengthRejected(.estimateOver(estimatedSeconds: 12.3, capacitySeconds: 10))
                     .description.contains("12.3"))
     }
 }
