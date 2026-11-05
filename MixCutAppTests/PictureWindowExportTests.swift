@@ -63,13 +63,31 @@ private func pweDuration(_ ff: FFmpegRunner, _ path: String) async throws -> Dou
     return d
 }
 
+/// 量**某一条流**的时长（`v:0` / `a:0`）。
+///
+/// 为什么容器时长不够用：配音是 8s，就算画面只到 6s，容器时长照样报 8s ——
+/// 那种读数证明不了空镜有没有真播进去（BR-10 要的正是这一格）。量不到照样抛，
+/// 不许把"读不出来"当成"通过"。
+private func pweStreamDuration(_ ff: FFmpegRunner, _ path: String, stream: String) async throws -> Double {
+    let out = try await ff.runProbe(arguments: ["-v", "error", "-select_streams", stream,
+                                               "-show_entries", "stream=duration",
+                                               "-of", "csv=p=0", path])
+    guard let d = Double(out.trimmingCharacters(in: .whitespacesAndNewlines)) else {
+        throw CocoaError(.fileReadCorruptFile)
+    }
+    return d
+}
+
 /// 对象图：1 条源视频 + 若干分镜（**区间显式给**，"下一格贴不贴"正是这些判据的主题）
 /// + 每格一个已生成的配音 + 可选的窗口起点手改覆盖。
 @MainActor
 private func pweGraph(videoPath: String, dubPaths: [String], videoDuration: Double,
                       ranges: [(start: Double, end: Double)], dubDurations: [Double],
                       startOverrides: [Int?] = [],
-                      width: Int, height: Int) throws -> (MixScheme, ModelContainer) {
+                      width: Int, height: Int,
+                      slotTag: SemanticType? = nil,
+                      projectMainVideo: Bool = false,
+                      broll: [(path: String, duration: Double, start: Double, end: Double, fps: Double)] = []) throws -> (MixScheme, ModelContainer) {
     let container = try ModelContainer(
         for: Schema(versionedSchema: AppSchemaV1.self),
         configurations: [ModelConfiguration(isStoredInMemoryOnly: true)])
@@ -89,7 +107,8 @@ private func pweGraph(videoPath: String, dubPaths: [String], videoDuration: Doub
     for (i, range) in ranges.enumerated() {
         let segment = Segment(segmentIndex: String(format: "seg_%03d", i + 1),
                               startTime: range.start, endTime: range.end,
-                              text: "原台词 \(i)", semanticTypes: [.painPoint],
+                              text: "原台词 \(i)",
+                              semanticTypes: slotTag.map { [.painPoint, $0] } ?? [.painPoint],
                               positionType: i == 0 ? .opening : .middle)
         segment.startFrame = FrameTime.frame(seconds: range.start, fps: fps)
         segment.endFrame = FrameTime.frame(seconds: range.end, fps: fps)
@@ -111,22 +130,56 @@ private func pweGraph(videoPath: String, dubPaths: [String], videoDuration: Doub
         slot.selectedSegmentDubId = dub.id
         if i < startOverrides.count { slot.windowStartOverrideFrame = startOverrides[i] }
     }
+
+    // 空镜供给：**另起一条素材**挂进同一个项目，且不进方案（方案内已用的段不许当供给）。
+    // 挂项目一律走 `ProjectVideo.associate`（幂等入口），裸 insert 会造出重复挂载行。
+    if !broll.isEmpty || projectMainVideo {
+        let project = Project(name: "PWE-临时项目")
+        ctx.insert(project)
+        _ = ProjectVideo.associate(project: project, video: video, in: ctx)
+        for (i, b) in broll.enumerated() {
+            let bVideo = Video(name: "PWE-空镜\(i)", localPath: b.path)
+            bVideo.duration = b.duration
+            bVideo.fps = b.fps
+            bVideo.width = width
+            bVideo.height = height
+            ctx.insert(bVideo)
+            _ = ProjectVideo.associate(project: project, video: bVideo, in: ctx)
+
+            let bSeg = Segment(segmentIndex: String(format: "brl_%03d", i + 1),
+                               startTime: b.start, endTime: b.end,
+                               text: "", semanticTypes: [.emptyShot], positionType: .middle)
+            bSeg.startFrame = FrameTime.frame(seconds: b.start, fps: b.fps)
+            bSeg.endFrame = FrameTime.frame(seconds: b.end, fps: b.fps)
+            bSeg.video = bVideo
+            ctx.insert(bSeg)
+        }
+        scheme.project = project
+    }
     try ctx.save()
     // ⚠️ 容器跟着对象一起交回：内存版 ModelContainer 一释放，它撑着的一切就空了。
     return (scheme, container)
 }
 
 /// 只走到"建导出输入"，不渲染。假字节文件就够（见文件头作用面）。
+/// `broll` 非空 = 在项目里另挂若干条「空镜」素材（不进方案），用来测差额承接。
 @MainActor
 private func pweSpecs(videoDuration: Double, ranges: [(start: Double, end: Double)],
                       dubDurations: [Double], startOverrides: [Int?] = [],
+                      slotTag: SemanticType? = nil,
+                      broll: [(duration: Double, start: Double, end: Double, fps: Double)] = [],
                       dir: URL) throws -> [DubSegmentSpec] {
     let src = try pweFile(dir, name: "src.mov")
     let dubs = try dubDurations.indices.map { try pweFile(dir, name: "dub\($0).m4a") }
+    let paths = try broll.indices.map { try pweFile(dir, name: "broll\($0).mov") }
     let (scheme, container) = try pweGraph(videoPath: src, dubPaths: dubs,
                                            videoDuration: videoDuration, ranges: ranges,
                                            dubDurations: dubDurations, startOverrides: startOverrides,
-                                           width: 1080, height: 1920)
+                                           width: 1080, height: 1920, slotTag: slotTag,
+                                           broll: zip(broll, paths).map { b, p in
+                                            (path: p, duration: b.duration, start: b.start,
+                                             end: b.end, fps: b.fps)
+                                           })
     let specs = try DubExportInput.from(scheme: scheme).segments
     withExtendedLifetime(container) {}     // 显式续命：别在 from() 前后被释放
     return specs
@@ -281,6 +334,120 @@ struct PictureWindowExportTests {
                     "成片只有 \(String(format: "%.2f", measured))s ⇒ 画面没接长或配音被截")
             #expect(measured < 8.9,
                     "成片 \(String(format: "%.2f", measured))s 远超配音长度 ⇒ 多出来的是别处补的空挡")
+        }
+    }
+
+    // MARK: 差额承接（插空镜）—— 2026-11-05 拍的是这一档
+
+    @Test("BR-7 池子够用 ⇒ 不再拦，差额由空镜垫满，时长闸读数含空镜")
+    @MainActor
+    func brollCoversTheShortfall() throws {
+        let dir = try pweScratch()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        // 源片只有 6s ⇒ 画面最多取到 6.00s；配音 8s ⇒ 差 2.00s；空镜 4s 够用
+        let specs = try pweSpecs(videoDuration: 6, ranges: [(0, 4)], dubDurations: [8.0],
+                                 broll: [(duration: 4, start: 0, end: 4, fps: 25)], dir: dir)
+        let s = try #require(specs.first)
+        #expect(s.fillPieces.count == 1, "接得满却仍拦/仍不插 ⇒ 承接没接进建输入这一段")
+        #expect(s.fillPieces[0].frames == 50, "2.00s@25fps 必须截 50 帧（多一帧都比配音长）")
+        #expect(s.fillPieces[0].videoPath.contains("broll0.mov"), "插进去的不是那条空镜素材")
+        #expect(abs(s.deliverySeconds - 8.0) < 0.001,
+                "交付时长闸读的必须是 画面 6s + 空镜 2s；只算窗口的话 4…300s 那条闸会低估片长变假绿")
+    }
+
+    @Test("BR-8 池子不够 ⇒ 仍然拦，且文案说清空镜只垫得起几秒")
+    @MainActor
+    func insufficientBrollStillBlocks() throws {
+        let dir = try pweScratch()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        // 差 2.00s，空镜只有 1.00s ⇒ 不许用半段空镜出一条配音尾巴没垫满的片子
+        var thrown: DubExportInput.BuildError?
+        do {
+            _ = try pweSpecs(videoDuration: 6, ranges: [(0, 4)], dubDurations: [8.0],
+                             broll: [(duration: 1, start: 0, end: 1, fps: 25)], dir: dir)
+        } catch let e as DubExportInput.BuildError { thrown = e }
+        catch { Issue.record("抛的不是 BuildError：\(error)") }
+        guard case .undeliverableWindow(let list)? = thrown else {
+            Issue.record("空镜不够却放行 ⇒ 会渲出口播播完画面还差的片子"); return
+        }
+        #expect(list[0].reason.contains("只垫得起 1.00"), "没告诉用户空镜垫了多少：\(list[0].reason)")
+        #expect(list[0].reason.contains("可续画面"), "没说清是画面不够：\(list[0].reason)")
+    }
+
+    @Test("BR-9 供给侧两条剔除：同源重叠的画面、本片已在用的段，都不许当空镜")
+    @MainActor
+    func supplySideExclusionsHold() throws {
+        // (a) 供给与本格窗口同源重叠 ⇒ 剔掉 ⇒ 池空 ⇒ 仍拦
+        let dirA = try pweScratch()
+        defer { try? FileManager.default.removeItem(at: dirA) }
+        let src = try pweFile(dirA, name: "src.mov")
+        let dub = try pweFile(dirA, name: "dub0.m4a")
+        let (schemeA, cA) = try pweGraph(videoPath: src, dubPaths: [dub], videoDuration: 6,
+                                         ranges: [(0, 4)], dubDurations: [8.0],
+                                         width: 1080, height: 1920,
+                                         broll: [(path: src, duration: 6, start: 2, end: 4, fps: 25)])
+        withExtendedLifetime(cA) {}
+        do {
+            _ = try DubExportInput.from(scheme: schemeA)
+            Issue.record("同一条源视频里窗口已经取到的帧，又被当作空镜插进来 ⇒ 成片里同一段画面播两遍")
+        } catch is DubExportInput.BuildError {}
+
+        // (b) 那条「空镜」正是本片在用的分镜 ⇒ 归占用账/在片过滤管，不许自我垫
+        let dirB = try pweScratch()
+        defer { try? FileManager.default.removeItem(at: dirB) }
+        let srcB = try pweFile(dirB, name: "src.mov")
+        let dubB = try pweFile(dirB, name: "dub0.m4a")
+        let (schemeB, cB) = try pweGraph(videoPath: srcB, dubPaths: [dubB], videoDuration: 6,
+                                         ranges: [(0, 4)], dubDurations: [8.0],
+                                         width: 1080, height: 1920,
+                                         slotTag: .emptyShot, projectMainVideo: true)
+        withExtendedLifetime(cB) {}
+        do {
+            _ = try DubExportInput.from(scheme: schemeB)
+            Issue.record("方案里已在用的分镜被当成自己的空镜 ⇒ 同一段画面连播两遍（纪律 2）")
+        } catch is DubExportInput.BuildError {}
+    }
+
+    @Test("BR-10 真渲染：空镜真的播进成片 —— 视频流跟着配音走满")
+    @MainActor
+    func brollActuallyRenders() async throws {
+        // 会 spawn ffmpeg ⇒ 整条 body 必须进 withFFmpegBench（同 BR-5 的理由）。
+        try await withFFmpegBench("BR-10 空镜承接的真渲染") {
+            let dir = try pweScratch()
+            defer { try? FileManager.default.removeItem(at: dir) }
+            let ff = FFmpegRunner()
+            // 主素材 6s（testsrc），空镜 4s（smptebars）—— 两种图样，视频流长度就是判据
+            let src = dir.appendingPathComponent("src.mp4").path
+            try await ff.run(arguments: ["-f", "lavfi",
+                "-i", "testsrc=size=1080x1920:rate=25:duration=6",
+                "-pix_fmt", "yuv420p", "-y", src], timeoutSeconds: 300)
+            let brl = dir.appendingPathComponent("broll0.mov").path
+            try await ff.run(arguments: ["-f", "lavfi",
+                "-i", "smptebars=size=1080x1920:rate=25:duration=4",
+                "-pix_fmt", "yuv420p", "-y", brl], timeoutSeconds: 300)
+            let dubPath = dir.appendingPathComponent("dub.m4a").path
+            try await ff.run(arguments: ["-f", "lavfi",
+                "-i", "sine=frequency=660:sample_rate=44100:duration=8",
+                "-c:a", "aac", "-b:a", "96k", "-y", dubPath], timeoutSeconds: 300)
+
+            let (scheme, container) = try pweGraph(videoPath: src, dubPaths: [dubPath],
+                                                   videoDuration: 6, ranges: [(0, 4)],
+                                                   dubDurations: [8.0],
+                                                   width: 1080, height: 1920,
+                                                   broll: [(path: brl, duration: 4, start: 0, end: 4, fps: 25)])
+            let input = try DubExportInput.from(scheme: scheme)
+            let out = dir.appendingPathComponent("out.mp4").path
+            var config = ExportConfig()
+            config.resolution = .p1080
+            try await DubExportService().export(input: input, outputPath: out, config: config)
+            withExtendedLifetime(container) {}
+
+            // ⚠️ 量**视频流**而不是容器时长：音频本来就是 8s，容器时长量不出画面有没有垫满。
+            let videoSeconds = try await pweStreamDuration(ff, out, stream: "v:0")
+            #expect(videoSeconds > 7.4,
+                    "视频流只有 \(String(format: "%.2f", videoSeconds))s ⇒ 空镜没播进去（源片 6s 就到头了）")
+            #expect(videoSeconds < 8.9,
+                    "视频流 \(String(format: "%.2f", videoSeconds))s 比配音还长 ⇒ 空镜多垫了")
         }
     }
 }

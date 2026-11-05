@@ -29,13 +29,15 @@ private func snScratch() throws -> URL {
     return dir
 }
 
-/// 一颗最小槽位图：1 视频 + n 段 + 可选配音。返回 (schemeSeg, segment, container)。
+/// 一颗最小槽位图：1 视频 + n 段 + 可选配音 + 可选方案与「空镜」供给。
+/// 返回 (vm, slots, segments, scheme, project, container)。
 @MainActor
 private func snGraph(fps: Double = 25,
                      videoDuration: Double = 60,
                      ranges: [(start: Double, end: Double)] = [(0, 4)],
                      dubSeconds: [Double?] = [nil],
-                     dir: URL) throws -> (SchemeViewModel, [SchemeSegment], [Segment], ModelContainer) {
+                     broll: [(fps: Double, start: Double, end: Double)] = [],
+                     dir: URL) throws -> (SchemeViewModel, [SchemeSegment], [Segment], MixScheme, Project?, ModelContainer) {
     let container = try ModelContainer(
         for: Schema(versionedSchema: AppSchemaV1.self),
         configurations: [ModelConfiguration(isStoredInMemoryOnly: true)])
@@ -47,6 +49,9 @@ private func snGraph(fps: Double = 25,
     video.width = 1080
     video.height = 1920
     ctx.insert(video)
+
+    let scheme = MixScheme(name: "SN-临时方案")
+    ctx.insert(scheme)
 
     var segs: [Segment] = []
     var slots: [SchemeSegment] = []
@@ -64,6 +69,7 @@ private func snGraph(fps: Double = 25,
         let slot = SchemeSegment(position: i + 1)
         ctx.insert(slot)
         slot.segment = segment
+        slot.scheme = scheme
         slots.append(slot)
 
         if i < dubSeconds.count, let secs = dubSeconds[i] {
@@ -77,8 +83,35 @@ private func snGraph(fps: Double = 25,
             slot.selectedSegmentDubId = dub.id
         }
     }
+
+    // 「空镜」供给：**另起一条素材**挂进同一个项目（不进方案），用来测差额承接
+    var project: Project? = nil
+    if !broll.isEmpty {
+        let p = Project(name: "SN-临时项目")
+        ctx.insert(p)
+        _ = ProjectVideo.associate(project: p, video: video, in: ctx)
+        for (i, b) in broll.enumerated() {
+            let bVideo = Video(name: "SN-空镜\(i)",
+                               localPath: dir.appendingPathComponent("broll\(i).mov").path)
+            bVideo.duration = 20
+            bVideo.fps = b.fps
+            bVideo.width = 1080
+            bVideo.height = 1920
+            ctx.insert(bVideo)
+            _ = ProjectVideo.associate(project: p, video: bVideo, in: ctx)
+            let bSeg = Segment(segmentIndex: String(format: "brl_%03d", i + 1),
+                               startTime: b.start, endTime: b.end,
+                               text: "", semanticTypes: [.emptyShot], positionType: .middle)
+            bSeg.startFrame = FrameTime.frame(seconds: b.start, fps: b.fps)
+            bSeg.endFrame = FrameTime.frame(seconds: b.end, fps: b.fps)
+            bSeg.video = bVideo
+            ctx.insert(bSeg)
+        }
+        scheme.project = p
+        project = p
+    }
     try ctx.save()
-    return (SchemeViewModel(), slots, segs, container)
+    return (SchemeViewModel(), slots, segs, scheme, project, container)
 }
 
 @Suite("SN · 槽位窗口投影")
@@ -88,8 +121,8 @@ struct SlotWindowSnapshotTests {
     @MainActor
     func noDubIsALegalState() throws {
         let dir = try snScratch(); defer { try? FileManager.default.removeItem(at: dir) }
-        let (vm, slots, segs, container) = try snGraph(dir: dir)
-        let w = try #require(vm.slotWindow(slots[0], segment: segs[0]))
+        let (vm, slots, segs, _, _, container) = try snGraph(dir: dir)
+        let w = try #require(vm.slotWindow(slots[0], segment: segs[0], project: nil))
         withExtendedLifetime(container) {}
         #expect(w.hasDub == false)
         #expect(w.isAuto)
@@ -103,15 +136,15 @@ struct SlotWindowSnapshotTests {
     @MainActor
     func lengthSourceFollowsTheLongerSide() throws {
         let dir = try snScratch(); defer { try? FileManager.default.removeItem(at: dir) }
-        let (shortVM, shortSlots, shortSegs, c1) = try snGraph(dubSeconds: [2.0], dir: dir)
-        let short = try #require(shortVM.slotWindow(shortSlots[0], segment: shortSegs[0]))
+        let (shortVM, shortSlots, shortSegs, _, _, c1) = try snGraph(dubSeconds: [2.0], dir: dir)
+        let short = try #require(shortVM.slotWindow(shortSlots[0], segment: shortSegs[0], project: nil))
         withExtendedLifetime(c1) {}
         #expect(short.hasDub)
         #expect(short.lengthSource == .shot, "配音 2s < 画面 4s，长度该由画面决定")
         #expect(short.endFrame == 100)
 
-        let (longVM, longSlots, longSegs, c2) = try snGraph(dubSeconds: [8.0], dir: dir)
-        let long = try #require(longVM.slotWindow(longSlots[0], segment: longSegs[0]))
+        let (longVM, longSlots, longSegs, _, _, c2) = try snGraph(dubSeconds: [8.0], dir: dir)
+        let long = try #require(longVM.slotWindow(longSlots[0], segment: longSegs[0], project: nil))
         withExtendedLifetime(c2) {}
         #expect(long.lengthSource == .dub)
         #expect(long.endFrame == 200, "8s@25fps=200 帧，单段素材后面是空地，应接到 200")
@@ -123,17 +156,17 @@ struct SlotWindowSnapshotTests {
     @MainActor
     func overrideClampIsReported() throws {
         let dir = try snScratch(); defer { try? FileManager.default.removeItem(at: dir) }
-        let (vm, slots, segs, container) = try snGraph(dubSeconds: [4.0], dir: dir)
+        let (vm, slots, segs, _, _, container) = try snGraph(dubSeconds: [4.0], dir: dir)
         defer { withExtendedLifetime(container) {} }
 
         vm.setWindowStartOverride(slots[0], frame: 50)
-        let clamped = try #require(vm.slotWindow(slots[0], segment: segs[0]))
+        let clamped = try #require(vm.slotWindow(slots[0], segment: segs[0], project: nil))
         #expect(clamped.startFrame == 0, "往后挪必须夹回画面起点")
         #expect(clamped.clampedFrom == 50, "被夹了却不报原值 ⇒ 界面上说不清'你填的不作数'")
         #expect(clamped.isAuto == false)
 
         vm.setWindowStartOverride(slots[0], frame: 0)
-        let equal = try #require(vm.slotWindow(slots[0], segment: segs[0]))
+        let equal = try #require(vm.slotWindow(slots[0], segment: segs[0], project: nil))
         #expect(equal.clampedFrom == nil, "恰等起点不算被夹")
         #expect(equal.isAuto, "填了与自动相同的值，应视为自动")
     }
@@ -143,9 +176,9 @@ struct SlotWindowSnapshotTests {
     func ceilingSourceSwitchesToNeighbour() throws {
         let dir = try snScratch(); defer { try? FileManager.default.removeItem(at: dir) }
         // 段1 [0,4s)，段2 [4,8s) 紧贴；段1 配音 8s ⇒ 可续余量 0
-        let (vm, slots, segs, container) = try snGraph(ranges: [(0, 4), (4, 8)],
+        let (vm, slots, segs, _, _, container) = try snGraph(ranges: [(0, 4), (4, 8)],
                                                        dubSeconds: [8.0, 2.0], dir: dir)
-        let w = try #require(vm.slotWindow(slots[0], segment: segs[0]))
+        let w = try #require(vm.slotWindow(slots[0], segment: segs[0], project: nil))
         withExtendedLifetime(container) {}
         #expect(w.ceilingSource == .nextSegment, "紧贴下一格时天花板不是源片末尾")
         #expect(w.roomFrames == 0)
@@ -161,9 +194,9 @@ struct SlotWindowSnapshotTests {
         // 配音 4.16s=104 帧 ⇒ 零差额；4.20s=105 ⇒ 差 1 帧 = 容差 ⇒ 报 0；4.24s=106 ⇒ 差 2 ⇒ 报 2
         let cases: [(Double, Int)] = [(4.16, 0), (4.20, 0), (4.24, 2)]
         for (dubSecs, expected) in cases {
-            let (vm, slots, segs, container) = try snGraph(ranges: [(0, 4), (4.16, 8)],
+            let (vm, slots, segs, _, _, container) = try snGraph(ranges: [(0, 4), (4.16, 8)],
                                                            dubSeconds: [dubSecs, 2.0], dir: dir)
-            let w = try #require(vm.slotWindow(slots[0], segment: segs[0]))
+            let w = try #require(vm.slotWindow(slots[0], segment: segs[0], project: nil))
             withExtendedLifetime(container) {}
             #expect(w.shortfallFrames == expected,
                     "配音 \(dubSecs)s 的差额应为 \(expected) 帧，实得 \(w.shortfallFrames)")
@@ -174,29 +207,29 @@ struct SlotWindowSnapshotTests {
     @MainActor
     func badPrerequisitesYieldNil() throws {
         let dir = try snScratch(); defer { try? FileManager.default.removeItem(at: dir) }
-        let (vm, slots, segs, container) = try snGraph(fps: 0, dubSeconds: [4.0], dir: dir)
+        let (vm, slots, segs, _, _, container) = try snGraph(fps: 0, dubSeconds: [4.0], dir: dir)
         withExtendedLifetime(container) {}
-        #expect(vm.slotWindow(slots[0], segment: segs[0]) == nil, "fps 非正还给投影 ⇒ 会把 0 当帧率算出垃圾")
+        #expect(vm.slotWindow(slots[0], segment: segs[0], project: nil) == nil, "fps 非正还给投影 ⇒ 会把 0 当帧率算出垃圾")
     }
 
     @Test("SN-15 步进口径：往前 1 帧落覆盖；走回自动起点存 nil；不许越过该格起点")
     @MainActor
     func steppingNeverPassesTheShotStart() throws {
         let dir = try snScratch(); defer { try? FileManager.default.removeItem(at: dir) }
-        let (vm, slots, segs, container) = try snGraph(ranges: [(2, 6)], dubSeconds: [4.0], dir: dir)
+        let (vm, slots, segs, _, _, container) = try snGraph(ranges: [(2, 6)], dubSeconds: [4.0], dir: dir)
         defer { withExtendedLifetime(container) {} }
 
-        vm.stepWindowStart(slots[0], segment: segs[0], by: -1)
+        vm.stepWindowStart(slots[0], segment: segs[0], project: nil, by: -1)
         #expect(slots[0].windowStartOverrideFrame == 49, "往前一帧应落成显式覆盖（自动起点 2s@25fps=50）")
-        let moved = try #require(vm.slotWindow(slots[0], segment: segs[0]))
+        let moved = try #require(vm.slotWindow(slots[0], segment: segs[0], project: nil))
         #expect(moved.startFrame == 49)
         #expect(moved.isAuto == false)
 
-        vm.stepWindowStart(slots[0], segment: segs[0], by: 1)
+        vm.stepWindowStart(slots[0], segment: segs[0], project: nil, by: 1)
         #expect(slots[0].windowStartOverrideFrame == nil,
                 "走回自动起点应存 nil，而不是一个与自动等价的数（否则'自动'永远关不掉）")
 
-        vm.stepWindowStart(slots[0], segment: segs[0], by: 1)
+        vm.stepWindowStart(slots[0], segment: segs[0], project: nil, by: 1)
         #expect(slots[0].windowStartOverrideFrame == nil, "往后不许越过该格起点（会盖进下一格画面）")
     }
 
@@ -224,5 +257,40 @@ struct SlotWindowSnapshotTests {
         }
         #expect(hits.count == 1,
                 "窗口起点的写点应只有 VM 那一处，实得 \(hits) ⇒ 视图直接改字段会让'唯一写入口'变成纸面约定")
+    }
+
+    @Test("SN-16 差额由空镜垫满：投影报垫了几秒、接得住")
+    @MainActor
+    func brollCoversInProjection() throws {
+        let dir = try snScratch(); defer { try? FileManager.default.removeItem(at: dir) }
+        // 主素材 6s ⇒ 画面最多取到 6.00s；配音 8s ⇒ 差 2.00s；项目里有一条 4s 的空镜
+        let (vm, slots, segs, _, project, container) = try snGraph(
+            videoDuration: 6, dubSeconds: [8.0], broll: [(fps: 25, start: 0, end: 4)], dir: dir)
+        defer { withExtendedLifetime(container) {} }
+        let w = try #require(vm.slotWindow(slots[0], segment: segs[0], project: project))
+        #expect(w.shortfallFrames == 50, "2.00s@25fps 的差额必须是 50 帧")
+        #expect(abs(w.brollSeconds - 2.0) < 0.001, "投影要能说清垫了几秒 —— 界面只能据它写文案")
+        #expect(w.shortfallCovered, "池子够却报接不住 ⇒ 卡片会一直挂着「导出会被拦」这句谎话")
+    }
+
+    @Test("SN-17 反向对照：整条投影共用一本占用账，池子只够第一格时第二格必须报接不住")
+    @MainActor
+    func planSharesOneConsumptionLedger() throws {
+        let dir = try snScratch(); defer { try? FileManager.default.removeItem(at: dir) }
+        // 两格各差 2.00s，项目里只有**一条** 2s 的空镜 ⇒ 只许第一格接得住
+        let (vm, slots, segs, scheme, project, container) = try snGraph(
+            videoDuration: 6, ranges: [(0, 4), (0, 4)], dubSeconds: [8.0, 8.0],
+            broll: [(fps: 25, start: 0, end: 2)], dir: dir)
+        defer { withExtendedLifetime(container) {} }
+        let plan = vm.slotWindowPlan(for: scheme, project: project)
+        let first = try #require(plan[slots[0].id])
+        let second = try #require(plan[slots[1].id])
+        #expect(first.shortfallCovered && abs(first.brollSeconds - 2.0) < 0.001)
+        #expect(!second.shortfallCovered && second.brollSeconds == 0,
+                "每格各自许诺整个池子 ⇒ 卡上显示接得住、导出却拦下来（两处口径分叉）")
+        // 单格那颗不知道占用账，必须与整条那颗不同 —— 这条差异本身就是界面必须用 plan 的理由
+        let single = try #require(vm.slotWindow(slots[1], segment: segs[1], project: project))
+        #expect(single.shortfallCovered && !second.shortfallCovered,
+                "单格投影与整条投影读数一样 ⇒ 占用账没生效，两处会给出同一个谎")
     }
 }

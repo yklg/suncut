@@ -22,13 +22,29 @@ struct DubSegmentSpec: Sendable {
     /// 人声切片窗（**原视频时间轴**，秒）。替换画面段也用原视频时间——替换片音轨本取自原视频同窗口。
     let vocalsStart: Double
     let vocalsEnd: Double
+    /// 差额承接插入的空镜画面（B 块后置档，播在本格画面**之后**）。空数组 = 本格不缺画面。
+    ///
+    /// 必填、无默认值：这条腿的调用点有两条（整方案导出、分镜库变体导出），
+    /// 留默认参数就等于让新调用点"忘了垫空镜"也能编译过 —— 那种片子的症状是
+    /// **配音尾巴播在下一格画面上**，而所有判据当时都是绿的。
+    let fillPieces: [BrollPiece]
+
+    /// 本格画面（含插入的空镜）实际要播多少秒 —— **交付时长闸的唯一读数口径**。
+    ///
+    /// 时长闸累加的必须与滤镜图真正 trim 的帧数同源：只算 `endFrame − startFrame`
+    /// 会在插了空镜时**低估**片长（千川 4…300s 那道闸就变成假绿）。
+    var deliverySeconds: Double {
+        let main = FrameTime.seconds(frame: max(0, endFrame - startFrame), fps: fps)
+        return main + fillPieces.reduce(0) { $0 + $1.seconds() }
+    }
 
     init(videoPath: String, startFrame: Int, endFrame: Int, fps: Double,
          captionLines: [CaptionLine], hasHardSubtitle: Bool, maskStyleRaw: String,
          maskRect: SubtitleMaskRect, isVoiceLocked: Bool, dubAudioPath: String?,
          freezePadFrames: Int, trailingSilence: Double, bgmAudioPath: String?,
          subtitleFontRatio: Double,
-         vocalsAudioPath: String? = nil, vocalsStart: Double = 0, vocalsEnd: Double = 0) {
+         vocalsAudioPath: String? = nil, vocalsStart: Double = 0, vocalsEnd: Double = 0,
+         fillPieces: [BrollPiece]) {
         self.videoPath = videoPath; self.startFrame = startFrame; self.endFrame = endFrame
         self.fps = fps; self.captionLines = captionLines; self.hasHardSubtitle = hasHardSubtitle
         self.maskStyleRaw = maskStyleRaw; self.maskRect = maskRect; self.isVoiceLocked = isVoiceLocked
@@ -36,6 +52,7 @@ struct DubSegmentSpec: Sendable {
         self.trailingSilence = trailingSilence; self.bgmAudioPath = bgmAudioPath
         self.subtitleFontRatio = subtitleFontRatio
         self.vocalsAudioPath = vocalsAudioPath; self.vocalsStart = vocalsStart; self.vocalsEnd = vocalsEnd
+        self.fillPieces = fillPieces
     }
 }
 
@@ -119,6 +136,17 @@ struct DubExportInput: Sendable {
         /// 这种是"就绪了但物理上装不下"，两件事的修法完全不同，混在一个列表里会误导用户去重新生成配音。
         var windowBlockers: [Blocker] = []
 
+        // ── 差额承接（B 块后置档）：素材库里的「空镜」供给 ─────────────────────
+        // 三条筛：不是本片已在用的分镜（否则同一段画面播两遍）、画面文件真的在
+        //（缺文件喂进 ffmpeg 会渲到一半才红，那是 moov 事故那一族）、必须是「空镜」标签
+        //（`Project.brollSupplies` 已经把非标签的滤掉了）。
+        let inScheme = Set(scheme.orderedSegments.compactMap { $0.segment?.segmentIndex })
+        let brollPool: [BrollSupply] = (scheme.project?.brollSupplies ?? [])
+            .filter { !inScheme.contains($0.label) }
+            .filter { FileHelper.isMaterialFilePresent(path: $0.videoPath) }
+        /// 跨槽位共享的一本占用账：一片空镜在整条片子里只许出现一次。
+        var brollConsumed = Set<String>()
+
         for (idx, schemeSeg) in ordered.enumerated() {
             let position = idx + 1
             let segLabel = schemeSeg.segment?.segmentIndex ?? "第 \(position) 段"
@@ -151,8 +179,8 @@ struct DubExportInput: Sendable {
             // 重算必然得到同一个数；存一份反而多一处会漂移的真源。
             // 可续上界走 `PictureWindowPolicy.capacityEndFrame` —— 生成侧的超字闸吃的是同一颗，
             // 两侧分叉就会出现"生成时放行、导出时装不下"（那条跨接缝不变式由 PW-12 钉）。
-            // 今天所有 dub 都满足 `audioDuration ≤ 分镜时长`（旧的实测超字闸保证的）
-            //   ⇒ 窗口恒等于分镜 ⇒ 这一层是**零行为变更**；放宽闸（B-2）在下一层。
+            // 窗口**可以长于分镜**：语速固定之后配音更长是常态（B-2 已放宽超字闸），
+            // 接不满的那部分由素材库的「空镜」段垫满 —— 见下面的 `brollFill`。
             func dubWindow(for dub: SegmentDub) -> PictureWindow {
                 // 起点：本槽的手改覆盖优先（只许往前挪），否则用画面自己的起点帧。
                 // 覆盖被夹掉时必须出日志 —— 默默改用户填的数是"屏上一个数、库里另一个数"那一族。
@@ -185,16 +213,35 @@ struct DubExportInput: Sendable {
                                                     endFrame: resolved.startFrame
                                                         + max(0, ep.endFrame - ep.startFrame))
             }
-            // 差额超出实测容差 ⇒ 这条方案**不可导**。必须在起 ffmpeg 之前判：
-            // 渲染到一半才失败会留下只有半条内容的 mp4（`ExportService.swift:211-213` 的 moov 事故）。
-            func noteUndeliverable(_ w: PictureWindow) {
+            // 差额超出实测容差 ⇒ 先试**插空镜**接住；接不住才判这条方案不可导。
+            // 必须在起 ffmpeg 之前判完：渲染到一半才失败会留下只有半条内容的 mp4（`ExportService.swift:211-213` 的 moov 事故）。
+            // 返回要插的片（播在本格画面之后）；接不满时返回**空**并记 blocker ——
+            // 半段空镜 = 一条配音尾巴播在下一格画面上的片子，那种宁可拦。
+            func brollFill(for w: PictureWindow) -> [BrollPiece] {
                 guard !PictureWindowPolicy.isDeliverable(w, fps: fps,
-                        toleranceSeconds: DubLengthGate.measuredToleranceSeconds) else { return }
+                        toleranceSeconds: DubLengthGate.measuredToleranceSeconds) else { return [] }
+                let over = FrameTime.seconds(frame: w.shortfallFrames, fps: fps)
                 let room = FrameTime.seconds(frame: w.frames, fps: fps)
+                let plan = BrollPolicy.plan(
+                    BrollDemand(neededSeconds: over,
+                                toleranceSeconds: DubLengthGate.measuredToleranceSeconds,
+                                slotSegmentLabel: segment.segmentIndex,
+                                windowSourceKey: segment.pictureSourceKey,
+                                windowStartFrame: w.startFrame, windowEndFrame: w.endFrame),
+                    supplies: brollPool, consumed: &brollConsumed)
+                if plan.filled {
+                    MixLog.info("[空镜承接] \(segment.segmentIndex) 差 \(String(format: "%.2f", over))s ⇒ "
+                                + "插 \(plan.pieces.count) 片、补 \(String(format: "%.2f", plan.coveredSeconds))s")
+                    return plan.pieces
+                }
                 windowBlockers.append(.init(position: position, segmentLabel: segLabel,
                     reason: PictureWindowPolicy.shortfallText(shortfallFrames: w.shortfallFrames, fps: fps)
                             + String(format: "（可续画面最多取到 %.2fs，"
-                            + "再往后就是源片末尾或下一格分镜的画面）", room)))
+                            + "再往后就是源片末尾或下一格分镜的画面）", room)
+                            + (plan.coveredSeconds > 0
+                               ? String(format: "；库里的「空镜」只垫得起 %.2fs，还差一段", plan.coveredSeconds)
+                               : "，且素材库里没有可用的「空镜」段可垫")))
+                return []
             }
 
             // 该槽选定的变体：combo 指定优先，否则用 selectedSegmentDubId；nil 或找不到 → 原声
@@ -227,10 +274,9 @@ struct DubExportInput: Sendable {
                     continue
                 }
                 let window = dubWindow(for: dub)
-                noteUndeliverable(window)
                 specs.append(makeDubSpec(
                     segment: segment, ep: ep, fps: fps, video: video, dub: dub, audioPath: audioPath,
-                    window: window, useVocalsOnly: useVocalsOnly))
+                    window: window, useVocalsOnly: useVocalsOnly, fillPieces: brollFill(for: window)))
                 continue
             }
 
@@ -245,19 +291,20 @@ struct DubExportInput: Sendable {
             }
 
             if segment.isVoiceLocked || chosen == nil {
+                // 原声/锁定段：画面长度由不得配音，不缺 ⇒ 无空镜可插
                 specs.append(DubSegmentSpec(
                     videoPath: ep.videoPath, startFrame: ep.startFrame, endFrame: ep.endFrame,
                     fps: fps, captionLines: [], hasHardSubtitle: false, maskStyleRaw: segment.maskStyleRaw,
                     maskRect: segment.maskRect, isVoiceLocked: true, dubAudioPath: nil,
                     freezePadFrames: 0, trailingSilence: 0, bgmAudioPath: nil,
                     subtitleFontRatio: segment.subtitleFontRatio,
-                    vocalsAudioPath: vocalsPath, vocalsStart: segment.startTime, vocalsEnd: segment.endTime))
+                    vocalsAudioPath: vocalsPath, vocalsStart: segment.startTime, vocalsEnd: segment.endTime,
+                    fillPieces: []))
             } else if chosenDubHasAudio, let dub = chosen, let audioPath = dub.audioFilePath {
                 let window = dubWindow(for: dub)
-                noteUndeliverable(window)
                 specs.append(makeDubSpec(
                     segment: segment, ep: ep, fps: fps, video: video, dub: dub, audioPath: audioPath,
-                    window: window, useVocalsOnly: useVocalsOnly))
+                    window: window, useVocalsOnly: useVocalsOnly, fillPieces: brollFill(for: window)))
             } else {
                 // 非锁定但无已生成配音 → 回退保留原声原字幕，保证导出不中断
                 MixLog.info("分镜 \(segment.segmentIndex) 无已生成配音，回退原声导出")
@@ -269,7 +316,8 @@ struct DubExportInput: Sendable {
                     maskRect: segment.maskRect, isVoiceLocked: true, dubAudioPath: nil,
                     freezePadFrames: 0, trailingSilence: 0, bgmAudioPath: nil,
                     subtitleFontRatio: segment.subtitleFontRatio,
-                    vocalsAudioPath: vocalsPath, vocalsStart: segment.startTime, vocalsEnd: segment.endTime))
+                    vocalsAudioPath: vocalsPath, vocalsStart: segment.startTime, vocalsEnd: segment.endTime,
+                    fillPieces: []))
             }
         }
 
@@ -294,7 +342,8 @@ struct DubExportInput: Sendable {
     @MainActor
     private static func makeDubSpec(
         segment: Segment, ep: EffectivePicture, fps: Double, video: Video,
-        dub: SegmentDub, audioPath: String, window: PictureWindow, useVocalsOnly: Bool
+        dub: SegmentDub, audioPath: String, window: PictureWindow, useVocalsOnly: Bool,
+        fillPieces: [BrollPiece]
     ) -> DubSegmentSpec {
         // 逐句字幕：优先用对齐好的 captionLines；旧数据无对齐 → 整段一条兜底（等价旧整段烧法，防止老数据丢字幕）
         // 兜底那条的终点用**窗口**长度而不是分镜长度：画面已经接长，字幕铺到画面末尾才是"整段一条"的原意。
@@ -307,17 +356,17 @@ struct DubExportInput: Sendable {
         }()
         return DubSegmentSpec(
             videoPath: ep.videoPath,
-            // B 块 B-3a：画面裁剪吃**窗口**，不吃分镜原区间。今天窗口恒等于分镜（见 `dubWindow` 上方注释），
-            // 所以这一改是零行为变更；放宽超字闸（B-2）之后它才真正接长画面。
-            // 交付时长闸累加的也是 `endFrame − startFrame`（本文件下方），所以画面长度与闸口径同源，
-            // 不需要第二处记账 —— 这是"改一处、两处自然对齐"的形状，故意不另立一份窗口秒数。
+            // B 块 B-3a：画面裁剪吃**窗口**，不吃分镜原区间（语速固定后配音可以更长）。
+            // 交付时长闸读的是 `DubSegmentSpec.deliverySeconds`（= 窗口帧 + 插入的空镜帧），
+            // 与本处同一颗数，不需要第二处记账 —— 这是"改一处、两处自然对齐"的形状。
             startFrame: window.startFrame, endFrame: window.endFrame,
             fps: fps, captionLines: capLines, hasHardSubtitle: segment.hasHardSubtitle, maskStyleRaw: segment.maskStyleRaw,
             maskRect: segment.maskRect, isVoiceLocked: false, dubAudioPath: audioPath,
             freezePadFrames: dub.freezePadFrames, trailingSilence: dub.trailingSilence,
             // 全局 BGM 模式下配音段不再混原视频分离 BGM（配音本身就是纯人声，BGM 最后整片统一铺）
             bgmAudioPath: useVocalsOnly ? nil : Self.bgmPath(for: video),
-            subtitleFontRatio: segment.subtitleFontRatio)
+            subtitleFontRatio: segment.subtitleFontRatio,
+            fillPieces: fillPieces)
     }
 
     // MARK: - 全局 BGM 预检范围
@@ -459,9 +508,11 @@ actor DubExportService {
         let outW = canvas.width, outH = canvas.height
 
         // 时长闸（面板原文「4s≤时长≤300s」）：配音导出确定是交付件，硬拦。
+        // 读数走 `spec.deliverySeconds`（本格画面 + 插入的空镜），**不许**只算 endFrame−startFrame：
+        // 插了空镜却按原窗口记账，闸会低估真实片长 ⇒ 千川那条 4…300s 变成假绿。
         let totalSeconds = input.segments.reduce(0.0) { sum, spec in
             guard spec.fps > 0 else { return sum }
-            return sum + max(0, Double(spec.endFrame - spec.startFrame) / spec.fps)
+            return sum + spec.deliverySeconds
         }
         if let blocked = DeliveryGate.durationRejectionMessage(for: config.deliveryTarget.spec,
                                                                seconds: totalSeconds) {
@@ -531,9 +582,7 @@ actor DubExportService {
         // 变体含克隆配音＋BGM＋烧录字幕，是确定要投放的成片 ⇒ 与整方案导出同样硬拦。
         // 同一条服务里的**原版**分支不走这里，因此不受这道闸 —— 那是刻意的：
         // 原版很可能只是中间素材，拦它可能拦错（见 BatchExportSheet 的文案与台账 §六-2）。
-        let segSeconds = spec.fps > 0
-            ? max(0, Double(spec.endFrame - spec.startFrame) / spec.fps)
-            : 0
+        let segSeconds = spec.fps > 0 ? spec.deliverySeconds : 0
         if segSeconds > 0,
            let blocked = DeliveryGate.durationRejectionMessage(for: config.deliveryTarget.spec,
                                                                seconds: segSeconds) {
@@ -570,6 +619,25 @@ actor DubExportService {
         var extraInputs: [String] = []
 
         let keepOriginalAudio = spec.isVoiceLocked || spec.dubAudioPath == nil
+
+        // 差额承接插入的空镜：**先**占输入位（画面级资源排在字幕 PNG/音频之前），
+        // 同一条空镜素材被切成多片时复用同一个 `-i`。字幕/dub 的序号本来就按 extraInputs
+        // 的追加顺序自动后移，所以这里加多少片都不会把后面的索引算错。
+        var fillSources: [PicturePieceSource] = []
+        var fillIndexByPath: [String: Int] = [:]
+        for piece in spec.fillPieces {
+            let idx: Int
+            if let existing = fillIndexByPath[piece.videoPath] {
+                idx = existing
+            } else {
+                extraInputs.append(piece.videoPath)
+                idx = extraInputs.count
+                fillIndexByPath[piece.videoPath] = idx
+            }
+            fillSources.append(PicturePieceSource(inputIndex: idx,
+                                                  startFrame: piece.startFrame,
+                                                  endFrame: piece.endFrame, fps: piece.fps))
+        }
 
         // 烧录逐句字幕：标点→空格；字号 = 成片宽度 × 该分镜自己的比例。锁定段不烧。
         if !spec.isVoiceLocked, !spec.captionLines.isEmpty {
@@ -663,7 +731,8 @@ actor DubExportService {
             trailingSilence: spec.trailingSilence,
             bgmInputIndex: bgmInputIndex,
             vocalsSource: vocalsSource,
-            logo: logoStage)
+            logo: logoStage,
+            fills: fillSources)
 
         var args: [String] = ["-y", "-i", spec.videoPath]
         for input in extraInputs { args += ["-i", input] }

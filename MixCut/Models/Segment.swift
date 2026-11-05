@@ -447,6 +447,16 @@ final class Segment: Identifiable {
                                 thumbnailPath: thumbnailPath, isReplaced: false)
     }
 
+    /// 画面来源的**同源判定键**（空镜承接用）：替换画面用它自己的路径（合成片与原片不是同一份像素），
+    /// 原视频用 contentHash，没哈希时退回路径。
+    ///
+    /// 口径只这一处：供给侧（`Project.brollSupplies`）与窗口侧（导出/投影）必须用同一颗键，
+    /// 否则 BrollPolicy 那条"同一段画面不许播两遍"的剔除会瞎。
+    var pictureSourceKey: String {
+        let ep = effectivePicture
+        return ep.isReplaced ? ep.videoPath : (video?.contentHash ?? ep.videoPath)
+    }
+
     /// 用所属视频的 fps，把当前秒边界 round 成帧号回填（迁移/兜底用）
     func backfillFramesFromSeconds() {
         let fps = video?.fps ?? 0

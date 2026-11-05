@@ -88,7 +88,11 @@ enum VariantExportInput {
                     maskStyleRaw: seg.maskStyleRaw, maskRect: seg.maskRect, isVoiceLocked: false,
                     dubAudioPath: audioPath, freezePadFrames: dub.freezePadFrames,
                     trailingSilence: dub.trailingSilence, bgmAudioPath: bgmPath,
-                    subtitleFontRatio: seg.subtitleFontRatio)
+                    subtitleFontRatio: seg.subtitleFontRatio,
+                    // ⚠️ 这条腿**没接窗口也没接空镜**：它渲染的是分镜原区间（`ep.startFrame..<ep.endFrame`），
+                    // 配音比画面长时音画不同步的问题在这里依然存在（B 块只接了整方案导出那条腿）。
+                    // 显式写空数组是刻意的：新增调用点"忘了垫"必须在这里表态，而不是靠默认值蒙过去。
+                    fillPieces: [])
                 jobs.append(.variant(spec: spec, videoWidth: video.width, videoHeight: video.height,
                                      fileName: item.fileName))
             } else {

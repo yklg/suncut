@@ -64,18 +64,37 @@ public enum DubSegmentGraphBuilder {
         trailingSilence: Double,
         bgmInputIndex: Int? = nil,
         vocalsSource: VocalsSource? = nil,
-        logo: LogoOverlayStage? = nil
+        logo: LogoOverlayStage? = nil,
+        fills: [PicturePieceSource] = []
     ) -> DubSegmentGraph {
         let w = outputWidth, h = outputHeight
         let fpsInt = Int(fps.rounded())
         var parts: [String] = []
 
         // 1) 视频：精确切片 + 9:16 标准化 → [base]
-        parts.append(
-            "[0:v]trim=start_frame=\(startFrame):end_frame=\(endFrame),setpts=PTS-STARTPTS," +
+        //
+        // `fills` 非空 = 这一格画面接不住配音，末尾垫空镜（B 块差额承接）。
+        // 每片都走**与主画面同一条**归一化链（scale/pad/setsar/fps），否则 concat 会因
+        // SAR、画幅、帧率不齐而拒或产生抖动；空镜自己素材的帧率只用于它的 trim 帧号口径，
+        // 出片一律重采样到槽位帧率。
+        // ⚠️ 无空镜时这条串**逐字节不变** —— 既有导出腿的滤镜断言不该被这个新功能改动，
+        //    这也是"接不住时行为不退化"的反向对照（BR-8）。
+        let normalize = "setpts=PTS-STARTPTS," +
             "scale=\(w):\(h):force_original_aspect_ratio=decrease," +
-            "pad=\(w):\(h):(ow-iw)/2:(oh-ih)/2:black,setsar=1,fps=\(fpsInt)[base]"
-        )
+            "pad=\(w):\(h):(ow-iw)/2:(oh-ih)/2:black,setsar=1,fps=\(fpsInt)"
+        if fills.isEmpty {
+            parts.append("[0:v]trim=start_frame=\(startFrame):end_frame=\(endFrame),\(normalize)[base]")
+        } else {
+            var labels: [String] = ["pic0"]
+            parts.append("[0:v]trim=start_frame=\(startFrame):end_frame=\(endFrame),\(normalize)[pic0]")
+            for (i, f) in fills.enumerated() {
+                let label = "pic\(i + 1)"
+                labels.append(label)
+                parts.append("[\(f.inputIndex):v]trim=start_frame=\(f.startFrame):end_frame=\(f.endFrame),\(normalize)[\(label)]")
+            }
+            let chain = labels.map { "[\($0)]" }.joined()
+            parts.append("\(chain)concat=n=\(labels.count):v=1:a=0[base]")
+        }
 
         // 2) 遮挡旧字幕 → [masked]
         // ⚠️ 半径 / 颜色 / alpha 一律从 `SubtitleMaskMode.renderSpec` 取，**这里不许再写字面量**：

@@ -24,8 +24,8 @@ import Foundation
 //
 // ## 帧号口径
 //
-// 与 `Segment` 一致：`frameCount = endFrame - startFrame`（`MixCut/Models/Segment.swift:346`），
-// 交付时长闸也是按 `(endFrame - startFrame)/fps` 累加（`DubExportService.swift:462-465`）。
+// 与 `Segment` 一致：`frameCount = endFrame - startFrame`。交付时长闸累加的是
+// `DubSegmentSpec.deliverySeconds`（本格画面帧 **+ 插入的空镜帧**），与本文件的派生同源
 // ⇒ 窗口**不能**缩到比分镜还短，否则同一段素材在"画面裁剪"与"时长闸"两处会给出不同长度。
 // ============================================================================
 
@@ -43,8 +43,8 @@ public struct PictureWindow: Equatable, Sendable {
         case shortByBroll
     }
 
-    /// 窗口起点。本轮恒等于分镜 `startFrame`（计划 B 块第 12 条）；
-    /// 界面手改起点是 B 块第 14 条，届时由 `SchemeSegment` 存**覆盖值**，不在此处存派生值。
+    /// 窗口起点：默认是画面自己的起点（`effectivePicture.startFrame`）；
+    /// 界面手改时这里是**覆盖值夹过之后**的结果 —— 覆盖存 `SchemeSegment`，这里只存派生结果。
     public let startFrame: Int
     /// 窗口尾帧（开区间口径，同 `Segment.endFrame`）
     public let endFrame: Int

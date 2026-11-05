@@ -1061,17 +1061,54 @@ struct SlotWindowSnapshot: Equatable, Sendable {
     let lengthSource: Length
     /// 用户填了但被夹回的原值（nil = 没被夹；恰等起点也不算被夹）
     let clampedFrom: Int?
+    /// 差额由**插入空镜**垫掉的秒数（0 = 这格不缺画面，或不缺到不用垫）
+    let brollSeconds: Double
+    /// 差额是否接得住：无差额或空镜垫满都算 true；**false 才是"导出会被拦"**。
+    /// 口径与导出侧同一颗（`BrollPolicy.plan` + 同一本占用账），不许界面说接得住、导出说接不住。
+    let shortfallCovered: Bool
 }
 
 extension SchemeViewModel {
 
-    /// 槽位窗口投影。**纯读**：不写库、不改状态。
+    /// 空镜供给池（项目内打了「空镜」标签的段），滤掉**本片已在用**的分镜。
     ///
-    /// - Returns: `nil` = 前提不成立（无视频 / fps 非正）。**不猜、不灰显** ——
-    ///   调用方拿到 nil 就不渲染「窗」行；给它一个假窗口比不显示更糟。
-    ///   注意与 `hasDub == false` 的区别：那是"这一格没配音"的**合法状态**，
-    ///   窗口等于画面本身，投影照常返回。
-    func slotWindow(_ schemeSeg: SchemeSegment, segment: Segment) -> SlotWindowSnapshot? {
+    /// 不在这里查文件存在性：那要逐条 `stat()`，而本函数在每张卡片的 body 上被读
+    /// （`effectivePicture` 那条性能注释警告过的形态）。导出侧查，缺文件会照实拦。
+    private func brollPool(in project: Project?, excluding: Set<String>) -> [BrollSupply] {
+        (project?.brollSupplies ?? []).filter { !excluding.contains($0.label) }
+    }
+
+    /// **整条方案**的窗口投影，按槽位顺序共用一本空镜占用账 —— 与导出侧同一形状。
+    ///
+    /// 为什么必须整条算：空镜"每片至多用一次"，一格一格算会给每一格都许诺"整个池子归我"，
+    /// 于是卡片显示接得住、导出却接不住（两处口径分叉就是本仓反复付过账的那一类）。
+    /// 键 = `SchemeSegment.id`；拿不到前提的槽位不进字典（视图据此不渲染「窗」行）。
+    func slotWindowPlan(for scheme: MixScheme, project: Project?) -> [UUID: SlotWindowSnapshot] {
+        let ordered = scheme.orderedSegments
+        let inScheme = Set(ordered.compactMap { $0.segment?.segmentIndex })
+        let pool = brollPool(in: project, excluding: inScheme)
+        var consumed = Set<String>()
+        var out: [UUID: SlotWindowSnapshot] = [:]
+        for ss in ordered {
+            guard let seg = ss.segment,
+                  let snap = slotWindowCore(ss, segment: seg, pool: pool, consumed: &consumed)
+            else { continue }
+            out[ss.id] = snap
+        }
+        return out
+    }
+
+    /// 单格投影。⚠️ 它不知道别的槽会先吃掉哪些空镜，所以**界面请用 `slotWindowPlan`**；
+    /// 这颗留给单格读数与判据（SN 那批就是打这里进）。
+    func slotWindow(_ schemeSeg: SchemeSegment, segment: Segment, project: Project?) -> SlotWindowSnapshot? {
+        var consumed = Set<String>()
+        return slotWindowCore(schemeSeg, segment: segment,
+                              pool: brollPool(in: project, excluding: []), consumed: &consumed)
+    }
+
+    private func slotWindowCore(_ schemeSeg: SchemeSegment, segment: Segment,
+                                pool: [BrollSupply],
+                                consumed: inout Set<String>) -> SlotWindowSnapshot? {
         guard let video = segment.video else { return nil }
         let fps = video.fps > 0 ? video.fps : 0
         guard fps > 0 else { return nil }
@@ -1104,13 +1141,28 @@ extension SchemeViewModel {
                                                  sourceEndFrame: ceilingEnd,
                                                  dubSeconds: dubSeconds, fps: fps) else { return nil }
 
-        let tolFrames = FrameTime.frame(seconds: DubLengthGate.measuredToleranceSeconds, fps: fps)
+        let tolerance = DubLengthGate.measuredToleranceSeconds
+        let tolFrames = FrameTime.frame(seconds: tolerance, fps: fps)
+        let deliverable = PictureWindowPolicy.isDeliverable(w, fps: fps, toleranceSeconds: tolerance)
         let shortfall = w.shortfallFrames > tolFrames ? w.shortfallFrames : 0
         let dubFrames = FrameTime.frame(seconds: dubSeconds, fps: fps)
         // 比的是**这一格自己的起点**（即自动起点），不是夹后的 resolved：
         // 合法覆盖的 resolved 恒等于 override，拿它比会让所有有效覆盖都误报成"自动"。
         let isAuto = schemeSeg.windowStartOverrideFrame == nil
             || schemeSeg.windowStartOverrideFrame == ep.startFrame
+
+        // 差额 → 先试空镜承接（与 `DubExportInput.from` 的 brollFill 同一颗 plan、同一本账）
+        var brollSeconds = 0.0
+        if !deliverable {
+            let plan = BrollPolicy.plan(
+                BrollDemand(neededSeconds: FrameTime.seconds(frame: w.shortfallFrames, fps: fps),
+                            toleranceSeconds: tolerance,
+                            slotSegmentLabel: segment.segmentIndex,
+                            windowSourceKey: segment.pictureSourceKey,
+                            windowStartFrame: w.startFrame, windowEndFrame: w.endFrame),
+                supplies: pool, consumed: &consumed)
+            brollSeconds = plan.filled ? plan.coveredSeconds : 0
+        }
 
         return SlotWindowSnapshot(
             hasDub: hasDub,
@@ -1121,7 +1173,9 @@ extension SchemeViewModel {
             shortfallFrames: shortfall,
             ceilingSource: ceilingSource,
             lengthSource: dubFrames > originalFrames ? .dub : .shot,
-            clampedFrom: resolved.clampedFrom)
+            clampedFrom: resolved.clampedFrom,
+            brollSeconds: brollSeconds,
+            shortfallCovered: deliverable || brollSeconds > 0)
     }
 
     /// 窗口起点的**唯一写入口**（nil = 回到自动）。
@@ -1137,9 +1191,9 @@ extension SchemeViewModel {
     /// 往回走到该格自己的起点就是"自动"（存 nil 而不是存一个与自动等价的数），
     /// 往后不许越过它 —— 越过后会盖进下一格画面。夹回逻辑仍只住
     /// `PictureWindowPolicy.resolveWindowStart`，这里只负责把"回到自动"翻译成 nil。
-    func stepWindowStart(_ schemeSeg: SchemeSegment, segment: Segment, by frames: Int) {
+    func stepWindowStart(_ schemeSeg: SchemeSegment, segment: Segment, project: Project?, by frames: Int) {
         let autoStart = segment.effectivePicture.startFrame
-        guard let current = slotWindow(schemeSeg, segment: segment)?.startFrame else { return }
+        guard let current = slotWindow(schemeSeg, segment: segment, project: project)?.startFrame else { return }
         let target = current + frames
         setWindowStartOverride(schemeSeg, frame: target >= autoStart ? nil : target)
     }

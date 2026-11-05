@@ -120,7 +120,7 @@ struct LogoOverlayExportTests {
             captionLines: [], hasHardSubtitle: false, maskStyleRaw: "",
             maskRect: .defaultBottomBand, isVoiceLocked: true, dubAudioPath: nil,
             freezePadFrames: 0, trailingSilence: 0, bgmAudioPath: nil,
-            subtitleFontRatio: 0.05)
+            subtitleFontRatio: 0.05, fillPieces: [])
         return DubExportInput(segments: [spec], maxWidth: 720, maxHeight: 1280)
     }
 
@@ -244,7 +244,7 @@ struct LogoOverlayExportTests {
                 captionLines: [], hasHardSubtitle: false, maskStyleRaw: "",
                 maskRect: .defaultBottomBand, isVoiceLocked: true, dubAudioPath: nil,
                 freezePadFrames: 0, trailingSilence: 0, bgmAudioPath: nil,
-                subtitleFontRatio: 0.05)
+                subtitleFontRatio: 0.05, fillPieces: [])
             let input = DubExportInput(segments: [spec], maxWidth: 1080, maxHeight: 1920)
             try await DubExportService().export(
                 input: input, outputPath: out, config: config(tier: .p1080), globalBGM: nil,

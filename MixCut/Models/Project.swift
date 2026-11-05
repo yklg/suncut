@@ -75,6 +75,25 @@ final class Project: Identifiable {
         return out
     }
 
+    /// 可用来补差额的**空镜供给**（B 块差额后置档）。
+    ///
+    /// 口径三条：① 只认机器标签「空镜」（带台词的段插进来会让画面与别段口播撞叙事）；
+    /// ② 画面必须真有帧可取；③ **不查文件存在性** —— 那是导出侧的事（这里每次卡片 body
+    /// 都会被读，逐条 `stat()` 就是 `effectivePicture` 那条性能注释警告过的形态）。
+    /// ⚠️ 因此界面上"排得下空镜"与导出时"文件还在不在"可能有一个时间窗不一致；
+    ///    导出侧遇到缺文件会照实拦并说明，不会静默出一条少画面的片子。
+    /// 排序不在这里定，确定性归 `BrollPolicy`（同一库重导必须得到同一个 plan）。
+    var brollSupplies: [BrollSupply] {
+        displayableSegments.compactMap { seg in
+            guard seg.semanticTypes.contains(.emptyShot) else { return nil }
+            let ep = seg.effectivePicture
+            guard !ep.videoPath.isEmpty, ep.endFrame > ep.startFrame, ep.fps > 0 else { return nil }
+            return BrollSupply(label: seg.segmentIndex, videoPath: ep.videoPath,
+                               startFrame: ep.startFrame, endFrame: ep.endFrame,
+                               fps: ep.fps, sourceKey: seg.pictureSourceKey)
+        }
+    }
+
     /// 可显示分镜总数（方案页那句「N 个分镜可用」用它）。
     /// ⚠ 与 `segmentCount` 是**两颗不同的数**，且刻意不是同一颗：那颗一颗两用
     ///   （既当数字又当三处「有没有料」的禁用闸），闸必须继续看见混剪内部段，否则等于偷改闸。

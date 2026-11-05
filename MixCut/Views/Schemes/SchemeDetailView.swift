@@ -315,7 +315,11 @@ struct SchemeDetailView: View {
 
     // MARK: - Storyboard 视图
 
+    @ViewBuilder
     private var storyboardView: some View {
+        // 整条方案一次算好窗口投影：空镜池"每片至多用一次"，逐格各算会给每一格都许诺整个池子，
+        // 于是卡上显示接得住、导出却接不住（与 `DubExportInput.from` 同一本占用账）。
+        let windowPlan = viewModel.slotWindowPlan(for: scheme, project: drawerProject)
         VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: DesignTokens.Spacing.compact) {
                 Text("分镜序列")
@@ -334,6 +338,7 @@ struct SchemeDetailView: View {
                         StoryboardCard(
                             schemeSeg: schemeSeg,
                             schemeVM: viewModel,
+                            window: windowPlan[schemeSeg.id],
                             segmentLibraryVM: segmentLibraryVM,
                             canDelete: scheme.schemeSegments.count > 1,
                             isDubOnlyScript: isScriptDubOnly,
@@ -529,8 +534,10 @@ struct SchemeDetailView: View {
 
 struct StoryboardCard: View {
     let schemeSeg: SchemeSegment
-    /// 画面窗口投影的归属（`slotWindow` / `stepWindowStart` 都在它身上）。
+    /// 画面窗口投影的归属（`slotWindowPlan` / `stepWindowStart` 都在它身上）。
     let schemeVM: SchemeViewModel
+    /// 本格窗口的事实（由父视图整条方案一次算好后取这一格；nil = 前提不成立，不渲染「窗」行）
+    var window: SlotWindowSnapshot?
     @Bindable var segmentLibraryVM: SegmentLibraryViewModel
     let canDelete: Bool
     /// 脚本成片 dubOnly：卡片底部显示「生成新配音」行；普通方案不显示。
@@ -731,9 +738,9 @@ struct StoryboardCard: View {
                     StoryboardTimeRow(
                         segment: segment,
                         viewModel: segmentLibraryVM,
-                        window: schemeVM.slotWindow(schemeSeg, segment: segment),
+                        window: window,
                         onStepWindowStart: { frames in
-                            schemeVM.stepWindowStart(schemeSeg, segment: segment, by: frames)
+                            schemeVM.stepWindowStart(schemeSeg, segment: segment, project: project, by: frames)
                             try? modelContext.save()
                         },
                         onResetWindowStart: {
@@ -940,24 +947,43 @@ struct StoryboardTimeRow: View {
         }
     }
 
-    /// 差额预警（C3）：挑片阶段就直说"导出会被拦"，不等点导出才发现。
+    /// 差额预警（C3）：接得住就说清了垫了几秒空镜，接不住才说"导出会被拦"。
     /// 数字串联 `PictureWindowPolicy.shortfallText` —— 与导出失败清单同一格式化口径。
+    @ViewBuilder
     private func shortfallCapsule(_ window: SlotWindowSnapshot) -> some View {
-        HStack(spacing: 3) {
-            Image(systemName: "exclamationmark.triangle.fill")
-                .font(.system(size: 8.5))
-            Text("\(PictureWindowPolicy.shortfallText(shortfallFrames: window.shortfallFrames, fps: fps)) · 导出会被拦")
-                .font(.system(size: 9))
-                .lineLimit(1)
-                .minimumScaleFactor(0.75)
+        if window.shortfallCovered {
+            HStack(spacing: 3) {
+                Image(systemName: "film")
+                    .font(.system(size: 8.5))
+                Text("已排空镜 \(String(format: "%.2f", window.brollSeconds))s 垫满")
+                    .font(.system(size: 9))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.75)
+            }
+            .foregroundStyle(.blue)
+            .padding(.horizontal, 6)
+            .padding(.vertical, 2)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(Capsule().fill(Color.blue.opacity(0.10)))
+            .help("这一段画面接不住配音，导出时会在末尾插入素材库里的「空镜」段垫满")
+            .accessibilityLabel("已排空镜垫满这一段")
+        } else {
+            HStack(spacing: 3) {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .font(.system(size: 8.5))
+                Text("\(PictureWindowPolicy.shortfallText(shortfallFrames: window.shortfallFrames, fps: fps)) · 导出会被拦")
+                    .font(.system(size: 9))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.75)
+            }
+            .foregroundStyle(.orange)
+            .padding(.horizontal, 6)
+            .padding(.vertical, 2)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(Capsule().fill(Color.orange.opacity(0.12)))
+            .help("配音比可续画面长，且素材库里的「空镜」也不够垫这一段")
+            .accessibilityLabel("配音比可续画面长，导出会被拦")
         }
-        .foregroundStyle(.orange)
-        .padding(.horizontal, 6)
-        .padding(.vertical, 2)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Capsule().fill(Color.orange.opacity(0.12)))
-        .help("配音比可续画面长，导出会在起 ffmpeg 前被拦下")
-        .accessibilityLabel("配音比可续画面长，导出会被拦")
     }
 
     @ViewBuilder
@@ -998,8 +1024,10 @@ struct StoryboardTimeRow: View {
             infoRow("可续到",
                     "\(ceiling)（\(window.ceilingSource == .nextSegment ? "下一格起点" : "源片末尾")）")
             if window.shortfallFrames > 0 {
-                infoRow("差额", "\(PictureWindowPolicy.shortfallText(shortfallFrames: window.shortfallFrames, fps: fps))，导出会被拦")
-                    .foregroundStyle(.orange)
+                infoRow("差额", window.shortfallCovered
+                        ? "\(PictureWindowPolicy.shortfallText(shortfallFrames: window.shortfallFrames, fps: fps))，已排空镜 \(String(format: "%.2f", window.brollSeconds))s 垫满"
+                        : "\(PictureWindowPolicy.shortfallText(shortfallFrames: window.shortfallFrames, fps: fps))，导出会被拦")
+                    .foregroundStyle(window.shortfallCovered ? Color.blue : Color.orange)
             }
             Button("重置为自动") { onResetWindowStart?() }
                 .controlSize(.small)
