@@ -142,7 +142,7 @@ enum RelationshipReadScan {
     }
 
     /// **逐文件**分类 receiver：`SchemeViewModel.swift:129-132` 的 `let group` 取自 `groups: [MixStrategy]`（模型），
-    /// 而 `SegmentLibraryView.swift:617` 的形参是 `_ group: VideoSegmentGroup`（结构体）——
+    /// 而 `SegmentLibraryView.swift:694` 的形参是 `_ group: VideoSegmentGroup`（结构体）——
     /// 同名不同物。跨文件汇总会让结构体那个被误判成模型 receiver，所以一颗文件一份表。
     static func classifyReceivers(in code: String, modelTypes: Set<String>) -> Receivers {
         var r = Receivers()

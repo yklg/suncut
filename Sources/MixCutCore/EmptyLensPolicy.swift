@@ -364,6 +364,16 @@ public enum EmptyLensPolicy {
         return sawProbability ? .hasSpeech : .undetermined
     }
 
+    /// 只用**已存文本**判的空镜口径（能量层没有输入时的唯一一条腿）。
+    ///
+    /// 为什么要单独一颗：`verdict(EmptyLensSignals(), text:)` 这个"零信号 + 名单层"的组合
+    /// 有两个调用方 —— 自建分镜路径（拿不到静音区间）与旧库补标（不重听）。
+    /// 两边各写一遍 `EmptyLensSignals()`，将来有人改信号默认值就会只改到一边。
+    public static func phraseOnlyVerdict(_ text: String) -> EmptyLensVerdict {
+        verdict(EmptyLensSignals(), text: text)
+    }
+
+
     /// 该结论要不要**拦下打标**。
     ///
     /// **2026-11-04 开闸**（原来写死 false，纪律是"先在他的真素材上只读回测再开"）：

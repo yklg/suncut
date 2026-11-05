@@ -487,6 +487,58 @@ enum SegmentBatchActions {
         }
     }
 
+    /// 旧库补标「空镜」的**命中集**（纯读，不改任何东西）。
+    ///
+    /// 只用已存的段台词判套话名单，**不重听** —— 能量层要的是 silencedetect 的产物，
+    /// 旧库没存那份证据（`ASRSentence.emptyLensSignals` 是这一轮才加的字段，历史值为 nil），
+    /// 要抬能量层只能重跑 ASR。所以这条能走通的腿只有名单层，覆盖面也仅限 whisper 套话那一类。
+    /// 干跑与实改必须吃同一颗（UI 先报数再落库，防"屏上一个数、库里另一个数"）。
+    ///
+    /// 定义域由调用方传 `viewModel.segments`（VM 里那份**未筛选**全集，取自
+    /// `video.displayableSegments` 唯一出口）：视图自己读 `project.displayableSegments`
+    /// 会新增一处 G08 裸读，而且等于把"已经算过一遍的取数"再算一遍。
+    static func emptyLensBackfillHits(in segments: [Segment]) -> [Segment] {
+        segments.filter { seg in
+            !seg.semanticTypes.contains(.emptyShot)
+                && EmptyLensPolicy.shouldSuppressTagging(EmptyLensPolicy.phraseOnlyVerdict(seg.text))
+        }
+    }
+
+    /// 执行补标：覆盖前快照 + 5 秒撤销（与「批量字号 / 批量遮挡」同一条形状）。
+    ///
+    /// ⚠️ 这是全仓第三处会写「空镜」标签的地方（另两处见 `ImportViewModel.applyEmptyLensGate`
+    /// 与自建分镜路径）。三处都必须只从 `EmptyLensPolicy` 拿判断，不许在这里另写名单。
+    static func applyEmptyLensBackfill(in segments: [Segment], in context: ModelContext) {
+        let targets = emptyLensBackfillHits(in: segments)
+        guard !targets.isEmpty else {
+            ToastCenter.shared.show("没有按已存文本判得出「空镜」的分镜（名单层没命中）",
+                                    icon: "info.circle.fill", style: .info)
+            return
+        }
+        let snapshot: [(seg: Segment, types: [SemanticType])] =
+            targets.map { ($0, $0.semanticTypes) }
+        for seg in targets { seg.semanticTypes = [.emptyShot] }
+        context.safeSave()
+        MixLog.info("[空镜补标] 定义域 \(segments.count) 段，命中 \(targets.count) 段（只用已存文本，未重听）")
+
+        PendingDeletionCenter.shared.scheduleUndoOnly(
+            message: "已把 \(targets.count) 个分镜补标为「空镜」（没重听音频）",
+            actionTitle: "撤销补标空镜",
+            seconds: 5
+        ) {
+            var restored = 0
+            for item in snapshot where !item.seg.isDroppedFromContext {
+                item.seg.semanticTypes = item.types
+                restored += 1
+            }
+            context.safeSave()
+            ToastCenter.shared.show(restored == snapshot.count
+                                    ? "已还原空镜补标"
+                                    : "已还原 \(restored) 个分镜的标签（其余已被删除）",
+                                    icon: "arrow.uturn.backward", style: .info)
+        }
+    }
+
     /// 把当前分镜的遮挡设置应用到同一视频的所有分镜（批量覆盖，可撤销）。
     static func applyMaskToAllSegments(of source: Segment, in context: ModelContext) {
         guard let video = source.video else { return }

@@ -559,8 +559,9 @@ final class ImportViewModel {
             // 空镜闸的第二处出口 —— 自建分镜（用户自己上传的文件整听整打）。
             // 这条路径不调 `analyzeLocally` ⇒ 没有 silencePeriods，能量层拿不到输入，
             // 只有名单层能生效；不接这一处，最容易撞空镜的那类素材会整批绕过闸。
-            // ⚠️ 全仓拦打标只有这两处出口（这里 + `applyEmptyLensGate`），新增第三条要同轮挂上。
-            let selfBuiltVerdict = EmptyLensPolicy.verdict(EmptyLensSignals(), text: seg.text)
+            // ⚠️ 全仓拦打标只有这三处出口（这里 + `applyEmptyLensGate` + 旧库补标
+            //    `SegmentBatchActions.applyEmptyLensBackfill`），新增第四条要同轮挂上。
+            let selfBuiltVerdict = EmptyLensPolicy.phraseOnlyVerdict(seg.text)
             if EmptyLensPolicy.shouldSuppressTagging(selfBuiltVerdict) {
                 MixLog.info("[空镜闸] \(destURL.lastPathComponent) 自建分镜 拦下打标 "
                             + "依据=\(Self.emptyLensBasisText(selfBuiltVerdict)) 文本=\(seg.text.prefix(16))")

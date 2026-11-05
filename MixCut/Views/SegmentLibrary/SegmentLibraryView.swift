@@ -11,6 +11,9 @@ struct SegmentLibraryView: View {
 
     @State private var showBatchExportSheet = false
     @State private var showBatchDeleteConfirm = false
+    /// 旧库补标「空镜」：先干跑报数，确认后才落库（防"预览一个数、库里另一个数"）
+    @State private var showEmptyLensBackfillConfirm = false
+    @State private var emptyLensBackfillCount = 0
     @State private var showArrangeSheet = false
     @State private var dubVM = DubbingViewModel()
     /// 待确认停止的视频作业（标题行/检查器/浮层三个停止入口共用一个确认弹窗）
@@ -337,6 +340,26 @@ struct SegmentLibraryView: View {
             .disabled(viewModel.selectedSegmentIDs.isEmpty)
             .help("把所选分镜统一标记为自拍/搬运/AI/未分类")
 
+            // 旧库补标「空镜」：只用**已存文本**判套话名单，不重听音频。
+            // 为什么要这颗按钮：「空镜」标签原本只在导入时写 ⇒ 这轮之前入库的素材一段都没有，
+            // 于是差额的空镜承接与"空镜段不再逐段重听"在旧库上永远轮不到（池子是空的）。
+            Button {
+                emptyLensBackfillCount = SegmentBatchActions.emptyLensBackfillHits(in: viewModel.segments).count
+                showEmptyLensBackfillConfirm = true
+            } label: {
+                HStack(spacing: DesignTokens.Spacing.tight) {
+                    Image(systemName: "film.mountain")
+                        .font(DesignTokens.Typography.captionEmphasis)
+                    Text("补标空镜")
+                        .font(DesignTokens.Typography.labelEmphasis)
+                }
+                .padding(.horizontal, 10)
+                .padding(.vertical, 5)
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.small)
+            .help("按已存的段文本判「whisper 套话名单」，把没人说话的老素材补标成空镜（不重听、5 秒可撤销）")
+
             Button {
                 showArrangeSheet = true
             } label: {
@@ -402,6 +425,16 @@ struct SegmentLibraryView: View {
             }
         } message: {
             Text("将删除 \(viewModel.selectedSegmentIDs.count) 个分镜。删除后 5 秒内可点「撤销」找回。")
+        }
+        .alert("确认补标空镜", isPresented: $showEmptyLensBackfillConfirm) {
+            Button("补标 \(emptyLensBackfillCount) 个") {
+                SegmentBatchActions.applyEmptyLensBackfill(in: viewModel.segments, in: modelContext)
+            }
+            Button("取消", role: .cancel) {}
+        } message: {
+            Text(emptyLensBackfillCount == 0
+                ? "按已存文本没判得出「空镜」的分镜（名单层一条没命中）。能量层要重跑分析才有料，这一步不会重听音频。"
+                : "将把 \(emptyLensBackfillCount) 个分镜的语义标签改为「空镜」。只用已存文本判套话名单，不重听音频；执行后 5 秒内可撤销。")
         }
     }
 
