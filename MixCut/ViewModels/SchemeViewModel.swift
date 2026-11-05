@@ -1107,8 +1107,10 @@ extension SchemeViewModel {
         let tolFrames = FrameTime.frame(seconds: DubLengthGate.measuredToleranceSeconds, fps: fps)
         let shortfall = w.shortfallFrames > tolFrames ? w.shortfallFrames : 0
         let dubFrames = FrameTime.frame(seconds: dubSeconds, fps: fps)
+        // 比的是**这一格自己的起点**（即自动起点），不是夹后的 resolved：
+        // 合法覆盖的 resolved 恒等于 override，拿它比会让所有有效覆盖都误报成"自动"。
         let isAuto = schemeSeg.windowStartOverrideFrame == nil
-            || schemeSeg.windowStartOverrideFrame == resolved.startFrame
+            || schemeSeg.windowStartOverrideFrame == ep.startFrame
 
         return SlotWindowSnapshot(
             hasDub: hasDub,
@@ -1128,5 +1130,17 @@ extension SchemeViewModel {
     /// 放在 VM 而不是视图里，是为了让 SN-12 能扫出"全仓只有这一处写"。
     func setWindowStartOverride(_ schemeSeg: SchemeSegment, frame: Int?) {
         schemeSeg.windowStartOverrideFrame = frame
+    }
+
+    /// 起点步进（浮层 ± 的唯一动作）：1 帧一步。
+    ///
+    /// 往回走到该格自己的起点就是"自动"（存 nil 而不是存一个与自动等价的数），
+    /// 往后不许越过它 —— 越过后会盖进下一格画面。夹回逻辑仍只住
+    /// `PictureWindowPolicy.resolveWindowStart`，这里只负责把"回到自动"翻译成 nil。
+    func stepWindowStart(_ schemeSeg: SchemeSegment, segment: Segment, by frames: Int) {
+        let autoStart = segment.effectivePicture.startFrame
+        guard let current = slotWindow(schemeSeg, segment: segment)?.startFrame else { return }
+        let target = current + frames
+        setWindowStartOverride(schemeSeg, frame: target >= autoStart ? nil : target)
     }
 }

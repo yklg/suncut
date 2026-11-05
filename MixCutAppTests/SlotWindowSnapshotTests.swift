@@ -179,6 +179,27 @@ struct SlotWindowSnapshotTests {
         #expect(vm.slotWindow(slots[0], segment: segs[0]) == nil, "fps 非正还给投影 ⇒ 会把 0 当帧率算出垃圾")
     }
 
+    @Test("SN-15 步进口径：往前 1 帧落覆盖；走回自动起点存 nil；不许越过该格起点")
+    @MainActor
+    func steppingNeverPassesTheShotStart() throws {
+        let dir = try snScratch(); defer { try? FileManager.default.removeItem(at: dir) }
+        let (vm, slots, segs, container) = try snGraph(ranges: [(2, 6)], dubSeconds: [4.0], dir: dir)
+        defer { withExtendedLifetime(container) {} }
+
+        vm.stepWindowStart(slots[0], segment: segs[0], by: -1)
+        #expect(slots[0].windowStartOverrideFrame == 49, "往前一帧应落成显式覆盖（自动起点 2s@25fps=50）")
+        let moved = try #require(vm.slotWindow(slots[0], segment: segs[0]))
+        #expect(moved.startFrame == 49)
+        #expect(moved.isAuto == false)
+
+        vm.stepWindowStart(slots[0], segment: segs[0], by: 1)
+        #expect(slots[0].windowStartOverrideFrame == nil,
+                "走回自动起点应存 nil，而不是一个与自动等价的数（否则'自动'永远关不掉）")
+
+        vm.stepWindowStart(slots[0], segment: segs[0], by: 1)
+        #expect(slots[0].windowStartOverrideFrame == nil, "往后不许越过该格起点（会盖进下一格画面）")
+    }
+
     @Test("SN-12 写口唯一：全仓只有 setWindowStartOverride 一处写 windowStartOverrideFrame")
     @MainActor
     func singleWriteSite() throws {

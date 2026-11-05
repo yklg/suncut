@@ -333,6 +333,7 @@ struct SchemeDetailView: View {
                     ForEach(Array(scheme.orderedSegments.enumerated()), id: \.element.id) { idx, schemeSeg in
                         StoryboardCard(
                             schemeSeg: schemeSeg,
+                            schemeVM: viewModel,
                             segmentLibraryVM: segmentLibraryVM,
                             canDelete: scheme.schemeSegments.count > 1,
                             isDubOnlyScript: isScriptDubOnly,
@@ -528,6 +529,8 @@ struct SchemeDetailView: View {
 
 struct StoryboardCard: View {
     let schemeSeg: SchemeSegment
+    /// 画面窗口投影的归属（`slotWindow` / `stepWindowStart` 都在它身上）。
+    let schemeVM: SchemeViewModel
     @Bindable var segmentLibraryVM: SegmentLibraryViewModel
     let canDelete: Bool
     /// 脚本成片 dubOnly：卡片底部显示「生成新配音」行；普通方案不显示。
@@ -725,7 +728,18 @@ struct StoryboardCard: View {
                         .help(segment.text)
 
                     // 紧凑时间调整
-                    StoryboardTimeRow(segment: segment, viewModel: segmentLibraryVM)
+                    StoryboardTimeRow(
+                        segment: segment,
+                        viewModel: segmentLibraryVM,
+                        window: schemeVM.slotWindow(schemeSeg, segment: segment),
+                        onStepWindowStart: { frames in
+                            schemeVM.stepWindowStart(schemeSeg, segment: segment, by: frames)
+                            try? modelContext.save()
+                        },
+                        onResetWindowStart: {
+                            schemeVM.setWindowStartOverride(schemeSeg, frame: nil)
+                            try? modelContext.save()
+                        })
 
                     // 脚本成片：逐段新配音行（普通方案不显示）。
                     if isDubOnlyScript {
@@ -865,6 +879,12 @@ struct StoryboardCard: View {
 struct StoryboardTimeRow: View {
     let segment: Segment
     @Bindable var viewModel: SegmentLibraryViewModel
+    /// 画面窗口投影（nil = 前提不成立；`hasDub == false` = 本格没配音的合法态，整行不显示）
+    var window: SlotWindowSnapshot?
+    var onStepWindowStart: ((Int) -> Void)?
+    var onResetWindowStart: (() -> Void)?
+
+    @State private var showWindowEditor = false
 
     private var fps: Double { segment.video?.fps ?? 30 }
 
@@ -879,8 +899,128 @@ struct StoryboardTimeRow: View {
                       frame: segment.endFrame,
                       onMinus: { viewModel.adjustEndFrame(for: segment, by: -1) },
                       onPlus: { viewModel.adjustEndFrame(for: segment, by: 1) })
+            if let window, window.hasDub {
+                windowRow(window)
+                if window.shortfallFrames > 0 {
+                    shortfallCapsule(window)
+                }
+            }
         }
         .frame(maxWidth: .infinity)
+    }
+
+    /// 第三行只放「标签 + 尾帧时码(弹性) + 一个入口」。
+    /// 138px 内容宽放不下行内 −/＋ 和「接长」提示（本文件顶上那条宽度纪律），
+    /// 调整动作全收进浮层：一个动作一个入口。
+    private func windowRow(_ window: SlotWindowSnapshot) -> some View {
+        HStack(spacing: 3) {
+            Text("窗")
+                .font(DesignTokens.Typography.microEmphasis)
+                .foregroundStyle(.tertiary)
+            Text(FrameTime.timecode(frame: window.endFrame, fps: fps))
+                .font(DesignTokens.Typography.microMonoStrong)
+                .foregroundStyle(window.isAuto ? Color.secondary : Color.accentColor)
+                .frame(maxWidth: .infinity, alignment: .center)
+                .lineLimit(1)
+                .minimumScaleFactor(0.8)
+            Button {
+                showWindowEditor = true
+            } label: {
+                Image(systemName: "ellipsis")
+                    .font(.system(size: 10, weight: .heavy))
+                    .foregroundStyle(.tertiary)
+                    .frame(width: 22, height: 22)
+                    .background(.secondary.opacity(DesignTokens.Palette.Alpha.subtle))
+                    .clipShape(RoundedRectangle(cornerRadius: 3, style: .continuous))
+            }
+            .buttonStyle(.plain)
+            .help("画面窗口：起点、长度与可续余量")
+            .accessibilityLabel("画面窗口设置")
+            .popover(isPresented: $showWindowEditor) { windowEditor(window) }
+        }
+    }
+
+    /// 差额预警（C3）：挑片阶段就直说"导出会被拦"，不等点导出才发现。
+    /// 数字串联 `PictureWindowPolicy.shortfallText` —— 与导出失败清单同一格式化口径。
+    private func shortfallCapsule(_ window: SlotWindowSnapshot) -> some View {
+        HStack(spacing: 3) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .font(.system(size: 8.5))
+            Text("\(PictureWindowPolicy.shortfallText(shortfallFrames: window.shortfallFrames, fps: fps)) · 导出会被拦")
+                .font(.system(size: 9))
+                .lineLimit(1)
+                .minimumScaleFactor(0.75)
+        }
+        .foregroundStyle(.orange)
+        .padding(.horizontal, 6)
+        .padding(.vertical, 2)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Capsule().fill(Color.orange.opacity(0.12)))
+        .help("配音比可续画面长，导出会在起 ffmpeg 前被拦下")
+        .accessibilityLabel("配音比可续画面长，导出会被拦")
+    }
+
+    @ViewBuilder
+    private func windowEditor(_ window: SlotWindowSnapshot) -> some View {
+        let length = FrameTime.seconds(frame: window.endFrame - window.startFrame, fps: fps)
+        let ceiling = FrameTime.timecode(frame: window.endFrame + window.roomFrames, fps: fps)
+        VStack(alignment: .leading, spacing: 8) {
+            Text("画面窗口")
+                .font(.system(size: 12, weight: .semibold))
+            HStack(spacing: 6) {
+                Text("起点")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Text(FrameTime.timecode(frame: window.startFrame, fps: fps))
+                    .font(DesignTokens.Typography.microMonoStrong)
+                Button("−") { onStepWindowStart?(-1) }
+                    .help("往前带 1 帧前摇画面")
+                    .accessibilityLabel("窗口起点提前 1 帧")
+                Button("＋") { onStepWindowStart?(1) }
+                    .help("往回收 1 帧（最多回到这一格自己的起点）")
+                    .accessibilityLabel("窗口起点延后 1 帧")
+            }
+            .controlSize(.small)
+            Text("往前挪＝多带这段前摇画面（不会缩短这一格）；越过这一格起点会盖进下一格，不允许。")
+                .font(.system(size: 10))
+                .foregroundStyle(.tertiary)
+                .fixedSize(horizontal: false, vertical: true)
+            if let from = window.clampedFrom {
+                Text("你填的 \(FrameTime.timecode(frame: from, fps: fps)) 比这一格起点更靠后，已夹回 \(FrameTime.timecode(frame: window.startFrame, fps: fps))（等于没改）。")
+                    .font(.system(size: 10))
+                    .foregroundStyle(.orange)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Divider()
+            infoRow("窗口长度",
+                    "\(String(format: "%.2fs", length))（\(window.lengthSource == .dub ? "由配音决定" : "由画面决定")）")
+            infoRow("可续到",
+                    "\(ceiling)（\(window.ceilingSource == .nextSegment ? "下一格起点" : "源片末尾")）")
+            if window.shortfallFrames > 0 {
+                infoRow("差额", "\(PictureWindowPolicy.shortfallText(shortfallFrames: window.shortfallFrames, fps: fps))，导出会被拦")
+                    .foregroundStyle(.orange)
+            }
+            Button("重置为自动") { onResetWindowStart?() }
+                .controlSize(.small)
+                .disabled(window.isAuto)
+        }
+        .buttonStyle(.bordered)
+        .padding(12)
+        .frame(width: 260)
+    }
+
+    private func infoRow(_ label: String, _ value: String) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            Text(label)
+                .font(.system(size: 11))
+                .foregroundStyle(.secondary)
+            Spacer()
+            Text(value)
+                .font(.system(size: 11))
+                .multilineTextAlignment(.trailing)
+                .fixedSize(horizontal: false, vertical: true)
+        }
     }
 
     private func adjustRow(label: String,

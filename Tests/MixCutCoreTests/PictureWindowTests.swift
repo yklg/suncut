@@ -423,6 +423,13 @@ struct PictureWindowTests {
             startFrame: 0, endFrame: 100, sourceEndFrame: 140, dubSeconds: 8.0, fps: 25))
         #expect(partial.endFrame == 140 && partial.shortfallFrames == 60)
     }
+
+    @Test("PW-20 差额文案唯一口径：帧进秒出，两位小数")
+    func shortfallTextIsCanonical() {
+        // 卡片预警与导出失败清单都吃这一颗；两边各写一套 format 就是两个数。
+        #expect(PictureWindowPolicy.shortfallText(shortfallFrames: 50, fps: 25) == "配音差 2.00s")
+        #expect(PictureWindowPolicy.shortfallText(shortfallFrames: 1, fps: 25) == "配音差 0.04s")
+    }
 }
 
 /// 找出"调用超字闸却没把可续容量传进去"的位置（返回违规说明，空数组即全部合规）。

@@ -190,11 +190,11 @@ struct DubExportInput: Sendable {
             func noteUndeliverable(_ w: PictureWindow) {
                 guard !PictureWindowPolicy.isDeliverable(w, fps: fps,
                         toleranceSeconds: DubLengthGate.measuredToleranceSeconds) else { return }
-                let over = FrameTime.seconds(frame: w.shortfallFrames, fps: fps)
                 let room = FrameTime.seconds(frame: w.frames, fps: fps)
                 windowBlockers.append(.init(position: position, segmentLabel: segLabel,
-                    reason: String(format: "配音比可续画面长 %.2fs（本段画面最多取到 %.2fs，"
-                            + "再往后就是源片末尾或下一格分镜的画面）", over, room)))
+                    reason: PictureWindowPolicy.shortfallText(shortfallFrames: w.shortfallFrames, fps: fps)
+                            + String(format: "（可续画面最多取到 %.2fs，"
+                            + "再往后就是源片末尾或下一格分镜的画面）", room)))
             }
 
             // 该槽选定的变体：combo 指定优先，否则用 selectedSegmentDubId；nil 或找不到 → 原声

@@ -245,6 +245,14 @@ public enum PictureWindowPolicy {
         return w.shortfallFrames <= toleranceFrames
     }
 
+    /// 差额文案的**唯一**格式化口径：卡片预警与导出失败清单必须同源。
+    ///
+    /// 两处各写一套 `String(format:)`，迟早一边写"差 2.0s"、另一边写"差 2.00s"，
+    /// 用户会当成两个不同的问题。差额**帧**进、秒出，取整只住这一处。
+    public static func shortfallText(shortfallFrames: Int, fps: Double) -> String {
+        String(format: "配音差 %.2fs", FrameTime.seconds(frame: shortfallFrames, fps: fps))
+    }
+
     /// 派生失败时的**保守回退**：窗口 == 画面自己的帧区间，即"不扩窗"。
     ///
     /// 为什么要有这颗而不是让调用方各写一份 `?? 原区间`：算不出来时"照原分镜导"与
