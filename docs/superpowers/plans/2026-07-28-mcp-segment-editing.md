@@ -416,6 +416,8 @@ extension MCPToolHandlers {
 
 （若 `notifyUIReload`/`success` 因 private 不可见，同 Task 2 方式在主文件加 internal 壳：`func toolSuccess(...)`。实现时以编译器为准，本计划后续代码统一按可见的写。）
 
+〔已修正 2026-11-06〕上面这段代码块里两处 `note = "跳过：至少要保留 1 个语义类型"` 是**当时的原样**，保留不删。现码已把这句收进唯一真源：条件走 `SemanticType.meetsMinimum(...)`，文案走 `"跳过：\(SemanticType.keepAtLeastOneMessage)"`（见 `MixCut/Services/MCP/MCPSegmentToolHandlers.swift`）。原因不是风格：同一句话当时散在界面与 MCP 两处字面串，改文案只会改到一半。别照本代码块抄新写点。
+
 - [ ] **Step 3: setSubtitleMode 实现**
 
 ```swift
