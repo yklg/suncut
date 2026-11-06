@@ -78,13 +78,18 @@ extension SemanticType {
     /// 手改「空镜」的代价提示（唯一文案真源，展开态 chip 与右键菜单共用）。
     static let emptyShotWarningMessage = "这段有台词：标成空镜会被当成补差额的插片素材，再点一次确认"
 
-    /// 手改「空镜」的代价闸（**唯一判据**，界面与右键两处宿主共用，不许各写一遍）。
+    /// 手改「空镜」的代价闸（**事前告知**，界面与右键两处宿主共用同一份判据，不许各写一遍）。
     ///
-    /// 为什么要有这道闸：`Project.brollSupplies` 的入池条件只看标签、不看台词是否为空
+    /// 为什么要有它：`Project.brollSupplies` 的入池条件只看标签、不看台词是否为空
     /// （那颗属性自己的注释就写着「带台词的段插进来会让画面与别段口播撞叙事」）。
     /// **摘掉**空镜标签是设计内的正解（人不认可机器判断 ⇒ 该段重新进入逐段重听队列，
     /// 见 `SegmentTranscribeOutcome.shouldAutoRetake` 的说明）；**手动打上**则没有任何背书，
-    /// 会把一段真有口播的画面送进导出成片的插片池。所以只在"加上"这一侧拦。
+    /// 会把一段真有口播的画面送进导出成片的插片池。所以只在"加上"这一侧提示。
+    ///
+    /// ⚠️ 定位（2026-11-06 说清）：这颗闸**不是唯一防线** —— 绕过界面的写入（MCP
+    /// `set_semantic_types`、旧库补标、将来的新入口）它拦不到。真正的防线在读侧
+    /// `BrollPolicy.acceptsAsSupply(text:taggedAsEmptyShot:)`。这颗留着是为了让用户
+    /// **在点的那一下就知道代价**，而不是等导出时才发现成片少画面。
     static func confirmationNeededForEmptyShot(on segment: Segment, adding type: SemanticType) -> Bool {
         type == .emptyShot
             && !segment.semanticTypes.contains(.emptyShot)

@@ -714,23 +714,40 @@ final class SegmentLibraryViewModel {
         )
     }
 
-    /// 批量标记素材来源（5 秒撤销，快照恢复旧 raw）
+    /// 批量标记素材来源（5 秒撤销，快照恢复旧 raw）。
+    ///
+    /// 2026-11-06 补上 `changed` 前置：原来它不判"有没有真的改动"就无条件重排一枚撤销 ticket，
+    /// 第二枚的快照取的是**已经改完**的状态 ⇒ 用户重复批量后点「撤销」，浮条消失、数据不动。
+    /// 与本轮新写的 `addSemanticTypeToSelected` / `setPositionTypeForSelected` 同口径（STW-10b 摘标）。
+    /// 比较用 `sourceRaw` 而不是 `source`：旧库可能有映射不到、`.source` 兜底成 `.unclassified`
+    /// 的脏 raw，那种该被这次批量**规范化**掉，不能因为"看起来已经是 unclassified"而跳过。
     func applySourceToSelected(_ source: SegmentSource) {
         guard let context = modelContext else { return }
         let targets = selectedSegments
         guard !targets.isEmpty else { return }
         context.undoManager?.setActionName("标记来源")
         let snapshot: [(segment: Segment, oldRaw: String)] = targets.map { ($0, $0.sourceRaw) }
-        for seg in targets { seg.setSource(source) }
+        var changed = 0
+        for seg in targets where seg.sourceRaw != source.rawValue {
+            seg.setSource(source)
+            changed += 1
+        }
+        guard changed > 0 else {
+            ToastCenter.shared.show("选中的 \(targets.count) 个分镜都已经是「\(source.displayName)」了",
+                                    icon: "info.circle.fill", style: .info)
+            return
+        }
         context.safeSave()
         applyFilter()
+        MixLog.info("[批量标来源] 定义域 \(targets.count) 段，实际改为「\(source.displayName)」\(changed) 段")
         PendingDeletionCenter.shared.scheduleUndoOnly(
-            message: "已把 \(targets.count) 个分镜标记为「\(source.displayName)」",
+            message: "已把 \(changed) 个分镜标记为「\(source.displayName)」",
             actionTitle: "还原来源",
             seconds: 5
         ) {
             for (seg, oldRaw) in snapshot { seg.sourceRaw = oldRaw }
             context.safeSave()
+            self.applyFilter()
         }
     }
 

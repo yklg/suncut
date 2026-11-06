@@ -272,51 +272,54 @@ struct SegmentTagWritePathTests {
 
     // MARK: XR-02 手标「空镜」⇄ 导出侧的补差额插片池（评审 R3）
 
-    @Test("STW-8 有台词的段打上「空镜」⇒ 确实会进补差额的插片池（读数留证）")
+    @Test("STW-8 读侧入池闸：有台词的段就算被打上「空镜」也不进插片池")
     @MainActor
-    func handTaggedSpeechSegmentEntersBrollPool() throws {
+    func handTaggedSpeechSegmentIsRefused() throws {
         let dir = try stwScratch(); defer { try? FileManager.default.removeItem(at: dir) }
         let w = try stwWorld(dir: dir, specs: stwDefaultSpecs)
         let speaking = w.segs[0]     // 有台词、原本 .hook
-        // 夹具前提只能按 label 集合判：默认四段里 seg_004 本来就是一颗合法空镜（台词为空），
-        // 它必须在池子里。拿 `isEmpty` 当前提会红在夹具上，而不是红在这件事上。
+        // 夹具前提按 label 集合判：默认四段里 seg_004 本来就是合法空镜（台词为空），它必须在池子里。
+        // 拿 `isEmpty` 当前提会红在夹具上，而不是红在这件事上。
         let before = w.project.brollSupplies.map(\.label)
         #expect(before == ["seg_004"], "夹具前提：池子里该只有那段空台词的空镜，实得 \(before)")
 
-        // 模拟把一段**有台词**的分镜标成空镜。
+        // 绕过界面直接写模型（等价于 MCP `set_semantic_types` 或将来任何新入口）：
+        // 读侧闸必须自己挡住，不再依赖 UI 那颗二次确认。
         speaking.semanticTypes = [.emptyShot]
         try w.ctx.save()
 
         let labels = w.project.brollSupplies.map(\.label)
-        #expect(labels.contains(speaking.segmentIndex),
-                "实得池子 = \(labels) ⇒ 手标空镜的有台词段没进池，那 R3 这条风险不成立，本条应改写为正向断言")
+        #expect(!labels.contains(speaking.segmentIndex),
+                "有台词段进了插片池：\(labels) ⇒ 读侧闸失效，UI 那颗提示又变成唯一防线")
+        // 而且不许顺手把合法供给一起清掉。
+        #expect(labels == ["seg_004"], "合法供给被误伤：实得 \(labels)")
     }
 
-    @Test("STW-9 目标口径：有台词的段不该被当成补差额的插片素材（模型侧仍未设防）")
+    @Test("STW-9 补标产出的套话段仍能入池（新闸不许打断差额承接的料）")
     @MainActor
-    func speechSegmentsShouldNotFeedBrollPool() throws {
+    func backfilledPhraseSegmentStillFeedsPool() throws {
         let dir = try stwScratch(); defer { try? FileManager.default.removeItem(at: dir) }
-        let w = try stwWorld(dir: dir, specs: stwDefaultSpecs)
-        let speaking = w.segs[0]
-        speaking.semanticTypes = [.emptyShot]
-        try w.ctx.save()
+        // 名单层命中的段文本**必然非空**（`knownHallucinationHit` 对空文本直接返回 nil），
+        // 所以"按台词为空筛"的口径会把这一整类合法供给踢光 —— 这条就是钉住那个错误的。
+        let phrase = EmptyLensPolicy.knownHallucinationPhrases[0]
+        let specs: [(text: String, types: [SemanticType], position: PositionType,
+                     source: SegmentSource, quality: Double)] = [
+            (phrase, [.emptyShot], .middle, .curated, 8.0),
+            ("", [.emptyShot], .middle, .curated, 8.0),
+            ("这颗橙子汁水多到离谱", [.emptyShot], .middle, .curated, 8.0),
+        ]
+        let w = try stwWorld(dir: dir, specs: specs)
 
-        // 断言按 label 判，不用 `isEmpty`：默认夹具里 seg_004 那颗合法空镜本来就该在池子里，
-        // 用 isEmpty 会让这条红在夹具上、而不是红在"有台词段进池"这件事上。
-        let labels = w.project.brollSupplies.map(\.label)
-        let reason = "红钉（评审 R3，**本轮未收口**）：`Project.brollSupplies`（Project.swift:86，入池判断在 :87）"
-            + "只看标签、不看台词是否为空 —— 而它自己的注释（:81）就写着「带台词的段插进来会让画面与"
-            + "别段口播撞叙事」。本轮落的是 **UI 侧**那道闸（`SemanticType.confirmationNeededForEmptyShot`"
-            + " ⇒ 有台词段点空镜要先弹代价 + 二次确认，见 STW-9b），所以绕过界面的写入仍然不设防："
-            + "MCP 的 set_semantic_types、批量补标、以及将来任何新入口都能把有台词段送进插片池。"
-            + "摘标条件：把闸抬进 `Project.brollSupplies` 的入池口径（或写标签的唯一出口）之后本条自然通过。"
-        // ⚠️ Swift Testing 的 `Comment` 只吃插值字面量，`+` 拼出来的 `String` 要过一道 `"\(...)"`，
-        // 否则是类型错误而不是测试失败 —— 这一形在本文件里错过两次，靠 build-for-testing 才抓到
-        // （`swiftc -parse` 只到语法层）。
-        withKnownIssue("\(reason)") {
-            #expect(!labels.contains(speaking.segmentIndex),
-                    "有台词段进了插片池：\(labels)")
-        }
+        #expect(EmptyLensPolicy.phraseOnlyVerdict(phrase).isEmptyLens,
+                "名单条目本身不再判空镜 ⇒ 这条判据的前提没了，先去改 EmptyLensPolicy 那边")
+
+        // ⚠️ 按**集合**比，不按数组：`Project.brollSupplies` 的注释明写「排序不在这里定，
+        // 确定性归 `BrollPolicy`」⇒ 池子的顺序不是契约，按有序数组断言会把一条正确的判据
+        // 绑在一个本就不保证的性质上（本条第一版就是这么红的：实得 ["seg_002","seg_001"]）。
+        let labels = Set(w.project.brollSupplies.map(\.label))
+        #expect(labels == Set(["seg_001", "seg_002"]),
+                "套话段（seg_001）或空台词段（seg_002）被请出池，实得 \(labels.sorted()) ⇒ 补标这条路白做，差额承接回到空池（BFK-7 同一条链）")
+        #expect(!labels.contains("seg_003"), "真口播段进了池 ⇒ 读侧闸放水")
     }
 
     @Test("STW-9b 手改空镜的代价闸：判据只在「有台词 + 尚未标空镜 + 正是要加上」这一档响")
@@ -377,31 +380,32 @@ struct SegmentTagWritePathTests {
                 "撤销没把原来源还回来（实得 \(w.segs[0].source)/\(w.segs[1].source)）")
     }
 
-    @Test("STW-10b 重复批量后再撤销：应回到最初，实得停在原地（既有缺陷，非本轮引入）")
+    @Test("STW-10b 重复批量不许顶掉上一枚撤销 ticket（撤销仍要回到最初）")
     @MainActor
-    func repeatedBatchStealsTheUndoSnapshot() throws {
+    func repeatedBatchDoesNotStealTheUndoSnapshot() throws {
         let dir = try stwScratch(); defer { try? FileManager.default.removeItem(at: dir) }
         let w = try stwWorld(dir: dir, specs: stwDefaultSpecs)
         defer { PendingDeletionCenter.shared.flushNow() }
 
         w.vm.selectedSegmentIDs = [w.segs[0].id, w.segs[1].id]
         w.vm.applySourceToSelected(.aiGenerated)
-        // 数据层面重复执行是幂等的（什么都没改），但 `applySourceToSelected` 无条件再排一枚
-        // ticket，其快照取的是**已经改完**的状态 ⇒ 用户点「撤销」时浮条消失、数据不动。
-        w.vm.applySourceToSelected(.aiGenerated)
-        #expect(w.segs[0].source == .aiGenerated, "重复执行改动了数据 ⇒ 与实测不符，本条前提要重写")
+        let afterFirst = w.segs.map(\.source)
+        #expect(w.segs[0].source == .aiGenerated && w.segs[1].source == .aiGenerated,
+                "第一次批量没作用到选中集")
 
-        let reason = "红钉（既有缺陷，2026-11-06 App 腿实测抓到）：`applySourceToSelected` 不判"
-            + "「有没有真的改动」就重新 `scheduleUndoOnly`，第二枚 ticket 的快照已是改后值 ⇒ "
-            + "重复批量后点撤销等于空转。本轮新增的 `addSemanticTypeToSelected` / "
-            + "`setPositionTypeForSelected` 已经避开了这一形（先算 changed，为 0 就出声并直接返回，"
-            + "见 STW-13），所以这颗钉的是**旧的那颗**没同步修。"
-            + "摘标条件：给 `applySourceToSelected` 补同一道 `changed` 前置后本条自然通过。"
-        withKnownIssue("\(reason)") {
-            PendingDeletionCenter.shared.undoTapped()
-            #expect(w.segs[0].source == .selfShot && w.segs[1].source == .curated,
-                    "撤销空转：实得 \(w.segs[0].source)/\(w.segs[1].source)")
-        }
+        // 2026-11-06 摘标：本条原为 withKnownIssue 红钉 —— `applySourceToSelected` 当时不判
+        // 「有没有真的改动」就重排 ticket，第二枚快照已是改后值 ⇒ 撤销空转（App 腿实测抓到）。
+        // 补上 changed 前置后它因「不再有问题」自己变红 ⇒ 摘标，断言转为永久闸。
+        ToastCenter.shared.dismiss()
+        w.vm.applySourceToSelected(.aiGenerated)          // 幂等：一条都不该再动
+        #expect(w.segs.map(\.source) == afterFirst, "重复执行改动了数据")
+        #expect(ToastCenter.shared.current?.text.contains("都已经是") == true,
+                "空转的批量不发声 ⇒ 实得 \(ToastCenter.shared.current?.text ?? "nil")")
+
+        // 关键那一格：第二次是空转 ⇒ **不许**排新 ticket ⇒ 第一枚仍在 ⇒ 撤销回到最初。
+        PendingDeletionCenter.shared.undoTapped()
+        #expect(w.segs[0].source == .selfShot && w.segs[1].source == .curated,
+                "撤销没能回到最初（实得 \(w.segs[0].source)/\(w.segs[1].source)）⇒ 空转那次又顶掉了 ticket")
     }
 
     // MARK: IN-02 筛选五维的交集口径（今天一条都没有）

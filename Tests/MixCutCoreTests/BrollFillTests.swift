@@ -290,4 +290,82 @@ struct BrollGraphTests {
         #expect(g.filterComplex.contains("[pic0][pic1][pic2]concat=n=3:v=1:a=0[base]"))
         #expect(g.filterComplex.contains("[3:v]trim=start_frame=40:end_frame=65"))
     }
+
+// MARK: - 入池口径（纪律 1 的可执行形态，2026-11-06）
+
+@Test("BF-ADMIT-1 入池四档等价类：未标签一律拒；标签+空台词/套话放行；标签+真口播拒")
+func admissionEquivalenceClasses() {
+    // ① 没打「空镜」标签 ⇒ 无论台词是什么都不进池（标签是必要条件）。
+    #expect(!BrollPolicy.acceptsAsSupply(text: "", taggedAsEmptyShot: false),
+            "没打空镜标签的空白段进了池 ⇒ 必要条件被绕过")
+    #expect(!BrollPolicy.acceptsAsSupply(text: "秋冬一到嘴就干", taggedAsEmptyShot: false),
+            "没打空镜标签的真口播进了池")
+
+    // ② 标签 + 台词归一后为空 ⇒ 放行。
+    #expect(BrollPolicy.acceptsAsSupply(text: "", taggedAsEmptyShot: true),
+            "空台词的空镜段被拒 ⇒ 差额承接拿不到最正当的那批供给")
+    #expect(BrollPolicy.acceptsAsSupply(text: "   \n ", taggedAsEmptyShot: true),
+            "纯空白台词没被归一成空 ⇒ 与 ① 同一档却给了不同答案")
+
+    // ③ 标签 + 台词是 whisper 幻觉套话（**非空**）⇒ 必须放行。
+    //    这一档是整颗口径的存在理由：只按"台词为空"筛就会把旧库补标产出的供给全踢掉。
+    let phrase = EmptyLensPolicy.knownHallucinationPhrases[0]
+    #expect(BrollPolicy.acceptsAsSupply(text: phrase, taggedAsEmptyShot: true),
+            "名单层命中的段被请出池 ⇒ 补标这条路白做，差额承接回到空池")
+
+    // ④ 标签 + 真口播 ⇒ 拒（用户手改、MCP 乱写都挡在这里）。
+    #expect(!BrollPolicy.acceptsAsSupply(text: "秋冬一到嘴就干，这颗橙子汁水多到离谱",
+                                        taggedAsEmptyShot: true),
+            "有口播的段仅凭标签就进了插片池 ⇒ 读侧闸没生效")
+}
+
+@Test("BF-ADMIT-2 不变式：名单层判成空镜的文本，必然入池（补标命中集 ⊆ 池子）")
+func phraseVerdictImpliesAdmission() {
+    // 这条把「写侧补标的判据」与「读侧入池的判据」锁成同一件事：
+    // 只要 phraseOnlyVerdict 判空镜，acceptsAsSupply 就必须放行 —— 否则补标产出的段永远进不了池。
+    var offenders: [String] = []
+    for phrase in EmptyLensPolicy.knownHallucinationPhrases {
+        guard EmptyLensPolicy.phraseOnlyVerdict(phrase).isEmptyLens else {
+            offenders.append("名单条目本身不再判空镜：\(phrase.prefix(8))")
+            continue
+        }
+        if !BrollPolicy.acceptsAsSupply(text: phrase, taggedAsEmptyShot: true) {
+            offenders.append("判成空镜却入不了池：\(phrase.prefix(8))")
+        }
+        // 带尾巴的变体（幻觉套话后面又接了几个字）也必须一致，否则"就地复算"这条腿会漂移。
+        let withTail = phrase + "转发"
+        let verdictStill = EmptyLensPolicy.phraseOnlyVerdict(withTail).isEmptyLens
+        let admitted = BrollPolicy.acceptsAsSupply(text: withTail, taggedAsEmptyShot: true)
+        if verdictStill != admitted {
+            offenders.append("带尾巴变体两侧不一致：verdict=\(verdictStill) 入池=\(admitted)")
+        }
+    }
+    #expect(offenders.isEmpty, "\(offenders)")
+    #expect(!EmptyLensPolicy.knownHallucinationPhrases.isEmpty, "名单是空的 ⇒ 上面整条恒真，不算通过")
+}
+
+@Test("BF-ADMIT-3 反向对照：只按「台词为空」筛的口径会打断补标（证明口径不能那么写）")
+func naiveEmptyTextOnlyFilterWouldBreakBackfill() {
+    // 这棵是"看起来最自然"的错实现：`tagged && text.isEmpty`。
+    // 它必须与真口径在名单层那一档上给出**不同**答案 —— 否则 BF-ADMIT-2 那条不变式是空的。
+    let phrase = EmptyLensPolicy.knownHallucinationPhrases[0]
+    func naive(_ text: String, _ tagged: Bool) -> Bool { tagged && text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+    #expect(naive(phrase, true) == false, "错实现竟然也放行套话段 ⇒ 两口径等价，BF-ADMIT-2 失去意义")
+    #expect(BrollPolicy.acceptsAsSupply(text: phrase, taggedAsEmptyShot: true) == true,
+            "真口径反而拒了套话段 ⇒ 不变式那条腿已经先红了")
+    // 而两口径在"真口播"那一档必须一致地拒 —— 不一致就说明读侧闸只是换个地方放水。
+    #expect(naive("这颗橙子汁水多到离谱", true) == false
+            && BrollPolicy.acceptsAsSupply(text: "这颗橙子汁水多到离谱", taggedAsEmptyShot: true) == false,
+            "真口播在某一口径下进了池")
+}
+
+@Test("BF-ADMIT-4 已知漏口照实拦：非套话的纯音乐文本不是空镜，别当已解决")
+func knownMissStaysMissAdmitted() {
+    // EL-18 钉的是同一件事的写侧（判不出空镜）；这里钉读侧：那种段即使被人手打了标签，
+    // 只要文本既非空又不在名单上，就不该进插片池。
+    for text in ["Zither Harp", "你的眼中只有我"] {
+        #expect(!BrollPolicy.acceptsAsSupply(text: text, taggedAsEmptyShot: true),
+                "\(text) 进了插片池 ⇒ 读侧闸比写侧漏得更多")
+    }
+}
 }

@@ -77,15 +77,23 @@ final class Project: Identifiable {
 
     /// 可用来补差额的**空镜供给**（B 块差额后置档）。
     ///
-    /// 口径三条：① 只认机器标签「空镜」（带台词的段插进来会让画面与别段口播撞叙事）；
+    /// 口径四条：① 打了机器标签「空镜」**且台词不构成叙事**（`BrollPolicy.acceptsAsSupply`：
+    /// 台词归一后为空，或名单层就地复算仍判空镜 —— 后者是必须的，补标产出的合法供给文本非空）；
     /// ② 画面必须真有帧可取；③ **不查文件存在性** —— 那是导出侧的事（这里每次卡片 body
     /// 都会被读，逐条 `stat()` 就是 `effectivePicture` 那条性能注释警告过的形态）。
+    /// ④ 排序不在这里定，确定性归 `BrollPolicy`（同一库重导必须得到同一个 plan）。
     /// ⚠️ 因此界面上"排得下空镜"与导出时"文件还在不在"可能有一个时间窗不一致；
     ///    导出侧遇到缺文件会照实拦并说明，不会静默出一条少画面的片子。
-    /// 排序不在这里定，确定性归 `BrollPolicy`（同一库重导必须得到同一个 plan）。
+    ///
+    /// ① 里那道"台词不构成叙事"是 2026-11-06 补的读侧闸：写侧有四处都能打上「空镜」
+    ///（导入两处、旧库补标、UI 手改、MCP），只有这里能挡住"用户把有口播的段当插片素材"。
+    /// UI 那颗二次确认（`SemanticType.confirmationNeededForEmptyShot`）从此降级为**事前告知**，
+    /// 不再是唯一防线。
     var brollSupplies: [BrollSupply] {
         displayableSegments.compactMap { seg in
-            guard seg.semanticTypes.contains(.emptyShot) else { return nil }
+            guard BrollPolicy.acceptsAsSupply(text: seg.text,
+                                              taggedAsEmptyShot: seg.semanticTypes.contains(.emptyShot))
+            else { return nil }
             let ep = seg.effectivePicture
             guard !ep.videoPath.isEmpty, ep.endFrame > ep.startFrame, ep.fps > 0 else { return nil }
             return BrollSupply(label: seg.segmentIndex, videoPath: ep.videoPath,

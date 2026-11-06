@@ -12,8 +12,12 @@ import Foundation
 //
 // ## 四条不许违反的纪律
 //
-// 1. **只吃打了「空镜」标签的分镜**：带台词的段插进来会让画面与别段的口播撞叙事。
+// 1. **只吃「空镜」标签 + 台词不构成叙事的段**：带口播的段插进来会让画面与别段撞叙事。
 //    「空镜」是机器标签（`EmptyLensPolicy` 唯一写入方），不是人挑的内容分类。
+//    ⚠️ 2026-11-06 补：光看标签拦不住手改（Inspector chip / 右键 / MCP 三条路都能给人打上
+//    「空镜」），但**不能**简单要求"台词为空"——名单层命中的段文本**必然非空**
+//    （`EmptyLensPolicy.knownHallucinationHit` 对空文本直接返回 nil），旧库补标产出的合法供给
+//    正是"文本 = whisper 幻觉套话"那种段。入池口径因此是 `acceptsAsSupply(text:taggedAsEmptyShot:)`。
 // 2. **同一段画面不许在成片里出现两遍**：与本格窗口帧区间重叠的同源供给要剔除；
 //    每片供给**至多用一次**（跨槽位也只用一次），这条由 `consumed` 记账。
 //    （这条不是理论风险 —— B 块第一版就是因为漏了同源重叠被 BR-4 抓到的。）
@@ -95,6 +99,26 @@ public struct BrollDemand: Equatable, Sendable {
 }
 
 public enum BrollPolicy {
+
+    /// 入池口径（纪律 1 的可执行形态）：这段**作为插片画面**会不会与宿主格的口播叙事冲突。
+    ///
+    /// 两道读侧证据，满足任一即放行：
+    ///   ① 台词归一后为空 —— 没有话可撞；
+    ///   ② 名单层就地复算仍判空镜 —— 文本是 whisper 在静音上幻觉出来的那类套话，
+    ///      它**不是**真口播。这条是必须的：机器判出的合法空镜段文本往往非空（见文件头纪律 1 的 ⚠️），
+    ///      只按 ① 筛会把旧库补标产出的供给全部踢掉，差额承接又变回空池。
+    ///
+    /// 为什么用 `phraseOnlyVerdict(...).isEmptyLens` 而不是 `EmptyLensPolicy.shouldSuppressTag(...)`：
+    /// 后者带"拦打标"那颗闸（:377-397），那颗闸只管**要不要写标签**，不该决定**已存在的画面能不能用**；
+    /// 把两件事绑在一起，关闸就会静默清空插片池。
+    ///
+    /// 结构性事实：`BrollSupply` 不携带台词（只有 label/帧区间/fps/sourceKey），所以一旦进了池，
+    /// 下游**无法再判一次**"有没有口播"——这道闸只能建在入池处。
+    public static func acceptsAsSupply(text: String, taggedAsEmptyShot: Bool) -> Bool {
+        guard taggedAsEmptyShot else { return false }
+        if text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return true }
+        return EmptyLensPolicy.phraseOnlyVerdict(text).isEmptyLens
+    }
 
     /// 单槽最多插几片。为什么要封顶：一个槽位插七八片空镜，成片就变成快切空镜集锦，
     /// 观感比"声音压在下一格画面上"更差；封顶后接不满会照实报 `filled == false` 继续拦。
