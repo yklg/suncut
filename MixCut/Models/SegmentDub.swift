@@ -44,7 +44,7 @@ final class SegmentDub {
     /// 配音生成那一刻，**分镜原台词**（`Segment.text`）的哈希。
     /// 改写版没动但原台词被重听/搬字换掉了，这条配音也已经对不上画面里的话 —— 以前只追踪改写版，
     /// 那种失效是无声的。默认 `""` = 旧数据（无从判起，不报 stale，只报"未记录"）。
-    /// ⚠️ 注意 `generatedForStartFrame/EndFrame` 另兼**时长**职责（`MCPSegmentToolHandlers.swift:381` 用它俩算时长），
+    /// ⚠️ 注意 `generatedForStartFrame/EndFrame` 另兼**时长**职责（`MCPSegmentToolHandlers.swift:383` 用它俩算时长），
     ///    本轮只加这一个 hash 字段，不动那两字段的语义。
     var generatedForSourceTextHash: String = ""
 

@@ -442,29 +442,130 @@ final class SegmentLibraryViewModel {
         recomputeAllDerived()
     }
 
-    /// 切换分镜的语义类型（多选：添加或移除）
-    func toggleSemanticType(for segment: Segment, type: SemanticType) {
-        modelContext?.undoManager?.setActionName("修改类型")
-        var types = segment.semanticTypes
-        if let idx = types.firstIndex(of: type) {
-            // 移除，但至少保留一个类型
-            if types.count > 1 {
-                types.remove(at: idx)
-            }
-        } else {
-            types.append(type)
+    // MARK: 分类标签的唯一写入口（UI 侧）
+    //
+    // 判据本身在 `SemanticType.toggled`（界面、批量、MCP 三方共用同一份）。这里只负责三件事：
+    // 撤销动作名、落库、派生刷新，以及把两种"静默"变成出声 ——
+    //   ① 「至少保留一个」被拒时什么都不做（旧写法），用户体感是"点了没反应"；
+    //   ② 落库失败被吞（视图侧的 `try? save()` 与 VM 侧的可选链都会吞）。
+    // 视图拿不到 `modelContext`（它是 private），所以"只能走这里"有编译期护栏。
+
+    /// 写入前：取上下文并登记撤销动作名。上下文缺失必须出声，不许静默丢掉这次点击。
+    private func beginEdit(actionName: String) -> ModelContext? {
+        guard let context = modelContext else {
+            ToastCenter.shared.show("改动没存下来：数据库上下文未就绪",
+                                    icon: "exclamationmark.triangle.fill", style: .warning)
+            return nil
         }
-        segment.semanticTypes = types
-        modelContext?.safeSave()
+        context.undoManager?.setActionName(actionName)
+        return context
+    }
+
+    /// 写入后：落库（失败出声）+ 刷新筛选与派生计数。
+    /// `applyFilter()` 内部会 `recomputeAllDerived()` ⇒ 顶部 chip 的计数与筛选结果同帧跟上。
+    private func endEdit(_ context: ModelContext) {
+        if !context.safeSave() {
+            ToastCenter.shared.show("改动没能保存，重启后会丢",
+                                    icon: "exclamationmark.triangle.fill", style: .warning)
+        }
         applyFilter()
     }
 
-    /// 更新分镜的位置类型
-    func updatePositionType(for segment: Segment, to newType: PositionType) {
-        modelContext?.undoManager?.setActionName("修改位置")
+    /// 切换分镜的语义类型（多选：添加或移除）。
+    @discardableResult
+    func toggleSemanticType(for segment: Segment, type: SemanticType) -> SemanticToggleOutcome {
+        let (outcome, next) = SemanticType.toggled(segment.semanticTypes, adding: type)
+        if outcome == .refusedKeepAtLeastOne {
+            ToastCenter.shared.show(SemanticType.keepAtLeastOneMessage,
+                                    icon: "exclamationmark.triangle.fill", style: .warning)
+            return outcome
+        }
+        guard let context = beginEdit(actionName: "修改类型") else { return outcome }
+        segment.semanticTypes = next
+        endEdit(context)
+        return outcome
+    }
+
+    /// 更新分镜的位置类型（单值，点即切换；`PositionType` 非 Optional ⇒ 没有"清空"这条路径）。
+    @discardableResult
+    func updatePositionType(for segment: Segment, to newType: PositionType) -> Bool {
+        guard let context = beginEdit(actionName: "修改位置") else { return false }
         segment.positionType = newType
-        modelContext?.safeSave()
+        endEdit(context)
+        return true
+    }
+
+    /// 批量给选中的分镜**加上**某个语义类型（快照 + 5 秒撤销）。
+    ///
+    /// 只做"加"不做"删"：删会逐条撞「至少保留一个」，产出需要逐条结算与逐条播报的
+    /// "部分成功"语义，收益不抵复杂度。形状逐字照 `applySourceToSelected`。
+    func addSemanticTypeToSelected(_ type: SemanticType) {
+        guard let context = modelContext else { return }
+        let targets = selectedSegments
+        guard !targets.isEmpty else { return }
+        context.undoManager?.setActionName("修改类型")
+        let snapshot: [(segment: Segment, types: [SemanticType])] =
+            targets.map { ($0, $0.semanticTypes) }
+        var changed = 0
+        for seg in targets where !seg.semanticTypes.contains(type) {
+            seg.semanticTypes = seg.semanticTypes + [type]
+            changed += 1
+        }
+        guard changed > 0 else {
+            ToastCenter.shared.show("选中的 \(targets.count) 个分镜都已经有「\(type.rawValue)」了",
+                                    icon: "info.circle.fill", style: .info)
+            return
+        }
+        context.safeSave()
         applyFilter()
+        MixLog.info("[批量打标] 定义域 \(targets.count) 段，实际加上「\(type.rawValue)」\(changed) 段")
+
+        PendingDeletionCenter.shared.scheduleUndoOnly(
+            message: "已给 \(changed) 个分镜加上「\(type.rawValue)」",
+            actionTitle: "撤销批量打标",
+            seconds: 5
+        ) {
+            for item in snapshot where !item.segment.isDroppedFromContext {
+                item.segment.semanticTypes = item.types
+            }
+            context.safeSave()
+            self.applyFilter()
+        }
+    }
+
+    /// 批量设置选中分镜的位置（快照 + 5 秒撤销）。
+    func setPositionTypeForSelected(_ position: PositionType) {
+        guard let context = modelContext else { return }
+        let targets = selectedSegments
+        guard !targets.isEmpty else { return }
+        context.undoManager?.setActionName("修改位置")
+        let snapshot: [(segment: Segment, position: PositionType)] =
+            targets.map { ($0, $0.positionType) }
+        var changed = 0
+        for seg in targets where seg.positionType != position {
+            seg.positionType = position
+            changed += 1
+        }
+        guard changed > 0 else {
+            ToastCenter.shared.show("选中的 \(targets.count) 个分镜都已经是「\(position.rawValue)」了",
+                                    icon: "info.circle.fill", style: .info)
+            return
+        }
+        context.safeSave()
+        applyFilter()
+        MixLog.info("[批量改位置] 定义域 \(targets.count) 段，实际改为「\(position.rawValue)」\(changed) 段")
+
+        PendingDeletionCenter.shared.scheduleUndoOnly(
+            message: "已把 \(changed) 个分镜的位置改为「\(position.rawValue)」",
+            actionTitle: "撤销批量改位置",
+            seconds: 5
+        ) {
+            for item in snapshot where !item.segment.isDroppedFromContext {
+                item.segment.positionType = item.position
+            }
+            context.safeSave()
+            self.applyFilter()
+        }
     }
 
     /// 重置筛选

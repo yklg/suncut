@@ -340,6 +340,39 @@ struct SegmentLibraryView: View {
             .disabled(viewModel.selectedSegmentIDs.isEmpty)
             .help("把所选分镜统一标记为自拍/搬运/AI/未分类")
 
+            // 批量「加上」语义类型 / 批量「设」位置（快照 + 5 秒撤销，形状同「标记来源」）。
+            // 只做"加"和"设"，**不做批量删**：删会逐条撞「至少保留一个」那条不变式，
+            // 产出需要逐条结算与逐条播报的"部分成功"语义，收益不抵复杂度。
+            Menu {
+                Section("语义类型") {
+                    ForEach(SemanticType.allCases) { type in
+                        Button(type.rawValue) {
+                            viewModel.addSemanticTypeToSelected(type)
+                        }
+                    }
+                }
+                Section("位置") {
+                    ForEach(PositionType.allCases) { position in
+                        Button(position.rawValue) {
+                            viewModel.setPositionTypeForSelected(position)
+                        }
+                    }
+                }
+            } label: {
+                HStack(spacing: DesignTokens.Spacing.tight) {
+                    Image(systemName: "slider.horizontal.3")
+                        .font(DesignTokens.Typography.captionEmphasis)
+                    Text("标记类型")
+                        .font(DesignTokens.Typography.labelEmphasis)
+                }
+                .padding(.horizontal, 10)
+                .padding(.vertical, 5)
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.small)
+            .disabled(viewModel.selectedSegmentIDs.isEmpty)
+            .help("给所选分镜批量加上一个语义类型，或统一设置位置（5 秒内可撤销）")
+
             // 旧库补标「空镜」：只用**已存文本**判套话名单，不重听音频。
             // 为什么要这颗按钮：「空镜」标签原本只在导入时写 ⇒ 这轮之前入库的素材一段都没有，
             // 于是差额的空镜承接与"空镜段不再逐段重听"在旧库上永远轮不到（池子是空的）。
@@ -570,6 +603,10 @@ struct SegmentLibraryView: View {
                     }
                 }
             }
+            // 期望错位澄清（不改口径）：这排词和分镜卡上的标签同名，用户会以为它显示的是
+            // "当前分镜命中了什么"。它其实是**筛选**，计数按未筛选全集算 —— 那是有意的设计
+            // （见 `SegmentLibraryViewModel.countByType`），所以只补一句话，不动 isSelected/count。
+            .help("这里是筛选：只看带该类型的分镜，不代表当前分镜的标签")
 
             // 统计 + 重置
             // ⚠️ lineLimit(1) 挂在拼接后的整条上，不挂在右半边 —— Text 修饰符对 `A + B`
@@ -1080,6 +1117,9 @@ struct SegmentCard: View, Equatable {
     /// 延迟激活 hover（停留 SegmentLibraryMetrics.hoverActivationDelay 后才 true，喂重子树）
     @State private var isHoverActive = false
     @State private var showDeleteConfirm = false
+    /// 右键「标记类型」里给有台词段打空镜的二次确认臂。
+    /// 只喂菜单这一条交互，**不参与上面的 `==`**（那颗比较只认父级重建的值类型 props）。
+    @State private var emptyShotArmed = false
 
     // Equatable：SwiftUI 看到这俩相等就跳过 body 评估
     // viewModel 引用不参与比较（Bindable 让其变化通过 @State observation 触发，跟 Equatable 跳过逻辑互不冲突）
@@ -1104,6 +1144,28 @@ struct SegmentCard: View, Equatable {
 
     var body: some View {
         fullCard
+    }
+
+    /// 右键菜单里切换一颗语义类型：先 pin，再走 VM 那个唯一写入口。
+    ///
+    /// 为什么要先 pin：右键不 pin（只有 `onTapGesture` 才 pin），而 `toggleSemanticType` 会触发
+    /// `applyFilter()` ⇒ 网格重排把这张卡从指针下移走 ⇒ hover 清空 ⇒ Inspector 自己关掉。
+    /// pin 的语义是"我刚改了这条，面板给我留着"。
+    ///
+    /// 为什么要这道闸：`Project.brollSupplies` 只看标签、不看台词 ⇒ 有口播的画面一旦被打上
+    /// 「空镜」就成为导出时的插片素材。判据在 `SemanticType.confirmationNeededForEmptyShot`，
+    /// 与 Inspector 展开态共用同一份，不在这里另写一遍。
+    private func toggleTypeFromMenu(_ type: SemanticType) {
+        if SemanticType.confirmationNeededForEmptyShot(on: segment, adding: type),
+           !emptyShotArmed {
+            ToastCenter.shared.show(SemanticType.emptyShotWarningMessage,
+                                    icon: "exclamationmark.triangle.fill", style: .warning)
+            emptyShotArmed = true
+            return
+        }
+        emptyShotArmed = false
+        viewModel.pin(segment)
+        viewModel.toggleSemanticType(for: segment, type: type)
     }
 
     /// 完整卡片
@@ -1243,8 +1305,49 @@ struct SegmentCard: View, Equatable {
                         segment.setSource(source)
                         try? modelContext.save()
                     } label: {
-                        Label(source.displayName,
-                              systemImage: segment.source == source ? "checkmark" : "")
+                        // ⚠️ 选中态**不许**用 `Label(_, systemImage: 命中 ? "checkmark" : "")` 表达：
+                        // 空串不是合法 symbol 名，而 Inspector 那颗菜单已逐列量出"12 项零勾选"。
+                        // 这里改成"命中才带图标"，未命中就是一颗纯文本项 —— 与本菜单里
+                        // `Label("复制台词", systemImage: "doc.on.doc")` 同一套已验证的渲染路径。
+                        if segment.source == source {
+                            Label(source.displayName, systemImage: "checkmark")
+                        } else {
+                            Text(source.displayName)
+                        }
+                    }
+                }
+            }
+
+            // 语义类型 / 位置（右键只做**单条**：右键落在哪张卡，目标就明确是它。
+            // 整批的心智模型归顶部多选工具条，混进同一颗菜单会让"我改的是 1 条还是 7 条"变成猜。）
+            Menu("标记类型") {
+                Section("语义类型") {
+                    ForEach(SemanticType.allCases) { type in
+                        Button {
+                            toggleTypeFromMenu(type)
+                        } label: {
+                            if segment.semanticTypes.contains(type) {
+                                Label(type.rawValue, systemImage: "checkmark")
+                            } else {
+                                Text(type.rawValue)
+                            }
+                        }
+                    }
+                }
+                Section("位置") {
+                    ForEach(PositionType.allCases) { position in
+                        Button {
+                            // 先 pin：右键不 pin，而改标签会触发 applyFilter ⇒ 网格重排把这张卡
+                            // 从指针下移走 ⇒ hover 清空 ⇒ Inspector 自己关掉。
+                            viewModel.pin(segment)
+                            viewModel.updatePositionType(for: segment, to: position)
+                        } label: {
+                            if segment.positionType == position {
+                                Label(position.rawValue, systemImage: "checkmark")
+                            } else {
+                                Text(position.rawValue)
+                            }
+                        }
                     }
                 }
             }
@@ -1380,6 +1483,10 @@ struct SegmentCard: View, Equatable {
                 SourceBadge(source: segment.source)
                     .help("素材来源：\(segment.source.displayName)（右键可改）")
             }
+            // 挂在 FlowLayout 外层：不许为了这句 help 引入裸 HStack ——
+            // `TagRowContainerGuardTests` 按**最内层具名宿主**判形状纪律，而本文件正是
+            // 它 `siteTotal == 8` 那三个宿主文件之一，动这里等于动基线。
+            .help("语义类型 / 位置：右键「标记类型」或右侧 Inspector「分类」可改")
         }
         .padding(8)
     }

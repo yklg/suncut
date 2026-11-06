@@ -109,12 +109,14 @@ extension MCPToolHandlers {
             } else if let remove = args.remove_semantic_types {
                 let types = try parseTypes(remove)
                 let remaining = seg.semanticTypes.filter { !types.contains($0) }
-                if remaining.isEmpty { note = "跳过：至少要保留 1 个语义类型" }
-                else { seg.semanticTypes = remaining }
+                if !SemanticType.meetsMinimum(remaining) {
+                    note = "跳过：\(SemanticType.keepAtLeastOneMessage)"
+                } else { seg.semanticTypes = remaining }
             } else if let set = args.set_semantic_types {
                 let types = try parseTypes(set)
-                if types.isEmpty { note = "跳过：至少要保留 1 个语义类型" }
-                else { seg.semanticTypes = types }
+                if !SemanticType.meetsMinimum(types) {
+                    note = "跳过：\(SemanticType.keepAtLeastOneMessage)"
+                } else { seg.semanticTypes = types }
             }
             if let position { seg.positionType = position }
             results.append([

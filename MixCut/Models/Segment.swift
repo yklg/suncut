@@ -58,6 +58,150 @@ enum SemanticType: String, Codable, CaseIterable, Identifiable {
     }
 }
 
+/// 「切换一颗语义标签」的结果。UI、批量、MCP 三方共用同一判据 —— 不许在调用方各写一遍
+/// "摘到空就拦"，那正是它此前散在三处的形状。
+enum SemanticToggleOutcome: Equatable {
+    case added
+    case removed
+    /// 摘掉它会破「至少保留 1 个语义类型」。**调用方必须出声**：
+    /// 今天 `SegmentLibraryViewModel.toggleSemanticType` 判掉之后什么都不做，
+    /// 用户体感就是「按钮点了没反应」（2026-11-06 症状②的成因之一）。
+    case refusedKeepAtLeastOne
+}
+
+extension SemanticType {
+
+    /// 「至少要保留 1 个语义类型」这句文案的唯一真源：界面 Toast 与 MCP 的 `note` 共用。
+    /// 之前它在 VM 与 MCP 两处各写一遍字面串，改文案会只改到一半。
+    static let keepAtLeastOneMessage = "至少要保留 1 个语义类型"
+
+    /// 手改「空镜」的代价提示（唯一文案真源，展开态 chip 与右键菜单共用）。
+    static let emptyShotWarningMessage = "这段有台词：标成空镜会被当成补差额的插片素材，再点一次确认"
+
+    /// 手改「空镜」的代价闸（**唯一判据**，界面与右键两处宿主共用，不许各写一遍）。
+    ///
+    /// 为什么要有这道闸：`Project.brollSupplies` 的入池条件只看标签、不看台词是否为空
+    /// （那颗属性自己的注释就写着「带台词的段插进来会让画面与别段口播撞叙事」）。
+    /// **摘掉**空镜标签是设计内的正解（人不认可机器判断 ⇒ 该段重新进入逐段重听队列，
+    /// 见 `SegmentTranscribeOutcome.shouldAutoRetake` 的说明）；**手动打上**则没有任何背书，
+    /// 会把一段真有口播的画面送进导出成片的插片池。所以只在"加上"这一侧拦。
+    static func confirmationNeededForEmptyShot(on segment: Segment, adding type: SemanticType) -> Bool {
+        type == .emptyShot
+            && !segment.semanticTypes.contains(.emptyShot)
+            && !segment.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    /// 最小值不变式（唯一判据）。
+    static func meetsMinimum(_ types: [SemanticType]) -> Bool { !types.isEmpty }
+
+    /// 保序去重。入参带重复是可达的（覆盖式写入、历史数据、AI 归一化追加），
+    /// 而旧写法用 `firstIndex` 只删第一个 ⇒ 用户点两次"取消"还剩一个。
+    static func deduplicated(_ types: [SemanticType]) -> [SemanticType] {
+        var seen = Set<SemanticType>()
+        var out: [SemanticType] = []
+        for t in types where seen.insert(t).inserted { out.append(t) }
+        return out
+    }
+
+    /// 切换 `target`：不在集里追加到末尾，在集里就摘掉；摘到空则拒绝。
+    ///
+    /// 顺序：不重排既有数组（数组是**插入序**，卡片标签行与收起态回显都按它排），
+    /// 新增项追加在末尾。编辑器 chip 遍历的 `allCases` 是另一件事，两者别混。
+    /// 拒绝时返回的也是去重后的原集合：入参本来就脏的话，顺带自愈一次。
+    static func toggled(_ current: [SemanticType],
+                        adding target: SemanticType)
+        -> (outcome: SemanticToggleOutcome, next: [SemanticType]) {
+        let base = deduplicated(current)
+        guard let idx = base.firstIndex(of: target) else {
+            return (.added, base + [target])
+        }
+        guard base.count > 1 else {
+            return (.refusedKeepAtLeastOne, base)
+        }
+        var next = base
+        next.remove(at: idx)
+        return (.removed, next)
+    }
+}
+
+/// 收起态「已命中」回显的宽度预算（纯算术）。
+///
+/// ⚠️ 这些数字是**几何常量 + 字宽估算**，不是像素实测：CJK 按 1 字 ≈ 1 em 估，
+/// 再用 `safetyMargin` 兜估算误差。之所以写成算术而不是直接写「最多 2 颗」，
+/// 是因为这颗面板的宽度契约（340 / 14 / 312）已被 `BoundaryAdjustLayout` 钉住 ——
+/// 面板宽度或字号一改，可见颗数必须跟着变，而不是留下一个当时刚好合适、
+/// 后来悄悄截断的魔数（那正是 `BoundaryAdjustLayoutTests` 拦的那一族）。
+enum CategoryEchoBudget {
+    /// Inspector 定宽（`SegmentVariantInspector` 的 `.frame(width:)`）
+    static let inspectorWidth: Double = 340
+    /// 面板内容左右内距（同 `BoundaryAdjustLayout.inspectorHorizontalPadding`）
+    static let horizontalPadding: Double = 14
+    /// 分区标题行的图标位宽与间距（`CollapsibleInspectorSection`）
+    static let iconWidth: Double = 14
+    static let iconGap: Double = 6
+    /// 「分类」两颗 12pt
+    static let titleWidth: Double = 24
+    /// 回显颗间距（同卡片标签行的 FlowLayout 口径）
+    static let chipGap: Double = 3
+    static let chevronWidth: Double = 9
+    /// 字宽估算的兜底余量
+    static let safetyMargin: Double = 12
+    /// `DesignTokens.Typography.micro` 字号
+    static let chipFontSize: Double = 10
+    /// `SemanticTypeTag` 的水平内距 7×2
+    static let semanticHPadding: Double = 14
+    /// `PositionTypeTag` 的水平内距 5×2
+    static let positionHPadding: Double = 10
+    /// 「+N」那颗的估宽
+    static let moreChipWidth: Double = 22
+
+    /// 回显能占的宽度：标题行总宽减去图标、标题、箭头与两份间距，再扣掉估算余量。
+    static var availableWidth: Double {
+        inspectorWidth - horizontalPadding * 2
+        - iconWidth - iconGap - titleWidth - iconGap - chevronWidth - safetyMargin
+    }
+
+    static func chipWidth(_ label: String, hPadding: Double = semanticHPadding) -> Double {
+        Double(label.count) * chipFontSize + hPadding
+    }
+
+    /// 回显颗数的**上限**（用户 2026-11-06 拍板「最多 2 颗 + +N」）。
+    ///
+    /// ⚠️ 这颗与下面的宽度预算是**两道独立的闸**，别混成一颗：
+    ///   · `maxVisibleLimit` 是产品决定 —— 面板再宽也不铺第 3 颗，避免标题行变拥挤；
+    ///   · `availableWidth` 是几何下限保护 —— 面板变窄或标签名变长时，可见数会**退到 1**，
+    ///     而不是把第 2 颗截断成半个词。
+    /// 按今天的名册与 340pt 面板算，宽度预算给的是 3（短名集合实测能给到 5），
+    /// 所以今天生效的是这颗上限；预算那条要等面板变窄或文案变长才咬得住 ——
+    /// 它不是装饰，`SemanticTagWriteRuleTests` 里有两条分别钉这两半边，摘掉任一道都会红。
+    static let maxVisibleLimit = 2
+
+    /// 按名册原序尽量多铺，装不下的折算成「+N」。
+    ///
+    /// 位置胶囊与「+N」胶囊**先留位再装语义**：多标签分镜很常见，若把位置挤没，
+    /// 就等于用新症状换掉旧症状。`overflow == 0` 时其实不画「+N」，
+    /// 这里仍然给它留位 —— 宁可少铺一颗，也不要"屏上刚好排满、加一颗标签就截断"。
+    ///
+    /// `width` / `limit` 开成入参不是为了配置化，是为了让上面那**两道独立的闸**都能被真码测到：
+    /// 默认值就是屏上那一档，测试则用极窄 / 极宽两端把"会退化到 1 而不是截断"这条性质钉住。
+    static func slice(_ current: [SemanticType],
+                      width: Double = availableWidth,
+                      limit: Int = maxVisibleLimit)
+        -> (shown: [SemanticType], overflow: Int) {
+        guard !current.isEmpty else { return ([], 0) }
+        var used = chipWidth("开头", hPadding: positionHPadding) + moreChipWidth
+        var shown: [SemanticType] = []
+        for type in current {
+            guard shown.count < limit else { break }
+            let cost = chipWidth(type.rawValue) + chipGap
+            guard used + cost <= width else { break }
+            used += cost
+            shown.append(type)
+        }
+        return (shown, current.count - shown.count)
+    }
+}
+
 /// 位置类型
 enum PositionType: String, Codable, CaseIterable, Identifiable {
     case opening = "开头"

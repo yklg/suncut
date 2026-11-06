@@ -315,7 +315,7 @@ func unrecognizedContainerIsTreatedAsTransparent() {
 
 // MARK: - 真实仓库
 
-@Test("扫描根与站点基线：MixCut/ 下 8 处调用点、零违规（登记数来自 grep，不是跑出来的）")
+@Test("扫描根与站点基线：MixCut/ 下 10 处调用点、零违规（数字来自实跑读数）")
 func realRepoSitesAreAllWrapped() {
     let files = tagRowFiles(under: "MixCut")
     if files.count < 50 {
@@ -329,13 +329,18 @@ func realRepoSitesAreAllWrapped() {
         for s in TagRowHostScan.sites(file: f, src: src) { counted[s.tag, default: 0] += 1 }
         all += TagRowHostScan.scan(file: f, src: src)
     }
-    #expect(counted["SemanticTypeTag"] == 4, "语义标签调用点数了变了：\(counted)")
-    #expect(counted["PositionTypeTag"] == 2)
+    // 2026-11-06 改基线 4→5 / 2→3：新增的两处是 Inspector「分类」分区收起态的回显宿主
+    // `CategoryEcho`。这是**有意的第二个显示宿主**（用户症状①「看不到已命中」的正解就是让
+    // 收起态也显示命中），不是把基线放宽。形状纪律由调用点各自带 `.lineLimit(1)` 承重
+    // —— 即下面 `all.isEmpty` 那一半仍然有牙齿：摘掉任一处 `.lineLimit` 这条就会红。
+    // 另：`CategoryWritePathGuardTests` 的 TC-TWR-07 逐点钉这件事，两道门不重复。
+    #expect(counted["SemanticTypeTag"] == 5, "语义标签调用点数了变了：\(counted)")
+    #expect(counted["PositionTypeTag"] == 3)
     #expect(counted["QualityBadge"] == 2)
     #expect(all.isEmpty, "标签行塌成竖排的那一形又回来了：\(all)")
 }
 
-@Test("反向对照：把 FlowLayout 全量改名成 HStack，今天这 8 处必须全部翻红")
+@Test("反向对照：把 FlowLayout 全量改名成 HStack，三个宿主文件里今天这 8 处必须全部翻红")
 func renamingTheHostFlipsEveryRealSiteRed() {
     let hosts = ["MixCut/Views/SegmentLibrary/SegmentLibraryView.swift",
                  "MixCut/Views/Shared/SegmentCardCompact.swift",

@@ -12,12 +12,13 @@ struct SegmentPropertiesContent: View {
     @Bindable var viewModel: SegmentLibraryViewModel
 
     var body: some View {
-        VStack(spacing: 8) {
+        // alignment 必须显式给：默认 .center 会让"内容左缩进 + 1px 导轨"没有确定基线。
+        VStack(alignment: .leading, spacing: 10) {
             TranscriptSection(segment: segment)
             BoundarySection(segment: segment, viewModel: viewModel)
             SubtitleSection(segment: segment)
             VoiceLockSection(segment: segment)
-            CategorySection(segment: segment)
+            CategorySection(segment: segment, viewModel: viewModel)
         }
     }
 }
@@ -100,19 +101,27 @@ private struct TranscriptSection: View {
 
 // MARK: - 折叠分区壳
 
-/// Inspector 折叠分区：标题行 + 内容；不适用的内容由调用方置灰而非隐藏（位置稳定）。
-struct CollapsibleInspectorSection<Content: View>: View {
+/// Inspector 折叠分区：标题行 + 可选的标题行回显槽 + 内容。
+/// 不适用的内容由调用方置灰而非隐藏（位置稳定）。
+///
+/// `Trailing` 这一槽的存在理由：分类标签的"已命中"必须在**收起态**也看得见，
+/// 而收起态只有标题行是常驻的。回显只读、不接手势 —— 点按仍归标题行，
+/// 否则父子两层会抢同一个 tap。
+struct CollapsibleInspectorSection<Content: View, Trailing: View>: View {
     let icon: String
     let title: String
     var defaultExpanded: Bool = true
+    @ViewBuilder let trailing: Trailing
     @ViewBuilder let content: Content
     @State private var expanded: Bool
 
     init(icon: String, title: String, defaultExpanded: Bool = true,
+         @ViewBuilder trailing: () -> Trailing,
          @ViewBuilder content: () -> Content) {
         self.icon = icon
         self.title = title
         self.defaultExpanded = defaultExpanded
+        self.trailing = trailing()
         self.content = content()
         _expanded = State(initialValue: defaultExpanded)
     }
@@ -126,7 +135,8 @@ struct CollapsibleInspectorSection<Content: View>: View {
                     .frame(width: 14)
                 Text(title)
                     .font(DesignTokens.Typography.labelStrong)
-                Spacer()
+                Spacer(minLength: 6)
+                trailing
                 Image(systemName: "chevron.up")
                     .font(.system(size: 8, weight: .semibold))
                     .foregroundStyle(.tertiary)
@@ -136,14 +146,23 @@ struct CollapsibleInspectorSection<Content: View>: View {
             .onTapGesture {
                 withAnimation(.easeOut(duration: 0.12)) { expanded.toggle() }
             }
-            .padding(.vertical, 7)
+            .padding(.vertical, 8)
 
             if expanded {
                 content
-                    .padding(.bottom, 9)
+                    .padding(.bottom, 10)
                     .transition(.opacity)
             }
         }
+    }
+}
+
+extension CollapsibleInspectorSection where Trailing == EmptyView {
+    /// 没有回显槽的调用点走这颗便利 init（泛型参数没法从默认实参推出来）。
+    init(icon: String, title: String, defaultExpanded: Bool = true,
+         @ViewBuilder content: () -> Content) {
+        self.init(icon: icon, title: title, defaultExpanded: defaultExpanded,
+                  trailing: { EmptyView() }, content: content)
     }
 }
 
@@ -399,54 +418,184 @@ private struct VoiceLockSection: View {
 
 // MARK: - ④ 分类
 
-private struct CategorySection: View {
+struct CategorySection: View {
     let segment: Segment
-    @Environment(\.modelContext) private var modelContext
+    @Bindable var viewModel: SegmentLibraryViewModel
 
     var body: some View {
         CollapsibleInspectorSection(icon: "tag", title: "分类",
-                                   defaultExpanded: false) {
-            Menu {
-                Section("语义类型") {
-                    ForEach(SemanticType.allCases) { type in
-                        Button {
-                            var types = segment.semanticTypes
-                            if let idx = types.firstIndex(of: type) {
-                                types.remove(at: idx)
-                            } else {
-                                types.append(type)
-                            }
-                            segment.semanticTypes = types
-                            try? modelContext.save()
-                        } label: {
-                            Label(type.rawValue,
-                                  systemImage: segment.semanticTypes.contains(type) ? "checkmark" : "")
-                        }
-                    }
-                }
-                Section("位置") {
-                    ForEach(PositionType.allCases) { type in
-                        Button {
-                            segment.positionType = type
-                            try? modelContext.save()
-                        } label: {
-                            Label(type.rawValue,
-                                  systemImage: segment.positionType == type ? "checkmark" : "")
-                        }
-                    }
-                }
-            } label: {
-                HStack(spacing: 5) {
-                    Text("语义 / 位置")
-                        .font(DesignTokens.Typography.microRegular)
-                    Spacer()
-                    Image(systemName: "slider.horizontal.3")
-                        .font(.system(size: 9))
-                }
-                .foregroundStyle(.secondary)
-            }
-            .menuStyle(.borderlessButton)
+                                    defaultExpanded: false,
+                                    trailing: { CategoryEcho(segment: segment) }) {
+            SegmentCategoryEditor(segment: segment, viewModel: viewModel)
         }
+    }
+}
+
+/// 收起态的「已命中」回显：铺几颗由 `CategoryEchoBudget` 的算术决定，其余折成「+N」。
+///
+/// ⚠️ 两颗标签都住在标题行那个刚性 `HStack` 里（不是 FlowLayout），所以**调用点各自带
+/// `.lineLimit(1)`** —— 这是 `TagRowContainerGuardTests` 认的第二半边逃生口；摘掉它就会在
+/// 窄容器里压成一字一行的竖排（那个坑已在卡片、列表行、抽屉上各复发过一次）。
+/// "看不全"由「+N」补齐，不靠截断。
+struct CategoryEcho: View {
+    let segment: Segment
+
+    var body: some View {
+        let slice = CategoryEchoBudget.slice(segment.semanticTypes)
+        HStack(spacing: 3) {
+            if slice.shown.isEmpty {
+                // 空态也得有读数：没有胶囊时用户分不清"这段没标签"和"回显没渲染出来"。
+                // 措辞用「无标签」不用「未分类」—— 后者是顶部筛选条的**素材来源**维度，会撞车。
+                echoChip("无标签", emphasis: false)
+            } else {
+                ForEach(slice.shown) { type in
+                    SemanticTypeTag(type: type).lineLimit(1)
+                }
+                if slice.overflow > 0 {
+                    echoChip("+\(slice.overflow)", emphasis: true)
+                }
+            }
+            PositionTypeTag(type: segment.positionType).lineLimit(1)
+        }
+    }
+
+    private func echoChip(_ text: String, emphasis: Bool) -> some View {
+        Text(text)
+            .font(emphasis ? DesignTokens.Typography.microBold : DesignTokens.Typography.micro)
+            // 两支都得是 Color：`Color.tertiary` 不存在，而三元里混 ShapeStyle 会类型不洽。
+            .foregroundStyle(emphasis ? Color.secondary : Color.secondary.opacity(0.65))
+            .lineLimit(1)
+            .padding(.horizontal, 5)
+            .padding(.vertical, 2)
+            .background(.secondary.opacity(DesignTokens.Palette.Alpha.subtle))
+            .clipShape(Capsule())
+    }
+}
+
+/// 展开态的分类编辑器：**行内 chip 面板**，不是下拉菜单。
+///
+/// 为什么把那颗 `Menu` 整颗换掉（三个症状在这里一次收口，不是换皮）：
+/// ① 菜单项的选中态原先只靠 `Label(systemImage: 命中 ? "checkmark" : "")` 表达 —— macOS 上
+///    `Menu` 里的 `Button` 没有选择语义，空串还不是合法 symbol 名，逐列量过用户截图：12 项零勾选。
+/// ② 这颗分区是 ScrollView 的最后一行，而 `SwiftUI.Menu` 没有指定弹出方向的 API ⇒
+///    弹层被窗口下沿裁掉那一格在菜单上无解。
+/// ③ 菜单 label 行与分区标题行同形（都是「文字 + 图标 + 右箭头」），只差 2pt 字号 ⇒
+///    屏幕上「保留原声 / 分类 / 语义·位置」看着像三个平级功能，就是用户说的「挤」。
+/// 行内面板让命中态**不用点开就可见**，层级改由缩进 + 导轨承担。
+struct SegmentCategoryEditor: View {
+    let segment: Segment
+    @Bindable var viewModel: SegmentLibraryViewModel
+    /// 「空镜」那颗的二次确认臂。宿主整棵子树以 `.id(segment.id)` 绑定身份
+    /// （见 `SegmentLibraryView` 的实体身份契约），所以切实镜会自动复位，不用手动清。
+    @State private var emptyShotArmed = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            groupLabel("语义类型 · 可多选（再点取消）")
+            FlowLayout(spacing: 4) {
+                ForEach(SemanticType.allCases) { type in
+                    SelectableChip(label: type.rawValue,
+                                   color: SemanticTypeTag.color(for: type),
+                                   isOn: segment.semanticTypes.contains(type)) {
+                        toggle(type)
+                    }
+                }
+            }
+            groupLabel("位置 · 单选（点即切换）")
+            FlowLayout(spacing: 4) {
+                ForEach(PositionType.allCases) { position in
+                    PositionChoiceChip(label: position.rawValue,
+                                       isOn: segment.positionType == position) {
+                        viewModel.updatePositionType(for: segment, to: position)
+                    }
+                }
+            }
+        }
+        // 层级交给几何：左缩进 + 1px 导轨把"这块属于上面那颗标题"写成空间包含关系。
+        // ⚠️ 只作用于本分区内部，**不做全局缩进** —— 全局 +20 会让边界微调的实际可用宽
+        // 从 312 掉到 292，而 `BoundaryAdjustLayout` 的契约仍报 312 ⇒ 判据绿、屏上塌。
+        .padding(.leading, 11)
+        .overlay(alignment: .leading) {
+            Rectangle()
+                .fill(Color(nsColor: .separatorColor).opacity(0.35))
+                .frame(width: 1)
+                .padding(.vertical, 2)
+        }
+    }
+
+    /// 子标签：**不放图标、不放箭头**。「可折叠」的签名重新只属于分区标题行。
+    private func groupLabel(_ text: String) -> some View {
+        Text(text)
+            .font(DesignTokens.Typography.captionStrong)
+            .foregroundStyle(.secondary)
+    }
+
+    private func toggle(_ type: SemanticType) {
+        if SemanticType.confirmationNeededForEmptyShot(on: segment, adding: type),
+           !emptyShotArmed {
+            ToastCenter.shared.show(SemanticType.emptyShotWarningMessage,
+                                    icon: "exclamationmark.triangle.fill", style: .warning)
+            emptyShotArmed = true
+            return
+        }
+        emptyShotArmed = false
+        viewModel.toggleSemanticType(for: segment, type: type)
+    }
+}
+
+/// 可多选的标签 chip。视觉口径取自 `FilterChip` 的**选中态**（加粗 + 0.15 底 + 0.4 描边）。
+///
+/// ⚠️ 刻意**不改写 `FilterChip` 来复用**：那颗正被顶部 12 颗语义筛选 chip 与来源筛选条挂着，
+/// 而它「计数为 0 就减淡去饱和」是筛选条的既有产品语义 —— 标签编辑没有 count 这个概念，
+/// 合一颗会把它一起拖下水。重复的只有几行样式常量，不构成"同一行为写两遍"。
+struct SelectableChip: View {
+    let label: String
+    let color: Color
+    let isOn: Bool
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Text(label)
+                .font(.system(size: 11, weight: isOn ? .semibold : .medium))
+                .padding(.horizontal, 9)
+                .padding(.vertical, 5)
+                .background(color.opacity(isOn ? 0.15 : 0.06))
+                .foregroundStyle(isOn ? color : color.opacity(0.85))
+                .clipShape(Capsule())
+                .overlay(Capsule().stroke(color.opacity(isOn ? 0.4 : 0.15), lineWidth: 1))
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+/// 位置那颗：中性灰胶囊 + 左侧打点。与语义的"色胶囊点亮"是两套可分辨的语言 ——
+/// 多值再点一次是**取消**、单值再点一次是**换一颗**，后果不同就得长得不一样。
+/// 这里 `circle` / `checkmark` 都是合法 symbol 名，与被量测证伪的"空串当图标"不是一回事。
+struct PositionChoiceChip: View {
+    let label: String
+    let isOn: Bool
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 4) {
+                Image(systemName: isOn ? "checkmark" : "circle")
+                    .font(.system(size: 8))
+                    .foregroundStyle(isOn ? Color.primary.opacity(0.7)
+                                          : Color.secondary.opacity(0.45))
+                Text(label)
+                    .font(.system(size: 11, weight: isOn ? .semibold : .medium))
+            }
+            .padding(.horizontal, 9)
+            .padding(.vertical, 5)
+            .background(Color.secondary.opacity(isOn ? 0.22 : 0.10))
+            .foregroundStyle(isOn ? Color.primary : Color.secondary)
+            .clipShape(Capsule())
+            .overlay(Capsule().stroke(Color.secondary.opacity(isOn ? 0.40 : 0.15),
+                                      lineWidth: 1))
+        }
+        .buttonStyle(.plain)
     }
 }
 

@@ -134,13 +134,20 @@ struct CardSlimmingGuardTests {
 
     // MARK: 唯一定义
 
-    @Test("InlineSwitch / InlineTapLabel / SegmentBatchActions 全项目各仅 1 处定义")
+    @Test("InlineSwitch / InlineTapLabel / SegmentBatchActions 与分类区那三颗 chip 宿主，全项目各仅 1 处定义")
     func singleDefinitions() {
         let sources = allSwiftSources(in: mixCutDirectory)
         let definitions = [
             "struct InlineSwitch",
             "struct InlineTapLabel",
-            "enum SegmentBatchActions"
+            "enum SegmentBatchActions",
+            // 2026-11-06 新增：分类标签的回显 / 编辑 / chip 三颗宿主。
+            // 登记理由与 InlineSwitch 同一条 —— 这类"看起来谁都能再画一个"的组件，
+            // 第二份一长出来，选中态与形状纪律就会开始各写一遍。
+            "struct CategoryEcho",
+            "struct SegmentCategoryEditor",
+            "struct SelectableChip",
+            "struct PositionChoiceChip",
         ]
         for def in definitions {
             let count = sources.reduce(0) { $0 + ($1.contains(def) ? 1 : 0) }

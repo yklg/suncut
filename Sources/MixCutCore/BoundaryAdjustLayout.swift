@@ -36,7 +36,12 @@ public enum BoundaryAdjustLayout {
 
     /// 两个时间组之间的间隔（本行为纵向布局时该项仅作契约保留）
     public static let groupGap: Double = 2
-    /// ellipsis Menu 宽（菜单已迁入分类分区，宽度保留给分区内 Menu）
+    /// 行尾预留宽。
+    ///
+    /// ⚠️ 名字里的 "Menu" 已经名不副实：它原本给的是 ellipsis 菜单的占位，而那颗菜单
+    /// 随「分类」分区改成行内 chip 面板已经整颗移除（2026-11-06）。但这颗值**仍进
+    /// `minimumRowWidth` 的求和**（见下方），并被 `BoundaryAdjustLayoutTests` 钉成 20 ⇒
+    /// 数值与求和口径都不许动，动的代价是整行宽度契约重算。留着它等于给行尾留一处余量。
     public static let menuWidth: Double = 20
 
     // MARK: 有序真源与派生
