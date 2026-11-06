@@ -150,8 +150,16 @@ struct EmptyLensBackfillTests {
         let src = try String(contentsOf: root.appendingPathComponent(
             "MixCut/Views/SegmentLibrary/SegmentPropertiesSection.swift"), encoding: .utf8)
         let body = src.components(separatedBy: "static func emptyLensBackfillHits")[1]
-            // 截到**下一颗既有函数**之前（切 "// MARK:" 会一路吃到文件末尾，把无关代码算进补标这颗）
-            .components(separatedBy: "/// 把当前分镜的字幕字号应用到")[0]
+            // 截到**锚点之后真实存在的下一颗函数**之前。
+            // ⚠️ 这里原来写的终止串是「/// 把当前分镜的字幕字号应用到」，而那颗函数在锚点
+            // **之前**（:608 vs 锚点 :649）⇒ 终止串在切片里根本不出现，`[0]` 一路吃到文件末尾，
+            // 于是这条"只扫补标那颗"的守卫实际扫的是整个文件尾。2026-11-06 换成 :691 的
+            // `applyMaskToAllSegments`（确实在锚点之后），并由下面第③腿钉住切片不再是文件尾。
+            .components(separatedBy: "/// 把当前分镜的遮挡设置应用到")[0]
+        // ③ 切片本身不许退化成"整个文件尾" —— 那等于把扫描面悄悄放宽到全文件。
+        #expect(body.count < src.count / 2,
+                "BFK-6 的切片吃到了文件尾（body \(body.count) / src \(src.count)）⇒ 终止串又失效了")
+
         // ① 不许出现任何重听/重新分析的入口：补标的承诺就是"不花钱、不重听"
         for forbidden in ["transcribe", "SegmentTranscriber", "analyzeLocally", "reidentify"] {
             #expect(!body.contains(forbidden),
