@@ -75,6 +75,16 @@ extension SemanticType {
     /// 之前它在 VM 与 MCP 两处各写一遍字面串，改文案会只改到一半。
     static let keepAtLeastOneMessage = "至少要保留 1 个语义类型"
 
+    /// AI 可指派标签 —— **从 Core 的 `SemanticRoster.aiAssignable` 派生**，不是第二份名册。
+    ///
+    /// 方向是 Core → App：`AgentToolCatalog` / `SlotRetrievalIntent` 住在 Core，看不见这颗枚举，
+    /// 所以唯一真源只能落在那边（见 `EmptyLensPolicy.swift` 里的 `SemanticRoster` 注释）。
+    /// `SemanticTagWriteRuleTests` 的 SR-7 钉的是这条映射**无损**：颗数相等、每颗都解析得动、
+    /// 且差集恰好是机器标签「空镜」。任何一边漂了都会红。
+    static var aiAssignableTypes: [SemanticType] {
+        SemanticRoster.aiAssignable.compactMap(SemanticType.init(rawValue:))
+    }
+
     /// 手改「空镜」的代价提示（唯一文案真源，展开态 chip 与右键菜单共用）。
     static let emptyShotWarningMessage = "这段有台词：标成空镜会被当成补差额的插片素材，再点一次确认"
 

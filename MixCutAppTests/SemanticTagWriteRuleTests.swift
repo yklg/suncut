@@ -245,4 +245,24 @@ struct SemanticTagWriteRuleTests {
         #expect(!SemanticType.confirmationNeededForEmptyShot(on: blank, adding: .emptyShot),
                 "纯空白台词被当成有台词 ⇒ 给正当路径加了门槛")
     }
+
+    @Test("SR-7 App 侧派生无损：aiAssignableTypes 与枚举的差集恰好是那颗机器标签")
+    func aiAssignableTypesDerivesLosslesslyFromTheCoreRoster() {
+        // Core → App 这条派生链只有在"每颗名字都解析得动"时才成立。
+        // 用 compactMap 静默丢掉一颗的话，屏上会少一类而编译不报错 —— 这条就是拦这个。
+        let derived = SemanticType.aiAssignableTypes
+        #expect(derived.count == SemanticRoster.aiAssignable.count,
+                "名册 \(SemanticRoster.aiAssignable.count) 颗只映射出 \(derived.count) 颗 ⇒ 有名字对不上枚举，compactMap 把它悄悄丢了（多半是改了 rawValue 没改 Core 那侧）")
+        #expect(Set(derived).count == derived.count, "派生结果有重复")
+        #expect(!derived.contains(.emptyShot), "机器标签出现在 AI 可指派集里 ⇒ 违反 ETB-2 的排除前提")
+        // 差集必须**恰好**是那一颗：将来加第 13 类时这条会红，逼一次"它归谁写"的判断。
+        let missing = Set(SemanticType.allCases).subtracting(derived)
+        #expect(missing == Set([SemanticType.emptyShot]),
+                "allCases 与 aiAssignableTypes 的差集是 \(missing.map(\.rawValue))，应为仅「空镜」")
+        // 每颗都要能被 `SegmentCommitter` 归一化的第一道（精确 rawValue 匹配）接住。
+        for type in derived {
+            #expect(SemanticType(rawValue: type.rawValue) == type,
+                    "\(type.rawValue) 的 rawValue 反查失败 ⇒ MCP/prompt 回传会降级成 .transition")
+        }
+    }
 }

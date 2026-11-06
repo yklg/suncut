@@ -130,7 +130,12 @@ public enum AgentToolCatalog {
             annotationsJSON: #"{"readOnlyHint":false,"destructiveHint":true}"#),
         MCPToolDefinition(
             name: "update_segment_tags",
-            description: "批量修改分镜标签。add/remove/set_semantic_types 三选一（11 种：噱头引入/痛点/产品方案/效果展示/信任背书/价格对比/活动福利/行动号召/产品定位/产品使用教育/过渡），可同时设 position_type（开头/中间/结尾）。每个分镜至少保留 1 个语义类型",
+            // 名册从 `SemanticRoster` 派生，不再在这里硬编：这份描述曾经漂成 11 类
+            // 而枚举已经有 12 颗（多出来那颗是机器专属标签，见 SemanticRoster 的排除理由），
+            // Agent 看到的就是过时清单。
+            // ⚠️ 本文件在 `EmptyLensTagBoundaryTests.tagBearingFiles` 名单里，那颗守卫的判据是
+            // "出现机器标签那两个字就算违规" —— 所以这里连解释都不许写出那个名字。
+            description: "批量修改分镜标签。add/remove/set_semantic_types 三选一（\(SemanticRoster.aiAssignable.count) 种：\(SemanticRoster.slashList)），可同时设 position_type（\(SemanticRoster.positionSlashList)）。每个分镜至少保留 1 个语义类型",
             inputSchemaJSON: #"{"type":"object","properties":{"project_id":{"type":"string","description":"项目 UUID（与 video_no/segment_nos 配合使用）"},"video_no":{"type":"integer","description":"视频编号：项目内按导入顺序 1 起"},"segment_nos":{"type":"array","items":{"type":"integer"},"description":"分镜编号数组：视频内按时间顺序 1 起，如 [3,4,5]"},"segment_ids":{"type":"array","items":{"type":"string"},"description":"分镜 UUID 数组（与编号方式二选一）"},"add_semantic_types":{"type":"array","items":{"type":"string"},"description":"要添加的语义类型"},"remove_semantic_types":{"type":"array","items":{"type":"string"},"description":"要移除的语义类型"},"set_semantic_types":{"type":"array","items":{"type":"string"},"description":"直接替换为这组语义类型"},"position_type":{"type":"string","description":"位置：开头/中间/结尾"}},"required":[]}"#,
             annotationsJSON: #"{"readOnlyHint":false,"destructiveHint":false}"#),
         MCPToolDefinition(

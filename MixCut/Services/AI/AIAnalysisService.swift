@@ -393,8 +393,8 @@ actor AIAnalysisService {
 
         \(segmentTypesDefinition)
 
-        ⚠️ types 是一个数组，每个元素必须是以下 11 个字符串之一（精确匹配）：
-        "噱头引入"、"痛点"、"产品方案"、"效果展示"、"信任背书"、"价格对比"、"活动福利"、"行动号召"、"产品定位"、"产品使用教育"、"过渡"
+        ⚠️ types 是一个数组，每个元素必须是以下 \(SemanticRoster.aiAssignable.count) 个字符串之一（精确匹配）：
+        \(SemanticRoster.promptList)
 
         一个片段可以同时具有多个语义类型。例如一段既在展示效果又在做信任背书，则 types: ["效果展示", "信任背书"]。
         至少标注 1 个类型，通常 1-2 个，最多 3 个。第一个是主类型。

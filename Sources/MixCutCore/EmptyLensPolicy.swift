@@ -396,3 +396,49 @@ public enum EmptyLensPolicy {
         gateOpen && v.isEmptyLens
     }
 }
+
+
+// MARK: - AI 可指派语义标签的唯一名册
+
+/// AI 面（prompt 正文、MCP 工具描述、归一化表）允许出现的语义标签名册 —— **唯一真源**。
+///
+/// ## 为什么住在 Core、而且是字符串
+///
+/// `AgentToolCatalog` 与 `SlotRetrievalIntent` 都在 `Sources/MixCutCore`，**看不见** App 层的
+/// `SemanticType` 枚举；而 Core 侧本来就用 rawValue 字符串表达标签（见 `NarrativeModels`）。
+/// 所以派生方向只能是 Core → App：App 层的 `SemanticType.aiAssignableTypes` 从这里生成。
+/// 反过来（把枚举抬进 Core）要动 schema 与 36 条手工 pbxproj 引用，不是这一轮该付的账。
+///
+/// ## 为什么刻意不含「空镜」
+///
+/// 「空镜」是机器结论（本文件 `EmptyLensPolicy` 是唯一写入方）：模型只拿到文本，看幻觉文本
+/// 是看不出静音的，让它可选等于给它一条凭文本编造静音结论的口子。`EmptyLensTagBoundaryTests`
+/// 的 ETB-2 钉的就是这件事。
+///
+/// ## ⚠️ 这颗文件不许加进 `EmptyLensTagBoundaryTests.tagBearingFiles`
+///
+/// 那颗守卫的判据是"文本里出现『空镜』二字就算违规"，而本文件（和这颗名册的注释）必须写出
+/// 那颗标签的名字才能解释**为什么排除它**。加进去会让 ETB-2 当场红，且红的是解释而不是违规。
+/// 名册的完整性由 `SemanticRosterTests` 的 SR-1~SR-4 负责，不归 ETB 管。
+public enum SemanticRoster {
+
+    /// 11 类 AI 可指派标签。顺序沿用历史名册，改顺序会改 prompt 里的呈现次序。
+    public static let aiAssignable: [String] = [
+        "噱头引入", "痛点", "产品方案", "效果展示", "信任背书", "价格对比",
+        "活动福利", "行动号召", "产品定位", "产品使用教育", "过渡",
+    ]
+
+    /// 位置名册（与 App 层 `PositionType` 的 rawValue 一一对应）。
+    public static let positions: [String] = ["开头", "中间", "结尾"]
+
+    /// 给 MCP 工具描述用的斜杠分隔串。
+    public static var slashList: String { aiAssignable.joined(separator: "/") }
+
+    /// 给 prompt 正文用的带引号顿号串：`"噱头引入"、"痛点"…`
+    public static var promptList: String {
+        aiAssignable.map { "\"\($0)\"" }.joined(separator: "、")
+    }
+
+    /// 位置的同一条串，给 MCP 描述用。
+    public static var positionSlashList: String { positions.joined(separator: "/") }
+}
