@@ -1658,7 +1658,7 @@
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
-				MARKETING_VERSION = 0.11.0;
+				MARKETING_VERSION = 0.12.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.suncut.app;
 				PRODUCT_NAME = SunCut;
 				SWIFT_EMIT_LOC_STRINGS = YES;
@@ -1841,7 +1841,7 @@
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
-				MARKETING_VERSION = 0.11.0;
+				MARKETING_VERSION = 0.12.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.suncut.app;
 				PRODUCT_NAME = SunCut;
 				SWIFT_EMIT_LOC_STRINGS = YES;
