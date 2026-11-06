@@ -788,6 +788,10 @@ final class ImportViewModel {
         clearsExistingSegments: Bool
     ) async throws -> SegmentRebuildOutcome {
         phase = .analyzing
+        // 能量层的**原始证据**必须在这条链上落库：`applyEmptyLensGate` 当场用的是内存里的
+        // silencePeriods，而插片池、旧库补标、将来的阈值复核都要在**没有这份内存数据**的时刻
+        // 重算同一件事。只存区间不存结论 ⇒ 阈值改了也不必重跑探测。
+        video.setSilenceWindows(localAnalysis.silencePeriods.map { SilenceWindow(start: $0.start, end: $0.end) })
         let planConfig = SegmentationPlanSettings.current
 
         // 整片保留必须问在调模型之前 —— 它省的就是这次付费调用。

@@ -14,6 +14,8 @@ struct SegmentLibraryView: View {
     /// 旧库补标「空镜」：先干跑报数，确认后才落库（防"预览一个数、库里另一个数"）
     @State private var showEmptyLensBackfillConfirm = false
     @State private var emptyLensBackfillCount = 0
+    /// 能量层补标（跑一次本地 silencedetect）的第二条入口：代价与名单层不同，因此分开确认
+    @State private var showEmptyLensEnergyConfirm = false
     @State private var showArrangeSheet = false
     @State private var dubVM = DubbingViewModel()
     /// 待确认停止的视频作业（标题行/检查器/浮层三个停止入口共用一个确认弹窗）
@@ -393,6 +395,25 @@ struct SegmentLibraryView: View {
             .controlSize(.small)
             .help("按已存的段文本判「whisper 套话名单」，把没人说话的老素材补标成空镜（不重听、5 秒可撤销）")
 
+            // 能量层补标：只跑本地 silencedetect（不跑 whisper ⇒ 不花钱、不动台词）。
+            // 名单层够不着的那一类（纯音乐被幻觉成一句非套话）只有这条路能捞出来，
+            // 而捞出来之后还要读侧闸认它（三道证据：空文本 / 名单命中 / 静音占比定罪）才进得了池。
+            Button {
+                showEmptyLensEnergyConfirm = true
+            } label: {
+                HStack(spacing: DesignTokens.Spacing.tight) {
+                    Image(systemName: "waveform")
+                        .font(DesignTokens.Typography.captionEmphasis)
+                    Text("补标空镜（静音探测）")
+                        .font(DesignTokens.Typography.labelEmphasis)
+                }
+                .padding(.horizontal, 10)
+                .padding(.vertical, 5)
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.small)
+            .help("对未探测过的视频各跑一次本地静音探测（不花钱、不改台词），再按有声占比把没人说话的段补标成空镜")
+
             Button {
                 showArrangeSheet = true
             } label: {
@@ -458,6 +479,16 @@ struct SegmentLibraryView: View {
             }
         } message: {
             Text("将删除 \(viewModel.selectedSegmentIDs.count) 个分镜。删除后 5 秒内可点「撤销」找回。")
+        }
+        .alert("确认静音探测补标", isPresented: $showEmptyLensEnergyConfirm) {
+            Button("开始探测并补标") {
+                let segments = viewModel.segments
+                Task { await SegmentBatchActions.applyEmptyLensEnergyBackfill(in: segments, in: modelContext) }
+            }
+            Button("取消", role: .cancel) {}
+        } message: {
+            Text("将对本项目未探测过的视频各跑一次本地 silencedetect（只解音轨，不跑 whisper ⇒ 不花钱、不改台词），"
+                 + "再把「窗口内基本没人说话」的分镜补标成空镜。标签执行后 5 秒内可撤销；探测到的静音区间会留下，下次不再重跑。")
         }
         .alert("确认补标空镜", isPresented: $showEmptyLensBackfillConfirm) {
             Button("补标 \(emptyLensBackfillCount) 个") {

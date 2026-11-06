@@ -157,6 +157,43 @@ struct BrollFillPlanTests {
     }
 }
 
+@Suite("BF · 入池的第三道证据（静音占比）")
+struct BrollSupplyGateTests {
+
+    @Test("BF-25 非套话、文本非空的段：静音占比定罪才入池")
+    func energyEvidenceAdmitsNonPhraseText() {
+        // 纯音乐被 whisper 认成「Zither Harp」那一类：文本非空、名单也不命中
+        let text = "Zither Harp"
+        #expect(!BrollPolicy.acceptsAsSupply(text: text, taggedAsEmptyShot: true),
+                "没给证据时本该拒（这是并行线那道读侧闸的既有口径，不能被新功能悄悄放宽）")
+        #expect(BrollPolicy.acceptsAsSupply(text: text, taggedAsEmptyShot: true, voicedFraction: 0.05),
+                "给了'窗口内 95% 是静音'的证据还拒 ⇒ 能量层补标的段进不了池，补了等于没补")
+    }
+
+    @Test("BF-26 反向对照：证据说全程在响 ⇒ 仍不入池（手改标签的口子没放宽）")
+    func loudEvidenceStillRejected() {
+        #expect(!BrollPolicy.acceptsAsSupply(text: "秋冬一到嘴就干", taggedAsEmptyShot: true,
+                                            voicedFraction: 0.98),
+                "有声音证据说这段一直在响，还让它入池 ⇒ 池子重新变成手改标签就能进")
+        #expect(!BrollPolicy.acceptsAsSupply(text: "秋冬一到嘴就干", taggedAsEmptyShot: false,
+                                            voicedFraction: 0.0),
+                "没打「空镜」标签 ⇒ 再安静的画面也不能自动当插片用（标签是唯一的入口）")
+    }
+
+    @Test("BF-27 阈值只有一颗：入池闸与拦打标用同一个数")
+    func thresholdIsSharedWithTheTaggingGate() {
+        let atCeil = EmptyLensPolicy.voicedFractionCeil
+        #expect(BrollPolicy.acceptsAsSupply(text: "Zither Harp", taggedAsEmptyShot: true,
+                                           voicedFraction: atCeil),
+                "闸与池在阈值边界上必须同判（一个收一个拒 ⇒ 标签打了、池子却不要）")
+        #expect(!BrollPolicy.acceptsAsSupply(text: "Zither Harp", taggedAsEmptyShot: true,
+                                             voicedFraction: atCeil + 0.001))
+        #expect(EmptyLensPolicy.energyConvicts(voicedFraction: atCeil + 0.001) == false)
+        #expect(EmptyLensPolicy.energyConvicts(voicedFraction: nil) == false,
+                "没探测过 ≠ 全程静音：nil 必须判不成立")
+    }
+}
+
 @Suite("BF · 生成侧的空镜预算（跨槽占用账）")
 struct SchemeBrollBudgetTests {
 

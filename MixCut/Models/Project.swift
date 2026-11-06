@@ -90,12 +90,24 @@ final class Project: Identifiable {
     /// UI 那颗二次确认（`SemanticType.confirmationNeededForEmptyShot`）从此降级为**事前告知**，
     /// 不再是唯一防线。
     var brollSupplies: [BrollSupply] {
-        displayableSegments.compactMap { seg in
-            guard BrollPolicy.acceptsAsSupply(text: seg.text,
-                                              taggedAsEmptyShot: seg.semanticTypes.contains(.emptyShot))
-            else { return nil }
+        // 静音区间**按视频解码一次**再逐段用：这颗属性在渲染路径上被读，
+        // 逐段解 JSON 就是 `effectivePicture` 那条性能注释警告过的形态（每秒 20 次 stat 的同类错）。
+        // nil = 这个视频没探测过；空数组 = 探测过且全程有声。两件事不许合并 ⇒ 值用 Optional 分档。
+        var windowsByVideo: [ObjectIdentifier: [SilenceWindow]?] = [:]
+        return displayableSegments.compactMap { seg in
+            guard seg.semanticTypes.contains(.emptyShot), let video = seg.video else { return nil }
             let ep = seg.effectivePicture
             guard !ep.videoPath.isEmpty, ep.endFrame > ep.startFrame, ep.fps > 0 else { return nil }
+            let key = ObjectIdentifier(video)
+            if windowsByVideo[key] == nil { windowsByVideo[key] = video.silenceWindows }
+            let windows = windowsByVideo[key] ?? nil
+            let voiced = windows.map {
+                EmptyLensPolicy.voicedFraction(windowStart: seg.startTime,
+                                               windowEnd: seg.endTime, silentWindows: $0)
+            } ?? nil
+            guard BrollPolicy.acceptsAsSupply(text: seg.text, taggedAsEmptyShot: true,
+                                              voicedFraction: voiced)
+            else { return nil }
             return BrollSupply(label: seg.segmentIndex, videoPath: ep.videoPath,
                                startFrame: ep.startFrame, endFrame: ep.endFrame,
                                fps: ep.fps, sourceKey: seg.pictureSourceKey)

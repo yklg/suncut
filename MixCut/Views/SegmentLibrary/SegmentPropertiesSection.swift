@@ -604,6 +604,63 @@ struct PositionChoiceChip: View {
 @MainActor
 enum SegmentBatchActions {
 
+    /// 能量层补标：**只跑 silencedetect**（本地 ffmpeg，不跑 whisper ⇒ 不花钱、不改台词）。
+    ///
+    /// 为什么必须单独一条：能量层判出的空镜段，文本常常**非空也不是套话**
+    /// （whisper 在纯音乐上幻觉出「Zither Harp」那类）。只认名单层的那颗补标够不着它，
+    /// 而它恰恰是最该拿来垫差间的画面 —— 补了标签却进不了池（读侧闸要三道证据之一）就是白补。
+    ///
+    /// 两道判断各用一颗：定罪阈值走 `EmptyLensPolicy.energyConvicts`（与拦打标同一个数），
+    /// 而"要不要写标签"仍归 `shouldSuppressTagging`（关闸的日子里这条腿也不许动标签）。
+    /// 返回 (新探测的视频数, 新打标的段数)。撤销只回滚标签；探测到的**证据留着**
+    ///（证据没有"错"可言，下次不必再跑一遍 ffmpeg）。
+    static func applyEmptyLensEnergyBackfill(in segments: [Segment], in context: ModelContext) async
+        -> (probed: Int, tagged: Int) {
+        let scene = SceneDetectionService()
+        var byVideo: [ObjectIdentifier: Video] = [:]
+        for seg in segments { if let v = seg.video { byVideo[ObjectIdentifier(v)] = v } }
+
+        // 一个视频只探测一次；已有证据的直接复用（含"探测过且全程有声"那份空数组 —— 与没探测过是两件事）
+        var probed = 0
+        for video in byVideo.values.sorted(by: { $0.name < $1.name }) where video.silenceWindowsRaw == nil {
+            guard !video.localPath.isEmpty else { continue }
+            if let found = try? await scene.detectSilence(in: video.localPath) {
+                video.setSilenceWindows(found.map { SilenceWindow(start: $0.start, end: $0.end) })
+                probed += 1
+            }
+        }
+        context.safeSave()
+
+        var targets: [Segment] = []
+        for seg in segments where !seg.semanticTypes.contains(.emptyShot) {
+            guard let video = seg.video, let windows = video.silenceWindows else { continue }
+            let voiced = EmptyLensPolicy.voicedFraction(windowStart: seg.startTime,
+                                                        windowEnd: seg.endTime, silentWindows: windows)
+            if EmptyLensPolicy.energyConvicts(voicedFraction: voiced),
+               EmptyLensPolicy.shouldSuppressTagging(.emptyLens(.silentWindow)) {
+                targets.append(seg)
+            }
+        }
+        guard !targets.isEmpty else { return (probed, 0) }
+
+        let snapshot: [(seg: Segment, types: [SemanticType])] = targets.map { ($0, $0.semanticTypes) }
+        for seg in targets { seg.semanticTypes = [.emptyShot] }
+        context.safeSave()
+        MixLog.info("[空镜补标] 能量层：新探测 \(probed) 个视频、补标 \(targets.count) 段（只跑静音探测，未跑 whisper）")
+
+        PendingDeletionCenter.shared.scheduleUndoOnly(
+            message: "已按静音占比补标 \(targets.count) 个分镜为「空镜」（新探测 \(probed) 个视频）",
+            actionTitle: "撤销空镜补标",
+            seconds: 5
+        ) {
+            for item in snapshot where !item.seg.isDroppedFromContext { item.seg.semanticTypes = item.types }
+            context.safeSave()
+            ToastCenter.shared.show("已还原空镜补标（探测到的静音证据保留）",
+                                    icon: "arrow.uturn.backward", style: .info)
+        }
+        return (probed, targets.count)
+    }
+
     /// 把当前分镜的字幕字号应用到**同一视频**的所有分镜（覆盖前快照 + 可撤销 Toast）。
     static func applyFontSizeToAllSegments(of source: Segment, in context: ModelContext) {
         guard let video = source.video else { return }

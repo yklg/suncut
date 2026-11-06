@@ -114,8 +114,18 @@ public enum BrollPolicy {
     ///
     /// 结构性事实：`BrollSupply` 不携带台词（只有 label/帧区间/fps/sourceKey），所以一旦进了池，
     /// 下游**无法再判一次**"有没有口播"——这道闸只能建在入池处。
-    public static func acceptsAsSupply(text: String, taggedAsEmptyShot: Bool) -> Bool {
+    /// 第三道证据 `voicedFraction`（来自持久化的静音区间，读侧现算）补的是前两道够不到的那一类：
+    /// **纯音乐/杂音上被幻觉出一句非套话的话**（例：他库里那条被判"没人说话"却被认成
+    /// 「Zither Harp」的素材）。那种段文本非空、名单也不命中 ⇒ 只认前两道的池子会把它踢出去，
+    /// 而它恰恰是最该拿来垫差间的画面。
+    ///
+    /// 阈值不在这儿写：走 `EmptyLensPolicy.energyConvicts`（与拦打标同一个数）。
+    /// 没有这份证据的段（旧素材未探测、或人工打标签）仍然只看前两道 ⇒ 并行线那条
+    /// "手改标签也不许入池"的口子一寸没放宽。
+    public static func acceptsAsSupply(text: String, taggedAsEmptyShot: Bool,
+                                       voicedFraction: Double? = nil) -> Bool {
         guard taggedAsEmptyShot else { return false }
+        if EmptyLensPolicy.energyConvicts(voicedFraction: voicedFraction) { return true }
         if text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return true }
         return EmptyLensPolicy.phraseOnlyVerdict(text).isEmptyLens
     }

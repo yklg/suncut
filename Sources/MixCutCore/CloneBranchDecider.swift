@@ -40,7 +40,7 @@ import Foundation
 // ⚠️ **「有没有已存在的克隆」不参与判据**：
 //   - 没有克隆时**正需要首次克隆** —— 克隆分支内 `ensureClonedVoice` 会自己裁决
 //     （窗口可复用则复用，否则新注册）；它不存在"白跑"的问题
-//   - `voiceFollowsGlobal` 默认 `false`（`Video.swift:99`）⇒ **默认行为就是用原声克隆**，
+//   - `voiceFollowsGlobal` 默认 `false`（`Video.swift` 的 `var voiceFollowsGlobal` 声明处）⇒ **默认行为就是用原声克隆**，
 //     首次改写会克隆并计费（这与计费确认文案一致：「首次克隆含人声分离与声音注册费用」）
 //
 // ⇒ **若有人把第二个条件加回来，首次克隆会再次死锁。** 这条注释就是防线。

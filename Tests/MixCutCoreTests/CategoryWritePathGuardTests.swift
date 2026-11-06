@@ -89,7 +89,7 @@ enum TagWriteRoster {
 
     /// 登记制名册：文件 → 允许出现的写点行数。
     ///
-    /// ⚠️ 数字来自**真实遍历**（当前合计 14 处 / 5 个文件），改它必须是一次有意识的动作。
+    /// ⚠️ 数字来自**真实遍历**（当前合计 16 处 / 5 个文件），改它必须是一次有意识的动作。
     /// 2026-11-06 本轮改表两处：`SegmentPropertiesSection` 3 → 2（Inspector 那颗 Menu 的直写
     /// 已收敛进 VM，剩下两处是 `SegmentBatchActions` 的覆盖与撤销还原）；
     /// `SegmentLibraryViewModel` 1 → 3（新增的两条批量各带一处覆盖写与快照还原写）。
@@ -102,8 +102,10 @@ enum TagWriteRoster {
          "导入侧自动打标 + 空镜闸 + 自建分镜路径"),
         ("MixCut/Services/MCP/MCPSegmentToolHandlers.swift", 3,
          "MCP 的 add / remove / set 三条腿（必须能在无 UI 状态时工作，不收进 VM）"),
-        ("MixCut/Views/SegmentLibrary/SegmentPropertiesSection.swift", 2,
-         "仅 SegmentBatchActions 的覆盖与撤销还原（Inspector 直写已于本轮收敛掉，见 TC-TWR-05）"),
+        ("MixCut/Views/SegmentLibrary/SegmentPropertiesSection.swift", 4,
+         "SegmentBatchActions 的覆盖与撤销还原（Inspector 直写已于本轮收敛掉，见 TC-TWR-05）" +
+         "旧库补标「空镜」两颗各一处覆盖与一处撤销还原（2026-11-06；判定全部走 EmptyLensPolicy，" +
+         "这里只是写标签；若日后要求并入 VM 那颗唯一写入口，改这颗而不是把数改回去）"),
     ]
 
     /// 全仓扫描：返回「实际有写点的文件 → 行数」。

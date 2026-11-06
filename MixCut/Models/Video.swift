@@ -53,6 +53,26 @@ final class Video: Identifiable {
     var asrWordsData: Data?      // [ASRWord] 编码存储
     var asrSentencesData: Data?  // [ASRSentence] Whisper 原生句子
 
+    /// silencedetect 的**原始证据**（`[SilenceWindow]` 编码）—— 能量层判定的可持久化输入。
+    ///
+    /// 为什么存区间而不是存"这段是空镜"：阈值 `voicedFractionCeil` 与名单口径都可能再调，
+    /// 存结论就得重跑探测；存区间则读侧随时能重算（与 `asrSentencesData` 那份证据同一个道理）。
+    /// 带默认值 optional ⇒ SwiftData 轻量迁移；但**下一次开库会真加列**
+    /// （`SchemaGuard` 会先自动备份三件套 —— 那是既有设计，不是本次的新风险）。
+    var silenceWindowsRaw: Data?
+
+    /// 解码持久化的静音区间；nil = **没探测过**（与"探测到全程都在响"是两件事，不许合并）。
+    var silenceWindows: [SilenceWindow]? {
+        guard let raw = silenceWindowsRaw else { return nil }
+        return (try? JSONDecoder().decode([SilenceWindow].self, from: raw)) ?? []
+    }
+
+    /// 写入探测结果（编码失败 ⇒ 不写，宁缺毋错：错的证据比没证据更坏）。
+    func setSilenceWindows(_ windows: [SilenceWindow]) {
+        guard let raw = try? JSONEncoder().encode(windows) else { return }
+        silenceWindowsRaw = raw
+    }
+
     // MARK: - 片级听写来源（计划 §3.8）
 
     /// 上面两个**文本载体**是哪台引擎、哪档模型、什么时候跑出来的。

@@ -172,6 +172,111 @@ struct EmptyLensBackfillTests {
 
     /// 重跑分析会**删旧段重建** ⇒ 那一刻标签还不存在。若免听只认标签，终态档在真实流程里
     /// 一次都不会打中（判据全绿、屏上照旧逐段重听）—— 这两腿就是拦住那种"结构就绪但打不着"。
+    @Test("BFK-9 能量层证据让非套话的空镜段真的进池")
+    @MainActor
+    func energyEvidenceEntersThePool() throws {
+        let dir = try bfkScratch(); defer { try? FileManager.default.removeItem(at: dir) }
+        let (project, segs, c) = try bfkProject(dir: dir, texts: ["Zither Harp", realSpeech])
+        defer { withExtendedLifetime(c) {} }
+        // 先确认没证据时它进不了池（并行线那道闸的既有口径）
+        segs[0].semanticTypes = [.emptyShot]
+        #expect(project.brollSupplies.isEmpty,
+                "没探测过就入池 ⇒ 读侧闸的'没证据 ≠ 全程静音'那一档被抹平了")
+
+        // 存进证据（95% 静音）：读侧现算，不需要任何派生标记
+        segs[0].video?.setSilenceWindows([SilenceWindow(start: 0, end: 19), SilenceWindow(start: 19.5, end: 20)])
+        let labels = project.brollSupplies.map(\.label)
+        #expect(labels == ["seg_001"], "有静音证据却进不了池：\(labels)")
+    }
+
+    @Test("BFK-10 全程有声的证据不许把它捞进池（反向对照，防 BFK-9 恒真）")
+    @MainActor
+    func loudEvidenceKeepsItOutOfPool() throws {
+        let dir = try bfkScratch(); defer { try? FileManager.default.removeItem(at: dir) }
+        let (project, segs, c) = try bfkProject(dir: dir, texts: ["Zither Harp"])
+        defer { withExtendedLifetime(c) {} }
+        segs[0].semanticTypes = [.emptyShot]
+        segs[0].video?.setSilenceWindows([])        // 探测过，且没有任何静音 ⇒ 全程在响
+        #expect(project.brollSupplies.isEmpty, "空数组被当成'没证据'放行了 ⇒ 池子会收进真口播段")
+    }
+
+    @Test("BFK-11 能量层补标不许顺手重跑 whisper，阈值也不许在 App 侧再写一遍")
+    @MainActor
+    func energyBackfillStaysFreeAndSingleSourced() throws {
+        let root = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent()
+        let src = try String(contentsOf: root.appendingPathComponent(
+            "MixCut/Views/SegmentLibrary/SegmentPropertiesSection.swift"), encoding: .utf8)
+        let raw = src.components(separatedBy: "static func applyEmptyLensEnergyBackfill")[1]
+            .components(separatedBy: "/// 把当前分镜的字幕字号应用到")[0]
+        // 必须先剥注释再扫：这条链的注释里本来就在写"不跑 whisper"，
+        // 连注释一起 grep 会把自己的说明判成违规（本仓 ASR 守卫 G14 就这么假红过一次）。
+        let stripped = raw.components(separatedBy: "\n")
+            .filter { !$0.trimmingCharacters(in: .whitespaces).hasPrefix("//") }
+            .joined(separator: "\n")
+        // 再把**字符串字面量**也剥掉：这条链自己要在日志里写"未跑 whisper"，
+        // 连引号内容一起判会把说明文字判成调用 —— 要禁的是调用，不是词。
+        var body = ""
+        var inLiteral = false
+        for ch in stripped {
+            if ch == "\"" { inLiteral.toggle(); body.append(ch); continue }
+            if !inLiteral { body.append(ch) }
+        }
+        for forbidden in ["whisper", "transcribe", "SegmentTranscriber", "generate_voice"] {
+            #expect(!body.lowercased().contains(forbidden),
+                    "能量层补标里出现了 \(forbidden) ⇒ 这条腿的承诺是只跑 silencedetect、不花钱不改台词")
+        }
+        #expect(!body.contains("0.2"), "App 侧写了阈值字面量 ⇒ 与 EmptyLensPolicy.voicedFractionCeil 分叉")
+        #expect(stripped.contains("detectSilence(in:"), "没真调静音探测 ⇒ 这颗只是把名单层重跑一遍")
+    }
+
+    @Test("BFK-12 真探测腿：一条全程静音的素材必须被能量层捞出来并打标")
+    @MainActor
+    func realSilenceProbeTagsTheSegment() async throws {
+        try await withFFmpegBench("BFK-12 静音探测真跑") {
+            let dir = try bfkScratch()
+            defer { try? FileManager.default.removeItem(at: dir) }
+            let ff = FFmpegRunner()
+            let clip = dir.appendingPathComponent("silent.mov").path
+            // testsrc 画面 + 一路静音音轨（anullsrc）：真实文件、真实探测
+            try await ff.run(arguments: ["-f", "lavfi",
+                "-i", "testsrc=size=540x960:rate=25:duration=4",
+                "-f", "lavfi", "-i", "anullsrc=channel_layout=mono:sample_rate=44100",
+                "-shortest", "-pix_fmt", "yuv420p", "-y", clip], timeoutSeconds: 300)
+
+            let container = try ModelContainer(
+                for: Schema(versionedSchema: AppSchemaV1.self),
+                configurations: [ModelConfiguration(isStoredInMemoryOnly: true)])
+            let ctx = container.mainContext
+            let project = Project(name: "BFK-真探测")
+            ctx.insert(project)
+            let video = Video(name: "silent", localPath: clip)
+            video.duration = 4
+            video.fps = 25
+            ctx.insert(video)
+            _ = ProjectVideo.associate(project: project, video: video, in: ctx)
+            let seg = Segment(segmentIndex: "seg_001", startTime: 0, endTime: 4,
+                              text: "Zither Harp", semanticTypes: [.painPoint], positionType: .opening)
+            seg.startFrame = 0
+            seg.endFrame = 100
+            seg.video = video
+            ctx.insert(seg)
+            try ctx.save()
+
+            let got = await SegmentBatchActions.applyEmptyLensEnergyBackfill(
+                in: [seg], in: ctx)
+            #expect(got.probed == 1, "第一次必须真跑一次探测：\(got)")
+            #expect(video.silenceWindowsRaw != nil, "探测结果没落库 ⇒ 下次还得重跑，这条腿就成了摆设")
+            #expect(seg.semanticTypes == [.emptyShot],
+                    "全程静音的段没被能量层捞出来（文本非空、名单也不命中，只有这一条路）")
+
+            // 幂等：证据已在 ⇒ 第二次不再探测，也不重复打标
+            let again = await SegmentBatchActions.applyEmptyLensEnergyBackfill(in: [seg], in: ctx)
+            #expect(again.probed == 0 && again.tagged == 0, "重复跑又探测一遍：\(again)")
+            PendingDeletionCenter.shared.flushNow()
+        }
+    }
+
     @Test("BFK-8 免听依据必须现判名单层，且名单谓词全仓只有一颗")
     @MainActor
     func exemptionJudgesFromTextNotOnlyFromTag() throws {

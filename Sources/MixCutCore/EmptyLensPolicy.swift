@@ -158,6 +158,19 @@ public enum EmptyLensVerdict: Codable, Equatable, Sendable {
     }
 }
 
+/// 持久化的静音区间：能量层判定的**原始证据**。
+///
+/// 存证据而不是存"这段是空镜"那个结论：阈值（`voicedFractionCeil`）将来要调、口径要复核、
+/// 插片池要就地重判 —— 三种需求都只需读同一份探测结果，不必重跑任何探测。
+public struct SilenceWindow: Codable, Equatable, Sendable {
+    public var start: Double
+    public var end: Double
+
+    public init(start: Double, end: Double) {
+        self.start = start; self.end = end
+    }
+}
+
 public enum EmptyLensPolicy {
 
     // ── 阈值 ────────────────────────────────────────────────────────────
@@ -345,7 +358,7 @@ public enum EmptyLensPolicy {
     ///
     /// 最坏代价：真口播被误判成空镜 ⇒ 该段不打语义标签（不是丢数据，文本与依据都还在）。
     public static func verdict(_ s: EmptyLensSignals, text: String) -> EmptyLensVerdict {
-        if let v = s.voicedFraction, v.isFinite, v <= voicedFractionCeil {
+        if energyConvicts(voicedFraction: s.voicedFraction) {
             return .emptyLens(.silentWindow)
         }
         if let phrase = knownHallucinationHit(text) {
@@ -384,6 +397,22 @@ public enum EmptyLensPolicy {
     /// 名单规则本身只有一处真源：`phraseOnlyVerdict`。
     public static func phraseOnlyConvicts(_ text: String) -> Bool {
         shouldSuppressTagging(phraseOnlyVerdict(text))
+    }
+
+    /// 能量层单看这一窗口的有声占比能不能定罪成空镜。
+    ///
+    /// 阈值 `voicedFractionCeil` 的**唯一使用者**就是这颗 —— 读侧（插片池入池闸）与
+    /// 写侧（拦打标）必须同一个数，否则会出现"打上空镜标签、却进不了池"或反过来。
+    public static func energyConvicts(voicedFraction: Double?) -> Bool {
+        guard let v = voicedFraction, v.isFinite else { return false }
+        return v <= voicedFractionCeil
+    }
+
+    /// 从持久化证据算窗口内有声占比（`voicedFraction(…silentIntervals:…)` 的载荷适配）。
+    public static func voicedFraction(windowStart: Double, windowEnd: Double,
+                                      silentWindows: [SilenceWindow]) -> Double? {
+        voicedFraction(windowStart: windowStart, windowEnd: windowEnd,
+                       silentIntervals: silentWindows.map { ($0.start, $0.end) })
     }
 
     /// 该结论要不要**拦下打标**。
