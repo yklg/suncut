@@ -1168,6 +1168,17 @@ struct SegmentCard: View, Equatable {
         viewModel.toggleSemanticType(for: segment, type: type)
     }
 
+    /// 菜单项标题：**选中态只能写在文字里**。
+    ///
+    /// 两形都被真屏证伪：① `systemImage: 命中 ? "checkmark" : ""`（空串不是合法 symbol 名）；
+    /// ② `if 命中 { Label(_, systemImage: "checkmark") } else { Text(_) }` —— 本 App 的
+    /// `.contextMenu` 整颗菜单都不渲染 `Label` 的 image（2026-11-06 用户实屏：连「复制台词」
+    /// 的 doc.on.doc 都没出现，只画文字）。所以图标这条路在这里压根不通，与空串无关。
+    /// 未命中用全角空格占位，两列文字才对齐（普通空格在比例字体下宽度不定）。
+    private func menuItem(_ title: String, _ on: Bool) -> Text {
+        Text(on ? "✓ \(title)" : "　\(title)")
+    }
+
     /// 完整卡片
     private var fullCard: some View {
         HStack(alignment: .top, spacing: 0) {
@@ -1305,15 +1316,7 @@ struct SegmentCard: View, Equatable {
                         segment.setSource(source)
                         try? modelContext.save()
                     } label: {
-                        // ⚠️ 选中态**不许**用 `Label(_, systemImage: 命中 ? "checkmark" : "")` 表达：
-                        // 空串不是合法 symbol 名，而 Inspector 那颗菜单已逐列量出"12 项零勾选"。
-                        // 这里改成"命中才带图标"，未命中就是一颗纯文本项 —— 与本菜单里
-                        // `Label("复制台词", systemImage: "doc.on.doc")` 同一套已验证的渲染路径。
-                        if segment.source == source {
-                            Label(source.displayName, systemImage: "checkmark")
-                        } else {
-                            Text(source.displayName)
-                        }
+                        menuItem(source.displayName, segment.source == source)
                     }
                 }
             }
@@ -1326,11 +1329,7 @@ struct SegmentCard: View, Equatable {
                         Button {
                             toggleTypeFromMenu(type)
                         } label: {
-                            if segment.semanticTypes.contains(type) {
-                                Label(type.rawValue, systemImage: "checkmark")
-                            } else {
-                                Text(type.rawValue)
-                            }
+                            menuItem(type.rawValue, segment.semanticTypes.contains(type))
                         }
                     }
                 }
@@ -1342,11 +1341,7 @@ struct SegmentCard: View, Equatable {
                             viewModel.pin(segment)
                             viewModel.updatePositionType(for: segment, to: position)
                         } label: {
-                            if segment.positionType == position {
-                                Label(position.rawValue, systemImage: "checkmark")
-                            } else {
-                                Text(position.rawValue)
-                            }
+                            menuItem(position.rawValue, segment.positionType == position)
                         }
                     }
                 }

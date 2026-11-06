@@ -122,20 +122,34 @@ enum TagWriteRoster {
 
 // MARK: - 「空串当图标」这一族
 
-/// macOS 上 `Menu` / `contextMenu` 里用 `Label(_, systemImage: 命中 ? "checkmark" : "")`
-/// 表达选中态 —— 这一形已被逐列量测证伪（12 项文字同一起排、零勾选）：`Button` 在菜单里
-/// 没有选择语义，而空串不是合法 symbol 名。
+/// 用 **image** 承载菜单选中态这一族。两种写法都被真屏证伪：
+///   ① `systemImage: 命中 ? "checkmark" : ""` —— 空串不是合法 symbol 名；
+///   ② `Label(_, systemImage: "checkmark")` —— 本 App 的 `.contextMenu` 整颗菜单都不渲染
+///      `Label` 的 image（2026-11-06 用户实屏：连「复制台词」的 doc.on.doc 都没出现）。
+/// 正解是把状态写进标题文字（见 `SegmentLibraryView.menuItem`）。
 ///
-/// 本轮只收了**与症状同源**的那一处（分镜卡右键的「标记素材来源」）。另两处属不同功能面
-/// （项目侧栏的产品选择器、分镜抽屉的产品筛选），改它们要各自验一次渲染，不在本轮范围 ——
-/// 但登记在明处，防止这一族悄悄再长第三、第四颗。
+/// 在册的两处属**不同功能面**（新建项目选产品、分镜抽屉筛产品），且都挂在 `Menu` 上、
+/// 用的都是 ① 那一形 ⇒ 大概率同样画不出勾选。本轮不擅自重构别人的功能面，
+/// 但登记在明处，不许这一族继续无声生长。
 enum DeadCheckmarkIdiom {
-    static let pattern = "? \"checkmark\" : \"\""
+    static let patterns = [
+        "? \"checkmark\" : \"\"",        // ① 空串形
+        "systemImage: \"checkmark\"",    // ② 命中才带图标形
+    ]
 
     /// 在册清单：文件 → 允许的出现次数（注释行不计，见 `count(in:)`）。
+    ///
+    /// ⚠️ 这颗 ② 形会**一并抓到合法用法**：`Label("保存", systemImage: "checkmark")` 是按钮上的
+    /// 语义图标，不是选中态。所以这里登记的是"出现次数与理由"，不是"出现即违规"——
+    /// 判据的牙齿在两条正腿上：分镜素材库那颗必须归零，且必须改用文字承载 `menuItem`。
     static let roster: [String: Int] = [
+        // ① 空串形：选中态，画不出勾选
         "MixCut/Views/Sidebar/SidebarView.swift": 1,
         "MixCut/Views/Schemes/SegmentPickerDrawer.swift": 1,
+        // ② 条件对形：也是选中态，同样画不出勾选（与本轮收口的那两处同形，属别的页面）
+        "MixCut/Views/SegmentLibrary/DubSettingsBar.swift": 2,
+        // 合法：保存按钮上的 ✓ 图标，不承载选中态
+        "MixCut/Views/SegmentLibrary/SegmentPropertiesSection.swift": 1,
     ]
 
     /// 逐行数，跳过注释行 —— 本轮修完的那两处，注释里会**引用**这一形来说明为什么禁用，
@@ -144,7 +158,7 @@ enum DeadCheckmarkIdiom {
         source.split(separator: "\n", omittingEmptySubsequences: false).reduce(0) { acc, raw in
             let line = raw.trimmingCharacters(in: .whitespaces)
             if line.hasPrefix("//") || line.hasPrefix("*") { return acc }
-            return acc + (line.contains(pattern) ? 1 : 0)
+            return acc + (patterns.contains { line.contains($0) } ? 1 : 0)
         }
     }
 }
@@ -307,7 +321,7 @@ struct TagWriteRosterTests {
         }
     }
 
-    @Test("TC-TWR-08 「空串当图标」这一族只许停在已登记的 2 处，本轮收口的两处必须归零")
+    @Test("TC-TWR-08 用 image 承载菜单选中态这一族：逐文件登记不许漂，分镜素材库必须归零")
     func deadCheckmarkIdiomStaysRostered() {
         let root = twrRoot()
         var seen: [String: Int] = [:]
@@ -316,12 +330,13 @@ struct TagWriteRosterTests {
             let n = DeadCheckmarkIdiom.count(in: src)
             if n > 0 { seen[rel] = n }
         }
-        // 正腿：本轮收口的两处必须归零（卡片右键的来源菜单、Inspector 的分类菜单）。
-        for cleaned in ["MixCut/Views/SegmentLibrary/SegmentLibraryView.swift",
-                        "MixCut/Views/SegmentLibrary/SegmentPropertiesSection.swift"] {
-            #expect(seen[cleaned] == nil,
-                    "\(cleaned) 又长回这一形（\(seen[cleaned] ?? 0) 处）⇒ 选中态重新变成看不见的东西")
-        }
+        // 正腿：分镜素材库那颗必须归零（它已改用文字承载），且必须还在用 `menuItem`。
+        let cleaned = "MixCut/Views/SegmentLibrary/SegmentLibraryView.swift"
+        #expect(seen[cleaned] == nil,
+                "\(cleaned) 又长回用 image 承载选中态（\(seen[cleaned] ?? 0) 处）⇒ 勾选重新变成看不见的东西")
+        let library = twrRead(cleaned) ?? ""
+        #expect(library.contains("func menuItem("),
+                "菜单选中态的文字承载入口 `menuItem` 不见了 ⇒ 这一族会被人改回图标形")
         // 在册腿：剩下的两处按文件逐颗对账，新增一处就红 —— 不是把这一族判死，是不许它无声生长。
         var problems: [String] = []
         for rel in seen.keys.sorted() where !DeadCheckmarkIdiom.roster.keys.contains(rel) {
@@ -341,6 +356,9 @@ struct TagWriteRosterTests {
                 "注释里的引用被计成违规 ⇒ 解释自己的话会把这条判据逼删")
         #expect(DeadCheckmarkIdiom.count(
             in: "Label(x, systemImage: on ? \"checkmark\" : \"\")\n") == 1,
-                "代码里的这一形没被计到 ⇒ 名册拦不住新增")
+                "① 空串形没被计到 ⇒ 名册拦不住新增")
+        #expect(DeadCheckmarkIdiom.count(
+            in: "Label(x, systemImage: \"checkmark\")\n") == 1,
+                "② 命中才带图标形没被计到 ⇒ 真屏证伪的那一形漏在网外")
     }
 }
