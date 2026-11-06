@@ -309,7 +309,7 @@ else:
 #   依据不是注释而是实读的 `UndoGraceMachine.swift:191-195`：`isPrunable` 对「带 .video 却不带 .project」
 #   一律判不可剪枝 ⇒ 发布口按无载荷发 ⇒ 观察者走全量重载，而 `loadSegments` 首行是 `flushNow()`
 #   （它会执行待删事务并再次广播 ⇒ 同栈递归，前案 §10 健壮-1 记为 P0）。
-#   现状：`ImportViewModel.swift:1081` 只 note `.segment`（2026-11-05 补标那颗在上文多占一行，行号随之 +1）。**注释会被删，判据不会** —— 批 2 把咽喉数组化时
+#   现状：`ImportViewModel.swift:1089` 只 note `.segment`（这处行号已被上文挤歪两次 ⇒ 动过 ImportViewModel 就复跑一次 check_plan_doc_citations.py，别手算）。**注释会被删，判据不会** —— 批 2 把咽喉数组化时
 #   最省事的写法就是"顺手把视频 id 也记进台账"，这条门要在那一刻先红，而不是等真机上炸出来。
 nd = call_spans(import_vm, "noteDeleted(")
 if not nd:

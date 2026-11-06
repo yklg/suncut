@@ -170,6 +170,23 @@ struct EmptyLensBackfillTests {
         #expect(!body.contains("优优独播"), "App 侧出现了套话原文 ⇒ 名单被抄了一份，改 Core 不会同步到这里")
     }
 
+    /// 重跑分析会**删旧段重建** ⇒ 那一刻标签还不存在。若免听只认标签，终态档在真实流程里
+    /// 一次都不会打中（判据全绿、屏上照旧逐段重听）—— 这两腿就是拦住那种"结构就绪但打不着"。
+    @Test("BFK-8 免听依据必须现判名单层，且名单谓词全仓只有一颗")
+    @MainActor
+    func exemptionJudgesFromTextNotOnlyFromTag() throws {
+        let root = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent()
+        let src = try String(contentsOf: root.appendingPathComponent(
+            "MixCut/ViewModels/ImportViewModel.swift"), encoding: .utf8)
+        let call = src.components(separatedBy: "isEmptyLensSettled:")[1]
+        #expect(call.contains("phraseOnlyConvicts"),
+                "免听只认「空镜」标签 ⇒ 重跑分析（旧段已删、标签还没写回来）那次一颗都打不着")
+        // ② 名单层谓词不许在 App 侧被重写一遍（`verdict(EmptyLensSignals()` 就是那份副本的形状）
+        #expect(!src.contains("verdict(EmptyLensSignals()"),
+                "App 侧自己拼了零信号 + verdict ⇒ 名单层出现第二份真源，Core 一改就分叉")
+    }
+
     @Test("BFK-7 端到端：补标之后，空镜池真的有料、中间格的差额接得住了")
     @MainActor
     func backfillUnblocksTheShortfall() throws {

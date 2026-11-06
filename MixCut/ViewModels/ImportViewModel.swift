@@ -865,7 +865,15 @@ final class ImportViewModel {
         // 按整片时间戳切出的分镜台词会错位；单段短音频 ASR 永远准。边界已由本地场景/静音+AI 定好，
         // 这里只重识别各分镜台词（失败段保留 commitAIPartition 给的原文/AI 文本）。
         phase = .transcribing
-        await autoReidentifySegments(video, context: context)
+        let reidentified = await autoReidentifySegments(video, context: context)
+        // 终态档的屏上读数：**只有重跑链弹**（`clearsExistingSegments` = 有旧分镜正被替换）。
+        // 首跑此刻库里没有旧台词可保护（红线 R8 ⇒ 那条链刻意不弹），
+        // 而"这轮到底有没有跳过重听"这件事，只有在用户主动重跑时才需要他看见。
+        if clearsExistingSegments {
+            ToastCenter.shared.show("台词重认：实际重听 \(reidentified.ran) 段、沿用整片切片 \(reidentified.carriedOver) 段"
+                                    + "（其中 \(reidentified.carriedByEmptyLens) 段是「空镜」⇒ 不再重听）",
+                                    icon: "waveform", style: .info, duration: 8)
+        }
 
         // 空镜闸排在逐段重听**之后**：名单层吃文本，而重听会改写文本 ⇒ 判定必须用终态文本，
         // 否则拦完再看新文本，依据与屏上的台词会对不上。
@@ -1471,7 +1479,9 @@ final class ImportViewModel {
 
     /// 自动链上的逐段重认：**不弹窗**（那时库里还没有"旧台词"可保护，这是红线 R8 的作用域区分），
     /// 但结果必须进日志 —— 两处调用点都忽略返回值，就等于"整批没配 Key、一段也没重认"这件事没人知道。
-    private func autoReidentifySegments(_ video: Video, context: ModelContext) async {
+    @discardableResult
+    private func autoReidentifySegments(_ video: Video, context: ModelContext) async
+        -> (carriedOver: Int, carriedByEmptyLens: Int, ran: Int) {
         let r = await reidentifySegmentTexts(video: video, context: context, auto: true)
         if r.failed > 0 || r.emptyAudio > 0 || r.refused > 0 || r.stoppedEarly {
             let detail = r.reason.map { "：\($0)" } ?? ""
@@ -1479,6 +1489,7 @@ final class ImportViewModel {
                          + "\(r.failed) 段识别失败、\(r.emptyAudio) 段没声音（疑似空镜）、"
                          + "\(r.refused) 段没跑识别\(detail)")
         }
+        return (r.carriedOver, r.carriedByEmptyLens, r.gotText + r.failed + r.emptyAudio + r.cancelled)
     }
 
     /// 逐分镜各自切音频独立重认台词，覆盖 `segment.text`。
@@ -1494,7 +1505,8 @@ final class ImportViewModel {
     @discardableResult
     func reidentifySegmentTexts(video: Video, context: ModelContext,
                                 auto: Bool) async
-        -> (gotText: Int, failed: Int, emptyAudio: Int, refused: Int, cancelled: Int, stoppedEarly: Bool, reason: String?) {
+        -> (gotText: Int, failed: Int, emptyAudio: Int, refused: Int, cancelled: Int, stoppedEarly: Bool, reason: String?,
+            carriedOver: Int, carriedByEmptyLens: Int) {
         let fps = video.fps > 0 ? video.fps : 30
         let segs = video.segments.sorted { $0.startFrame < $1.startFrame }
         var outcomes: [SegmentTranscribeOutcome] = []
@@ -1502,6 +1514,7 @@ final class ImportViewModel {
         var consecutiveFailures = 0
         var stoppedEarly = false
         var carriedOver = 0
+        var carriedByEmptyLens = 0
 
         for (index, seg) in segs.enumerated() {
             if cancelledVideoIDs.contains(video.id) {
@@ -1511,10 +1524,21 @@ final class ImportViewModel {
             }
             if auto && !SegmentRetakeRule.shouldAutoRetake(
                 currentText: seg.text, currentSource: seg.textSource,
-                // 空镜终态档：这段的"空文本"是机器判出来的结论，不是漏切 ⇒ 别再逐段重听
-                // （逐段比整片贵 2.9 倍；用户手动摘掉「空镜」标签即恢复重听队列）
-                isEmptyLensSettled: seg.semanticTypes.contains(.emptyShot)) {
+                // 空镜终态档：这段"没人说话"是判出来的结论，不是漏切 ⇒ 别再逐段重听
+                //（逐段比整片贵 2.9 倍）。两个来源都要认：
+                // ① 标签 —— 手动重认那条链（段还活着，标签在）；
+                // ② 现判名单层 —— **重跑分析会删旧段重建**，那一刻标签还不存在，
+                //    只认①的话这颗终态档在真实流程里永远打不着（2026-11-06 自查发现）。
+                // 这里只决定"免不免听"，**不提前写标签**：标签权威仍是重听之后那道闸
+                //（名单层吃的必须是终态文本，提前写会留下"重听后有话、标签却是空镜"的过期标签）。
+                isEmptyLensSettled: seg.semanticTypes.contains(.emptyShot)
+                    || EmptyLensPolicy.phraseOnlyConvicts(seg.text)) {
                 carriedOver += 1
+                // 「免听」里有多少是空镜终态档给的，必须单独能看见：这颗开关若哪天被打断
+                //（例如重建段时标签丢了、又没现判名单层），屏上只会安静地变回逐段重听。
+                if seg.semanticTypes.contains(.emptyShot) || EmptyLensPolicy.phraseOnlyConvicts(seg.text) {
+                    carriedByEmptyLens += 1
+                }
                 continue
             }
             reidentifyProgress[video.id] = (index, segs.count)
@@ -1557,7 +1581,8 @@ final class ImportViewModel {
         context.saveOrWarn("重识别的台词")
 
         let t = SegmentBatchPolicy.tally(outcomes)
-        return (t.gotText, t.failed, t.emptyAudio, t.refused, t.cancelled, stoppedEarly, firstReason)
+        return (t.gotText, t.failed, t.emptyAudio, t.refused, t.cancelled, stoppedEarly, firstReason,
+                carriedOver, carriedByEmptyLens)
     }
 
     // MARK: - 分镜拆分（PRD/TRD 06）

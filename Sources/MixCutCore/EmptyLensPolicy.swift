@@ -373,6 +373,18 @@ public enum EmptyLensPolicy {
         verdict(EmptyLensSignals(), text: text)
     }
 
+    /// 只看文本能不能定罪成空镜（名单层单腿）。
+    ///
+    /// 两个消费者必须同一颗：① 旧库补标的命中集；② 自动链上"这段值不值得再听一遍"的免听依据
+    /// （重跑分析会删旧段重建 ⇒ 标签还不存在，只能现判文本）。各写一遍就会漂。
+    ///
+    /// ⚠️ 与 `BrollPolicy.acceptsAsSupply` **不是重复**，别顺手合并：那颗刻意**不带** `gateOpen`
+    ///（拦打标的开关不该决定"已有画面能不能用"，关闸会静默清空插片池），而这里两件事都该受开关管 ——
+    /// 补标是在写标签、免听是"要不要花钱再听"，开关关着的日子里两者都不许动。
+    /// 名单规则本身只有一处真源：`phraseOnlyVerdict`。
+    public static func phraseOnlyConvicts(_ text: String) -> Bool {
+        shouldSuppressTagging(phraseOnlyVerdict(text))
+    }
 
     /// 该结论要不要**拦下打标**。
     ///

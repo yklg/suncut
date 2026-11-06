@@ -649,7 +649,7 @@ enum SegmentBatchActions {
     static func emptyLensBackfillHits(in segments: [Segment]) -> [Segment] {
         segments.filter { seg in
             !seg.semanticTypes.contains(.emptyShot)
-                && EmptyLensPolicy.shouldSuppressTagging(EmptyLensPolicy.phraseOnlyVerdict(seg.text))
+                && EmptyLensPolicy.phraseOnlyConvicts(seg.text)
         }
     }
 
