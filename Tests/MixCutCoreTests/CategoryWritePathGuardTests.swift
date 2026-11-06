@@ -140,16 +140,21 @@ enum DeadCheckmarkIdiom {
     /// 在册清单：文件 → 允许的出现次数（注释行不计，见 `count(in:)`）。
     ///
     /// ⚠️ 这颗 ② 形会**一并抓到合法用法**：`Label("保存", systemImage: "checkmark")` 是按钮上的
-    /// 语义图标，不是选中态。所以这里登记的是"出现次数与理由"，不是"出现即违规"——
-    /// 判据的牙齿在两条正腿上：分镜素材库那颗必须归零，且必须改用文字承载 `menuItem`。
+    /// 语义图标，不是选中态。所以这里登记的是"出现次数与理由"，不是"出现即违规"。
+    ///
+    /// 2026-11-06 第二轮：原先在册的四处**选中态**用法（分镜卡右键 2 处、侧栏新建项目选产品、
+    /// 分镜抽屉筛产品、配音条音色菜单）已全部改用文字承载 ⇒ 名册收到只剩那颗合法按钮。
+    /// 这一族到此闭合：再加一处就是判据红。
     static let roster: [String: Int] = [
-        // ① 空串形：选中态，画不出勾选
-        "MixCut/Views/Sidebar/SidebarView.swift": 1,
-        "MixCut/Views/Schemes/SegmentPickerDrawer.swift": 1,
-        // ② 条件对形：也是选中态，同样画不出勾选（与本轮收口的那两处同形，属别的页面）
-        "MixCut/Views/SegmentLibrary/DubSettingsBar.swift": 2,
-        // 合法：保存按钮上的 ✓ 图标，不承载选中态
         "MixCut/Views/SegmentLibrary/SegmentPropertiesSection.swift": 1,
+    ]
+
+    /// 必须归零的文件（它们都曾用 image 承载菜单选中态）。
+    static let mustBeZero: [String] = [
+        "MixCut/Views/SegmentLibrary/SegmentLibraryView.swift",
+        "MixCut/Views/SegmentLibrary/DubSettingsBar.swift",
+        "MixCut/Views/Sidebar/SidebarView.swift",
+        "MixCut/Views/Schemes/SegmentPickerDrawer.swift",
     ]
 
     /// 逐行数，跳过注释行 —— 本轮修完的那两处，注释里会**引用**这一形来说明为什么禁用，
@@ -321,7 +326,7 @@ struct TagWriteRosterTests {
         }
     }
 
-    @Test("TC-TWR-08 用 image 承载菜单选中态这一族：逐文件登记不许漂，分镜素材库必须归零")
+    @Test("TC-TWR-08 用 image 承载菜单选中态这一族：站点已全部归零，只许留那颗合法按钮")
     func deadCheckmarkIdiomStaysRostered() {
         let root = twrRoot()
         var seen: [String: Int] = [:]
@@ -330,14 +335,16 @@ struct TagWriteRosterTests {
             let n = DeadCheckmarkIdiom.count(in: src)
             if n > 0 { seen[rel] = n }
         }
-        // 正腿：分镜素材库那颗必须归零（它已改用文字承载），且必须还在用 `menuItem`。
-        let cleaned = "MixCut/Views/SegmentLibrary/SegmentLibraryView.swift"
-        #expect(seen[cleaned] == nil,
-                "\(cleaned) 又长回用 image 承载选中态（\(seen[cleaned] ?? 0) 处）⇒ 勾选重新变成看不见的东西")
-        let library = twrRead(cleaned) ?? ""
+        // 正腿一：所有"用 image 承载菜单选中态"的站点必须归零（本族已于 2026-11-06 闭合）。
+        for mustZero in DeadCheckmarkIdiom.mustBeZero {
+            #expect(seen[mustZero] == nil,
+                    "\(mustZero) 又长回用 image 承载选中态（\(seen[mustZero] ?? 0) 处）⇒ 勾选重新变成看不见的东西")
+        }
+        // 正腿二：分镜素材库必须还在用文字承载入口。
+        let library = twrRead("MixCut/Views/SegmentLibrary/SegmentLibraryView.swift") ?? ""
         #expect(library.contains("func menuItem("),
                 "菜单选中态的文字承载入口 `menuItem` 不见了 ⇒ 这一族会被人改回图标形")
-        // 在册腿：剩下的两处按文件逐颗对账，新增一处就红 —— 不是把这一族判死，是不许它无声生长。
+        // 在册腿：剩下的只许是那颗合法按钮（保存），逐颗对账，新增一处就红。
         var problems: [String] = []
         for rel in seen.keys.sorted() where !DeadCheckmarkIdiom.roster.keys.contains(rel) {
             problems.append("未登记的文件长回这一形：\(rel)（\(seen[rel] ?? 0) 处）")

@@ -202,8 +202,11 @@ struct SegmentPickerDrawer: View {
                     Button {
                         selectedProductID = product.id
                     } label: {
-                        Label(product.name,
-                              systemImage: product.id == effectiveProductID ? "checkmark" : "")
+                        // 选中态写进标题文字（本 App 的 `Menu` 不渲染 `Label` 的 image，真屏证过）。
+                        // 同一约定见 `SegmentCard.menuItem(_:_)`。
+                        Text(product.id == effectiveProductID
+                             ? "✓ \(product.name)"
+                             : "　\(product.name)")
                     }
                 }
             } label: {

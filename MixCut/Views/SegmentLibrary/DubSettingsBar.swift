@@ -197,20 +197,19 @@ struct DubSettingsBar: View {
                         Button {
                             dubVM.setVideoFollowsGlobal(false, video: video, context: modelContext)
                         } label: {
-                            if video.voiceFollowsGlobal {
-                                Text("各分镜用各自原声")
-                            } else {
-                                Label("各分镜用各自原声", systemImage: "checkmark")
-                            }
+                            // 选中态写进标题文字：本 App 的 `Menu` 不渲染 `Label` 的 image
+                            // （真屏证过），原来那对 `if … Label(✓) else Text` 从来没画出勾。
+                            // 同一约定见 `SegmentCard.menuItem(_:_)`。
+                            Text(video.voiceFollowsGlobal
+                                 ? "　各分镜用各自原声"
+                                 : "✓ 各分镜用各自原声")
                         }
                         Button {
                             dubVM.setVideoFollowsGlobal(true, video: video, context: modelContext)
                         } label: {
-                            if video.voiceFollowsGlobal {
-                                Label("跟随全局或项目音色", systemImage: "checkmark")
-                            } else {
-                                Text("跟随全局或项目音色")
-                            }
+                            Text(video.voiceFollowsGlobal
+                                 ? "✓ 跟随全局或项目音色"
+                                 : "　跟随全局或项目音色")
                         }
                     } label: {
                         HStack(spacing: 3) {

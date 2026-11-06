@@ -452,8 +452,12 @@ struct NewProjectSheet: View {
                                 Button {
                                     projectVM.newProjectProductID = product.id
                                 } label: {
-                                    Label(product.name,
-                                          systemImage: product.id == current.id ? "checkmark" : "")
+                                    // 选中态写进标题文字：本 App 的 `Menu` / `.contextMenu`
+                                    // 都不渲染 `Label` 的 image（真屏证过），图标承载等于没写。
+                                    // 同一约定见 `SegmentCard.menuItem(_:_)`。
+                                    Text(product.id == current.id
+                                         ? "✓ \(product.name)"
+                                         : "　\(product.name)")
                                 }
                             }
                         } label: {
