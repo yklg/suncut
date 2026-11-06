@@ -11,15 +11,17 @@ import Testing
 // 「AI 可以打哪些语义标签」这件事此前抄了七份：`AgentToolCatalog` 的 MCP 工具描述、
 // `AIAnalysisService` 的 prompt 正文、`SegmentCommitter` 的归一化关键词表、
 // `SlotRetrievalIntent` 的查询模板键，外加 `Resources/Prompts/` 里 5 份 .md。
-// 本轮动手前逐颗数过：**其中两份已经悄悄漂了** ——
+// 本轮动手前逐颗数过，**其中两份当时正在漂**：
 // `video_segmentation_prompt.md` 只列 10 类（缺「过渡」），
-// `video_recombination_prompt.md` 只列 9 类（缺「产品定位」「过渡」）。
+// `video_recombination_prompt.md` 只列 9 类且带「等」（缺「产品定位」「过渡」）。
 // 而 MCP 描述那份此前硬编 11 类、枚举已经是 12 类。
 //
-// ⇒ 所以这一组做两件事：① 把可派生的两处（MCP 描述、prompt 正文）改成从
-// `SemanticRoster.aiAssignable` 生成；② 把**不能**代码派生的（5 份 .md 是资源，
-// 改内容要逐份重读语义、不是这一轮的账）登记成逐文件覆盖台账 —— 不许它继续无声漂，
-// 也不由我擅自改 prompt。台账改动必须是一次有意识的改表。
+// ⇒ 这一组做三件事：① 把可派生的两处（MCP 描述、prompt 正文）改成从
+// `SemanticRoster.aiAssignable` 生成；② 把**不能**代码派生的 5 份 .md 登记成逐文件覆盖台账；
+// ③ 台账暴露的那两份缺列，经用户 2026-11-06 拍板「补齐」后已补到 11/11 ——
+// 补的是资源正文，逐份按各自的呈现形式落（segmentation 补一节带定义的 11 号条目、
+// recombination 把带「等」的软枚举改成完整精确匹配清单），不是简单塞名字。
+// 台账因此从"记录债务"变成"守住已补齐的状态"：谁再掉一颗就红。
 //
 // ## 与 ETB 的分工（别混）
 //
@@ -40,17 +42,17 @@ private func srRead(_ relative: String) -> String? {
 
 /// 逐文件登记**当前**的名册覆盖数（11 为满）。
 ///
-/// ⚠️ 这两处不足额是**既有状态**，不是本轮引入，也不是本轮的修复对象：
-///   · `video_segmentation_prompt.md` 缺「过渡」
-///   · `video_recombination_prompt.md` 缺「产品定位」「过渡」
-/// 登记在此的意义是：它再掉一颗、或有人"顺手"补齐却没同步改这张表，都会红。
-/// 补齐是好事，但必须是一次有意识的动作（逐份重读语义 + 同轮改这张表 + 跑 `swift test`）。
+/// 这五份是资源文件，**不能**代码派生，所以只能逐颗核对。2026-11-06 之前其中两份正在漂
+/// （`video_segmentation_prompt.md` 只列 10 类、`video_recombination_prompt.md` 只列 9 类且带「等」）
+/// ⇒ 模型在那两条链上拿不到「过渡」「产品定位」，而「过渡」还是全仓归一化的兜底值。现已补齐 11/11。
+/// 登记在此的意义是：谁再掉一颗、或改了名册却没同步改这张表，都会红 ——
+/// 无论补齐还是回退，都必须是一次有意识的动作（逐份重读语义 + 同轮改这张表 + 跑 `swift test`）。
 private let srLedger: [(file: String, expect: Int, note: String)] = [
     ("MixCut/Resources/Prompts/segment_types_definition.md", 11, "定义本体，满覆盖"),
-    ("MixCut/Resources/Prompts/video_segmentation_prompt.md", 10, "〔已知缺「过渡」〕"),
+    ("MixCut/Resources/Prompts/video_segmentation_prompt.md", 11, "2026-11-06 补齐「过渡」（新增第 11 节定义）"),
     ("MixCut/Resources/Prompts/structure_generation_prompt.md", 11, "满覆盖"),
     ("MixCut/Resources/Prompts/reverse_structuring_prompt.md", 11, "满覆盖"),
-    ("MixCut/Resources/Prompts/video_recombination_prompt.md", 9, "〔已知缺「产品定位」「过渡」〕"),
+    ("MixCut/Resources/Prompts/video_recombination_prompt.md", 11, "2026-11-06 把带「等」的软枚举改成完整 11 类精确匹配"),
 ]
 
 @Suite("SR · AI 面语义标签名册")
