@@ -184,6 +184,4 @@ open MixCut.xcodeproj           # 用 Xcode 打开（SwiftData 宏依赖 Xcode �
 
 ## License
 
-[MIT License](./LICENSE) · © 2026 一路凯歌HNaa · © 2026 MengGang（原始版本作者；MIT 要求的版权声明原样保留）
-
-内置的 FFmpeg / ffprobe 是 GPL-3 构建。第三方组件的许可通告与对应源码见 [`Licenses/`](./Licenses/)，其中 [`NOTICE-内置组件许可.txt`](./Licenses/NOTICE-内置组件许可.txt) 逐项登记了二进制来源、configure 参数与源码位置。
+[MIT License](./LICENSE) 第三方组件的许可通告与对应源码见 [`Licenses/`](./Licenses/)，其中 [`NOTICE-内置组件许可.txt`](./Licenses/NOTICE-内置组件许可.txt) 逐项登记了二进制来源、configure 参数与源码位置。
