@@ -21,4 +21,12 @@ struct SubtitleMaskModeTests {
         #expect(SubtitleMaskMode.from(hasHardSubtitle: true, maskStyleRaw: "wat") == .blur)
         #expect(SubtitleMaskMode.from(hasHardSubtitle: true, maskStyleRaw: "") == .blur)
     }
+
+    @Test("新字幕底衬规则：只有纯色遮挡不铺（它已经是一条实色带）")
+    func burnsCaptionBackdropRule() {
+        #expect(SubtitleMaskMode.solid.burnsCaptionBackdrop == false)
+        #expect(SubtitleMaskMode.blur.burnsCaptionBackdrop)
+        #expect(SubtitleMaskMode.dim.burnsCaptionBackdrop)
+        #expect(SubtitleMaskMode.none.burnsCaptionBackdrop)
+    }
 }

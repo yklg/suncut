@@ -82,23 +82,31 @@ public extension SubtitleMaskMode {
     /// 散在导出服务里，不进这张表，"效果只有一份定义"就缺一格。
     var burnsCaptionBackdrop: Bool { self != .solid }
 
+    /// 糊半径的**唯一**换算口：标称半径按「目标画布宽 / 1080 基准」缩放，再按**裁面**短边的
+    /// 1/4 钳位（ffmpeg `boxblur` 受 yuv420 色度平面约束，见 `clampedRadius`）。
+    ///
+    /// 单位随调用方：静态预览传点，播放合成器传画布像素 —— 公式只有这一份。
+    /// ⚠️ 钳位必须用**裁面**宽高，不是画布宽：窄遮挡带比整幅窄时，拿画布宽算会放过比导出更大的半径。
+    func scaledBlurRadius(canvasWidth: CGFloat, cropWidth: CGFloat, cropHeight: CGFloat,
+                          canonicalWidth: CGFloat = 1080) -> CGFloat {
+        guard canvasWidth > 0, canonicalWidth > 0 else { return 0 }
+        let scaled = CGFloat(renderSpec.nominalBlurRadius) * canvasWidth / canonicalWidth
+        return min(scaled, max(0, min(cropWidth, cropHeight) / 4))
+    }
+
     /// 预览用的糊半径（**点**）。表里存的是导出画布上的绝对像素，卡片只有 ~200pt 宽，
     /// 直接搬 20 会把整块糊成一团 ⇒ 按 `canonicalWidth` 折算回显示尺寸。
-    ///
-    /// 钳位同一条规则：`r ≤ 短边/4` 是比例式约束，在显示点空间上算与在导出像素上算等价
-    /// （两侧同为 9:16 画布）。这里**不**复用 `clampedRadius(cropWidth:cropHeight:)` ——
-    /// 那个方法的入参是导出像素，混单位传点会静默算错。
     ///
     /// ⚠️ 这只是**同一语义的近似呈现，不是同源像素**：ffmpeg 是"裁出带内 boxblur 再贴回"，
     /// 预览同序（见 `maskTreatmentPreview`），但核不同 —— `boxblur` 是盒式多重迭代、SwiftUI
     /// `.blur` 是 Gaussian，且带边界取像素的方式也不同（预览吃真实邻域像素，ffmpeg 吃裁出平面的
     /// 边缘处理）。所以预览是"糊成一片"这件事的**量级**对齐，不是逐像素对齐。
     /// `fill` 两档才是精确同源（同 hex 同 alpha）。
-    func previewBlurRadius(displayWidth: CGFloat, displayCropHeight: CGFloat,
-                           canonicalWidth: Int = 1080) -> CGFloat {
-        let spec = renderSpec
-        guard case .blur = spec, canonicalWidth > 0 else { return 0 }
-        let displayNominal = CGFloat(spec.nominalBlurRadius) * displayWidth / CGFloat(canonicalWidth)
-        return min(displayNominal, max(0, min(displayWidth, displayCropHeight) / 4))
+    func previewBlurRadius(displayWidth: CGFloat, displayCropWidth: CGFloat,
+                           displayCropHeight: CGFloat,
+                           canonicalWidth: CGFloat = 1080) -> CGFloat {
+        guard case .blur = renderSpec else { return 0 }
+        return scaledBlurRadius(canvasWidth: displayWidth, cropWidth: displayCropWidth,
+                                cropHeight: displayCropHeight, canonicalWidth: canonicalWidth)
     }
 }

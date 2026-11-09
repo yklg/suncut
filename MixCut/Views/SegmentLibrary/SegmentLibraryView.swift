@@ -1683,6 +1683,14 @@ struct SegmentInlinePlayer: View {
     @State private var isHoverActive = false
     /// 当前缩略图（异步加载；主图与遮罩预览共用同一份，每卡只解码一次）
     @State private var thumbnail: NSImage?
+    /// 播放态遮挡合成：构建任务（停止/切卡时取消）
+    @State private var maskBuildTask: Task<SubtitleMaskPreviewBuild, Error>?
+    @State private var maskPlaybackTask: Task<Void, Never>?
+    /// 已挂上的遮挡配置盒；拖遮挡框/切样式只更新它，不重建 composition。
+    @State private var maskConfigBox: SubtitleMaskPreviewConfig?
+    @State private var maskSource: SubtitleMaskPreviewSource?
+    /// 起播前按**意图**定显示比例（有遮挡 ⇒ 9:16 画布），失败才回退。
+    @State private var maskCompositionActive = false
 
     /// 视频原始宽高比
     private var videoAspectRatio: CGFloat {
@@ -1690,6 +1698,12 @@ struct SegmentInlinePlayer: View {
             return 16.0 / 9.0
         }
         return CGFloat(video.width) / CGFloat(video.height)
+    }
+
+    /// 当前遮挡档位：与静止预览、导出读同一对字段，表达式只此一处。
+    private var currentMaskMode: SubtitleMaskMode {
+        SubtitleMaskMode.from(hasHardSubtitle: segment.hasHardSubtitle,
+                              maskStyleRaw: segment.maskStyleRaw)
     }
 
     /// 显示用宽高比：固定为手机端 9:16 竖屏（信息流广告投放比例，见 CLAUDE.md）
@@ -1767,6 +1781,10 @@ struct SegmentInlinePlayer: View {
             play(from: request.from, to: request.to)
             viewModel.previewRequest = nil
         }
+        // 播放中改遮挡：松手写库后热更新配置盒（拖拽期间只改本地 draft，不会高频触发）。
+        .onChange(of: segment.maskRect) { _, _ in refreshMaskPreviewIfPlaying() }
+        .onChange(of: segment.maskStyleRaw) { _, _ in refreshMaskPreviewIfPlaying() }
+        .onChange(of: segment.hasHardSubtitle) { _, _ in refreshMaskPreviewIfPlaying() }
     }
 
     @ViewBuilder
@@ -1774,7 +1792,9 @@ struct SegmentInlinePlayer: View {
         ZStack {
             if mode != .idle, let player {
                 PlayerRepresentable(player: player)
-                    .aspectRatio(videoAspectRatio, contentMode: .fit)   // F11/F12: 横屏视频在 9:16 容器内留黑边，不裁切
+                    // 有遮挡合成时输出是 9:16 画布（内部已 fit+pad）；否则仍按源比例显示。
+                    .aspectRatio(maskCompositionActive ? 9.0 / 16.0 : videoAspectRatio,
+                                 contentMode: .fit)
             } else {
                 thumbnailView
             }
@@ -1902,14 +1922,9 @@ struct SegmentInlinePlayer: View {
 
     /// 静止帧上的遮挡效果预览。
     ///
-    /// ⚠️ 值全部来自 `SubtitleMaskMode.renderSpec` —— 与 `DubSegmentGraph` 读的是**同一张表**，
-    /// 所以"屏幕上看到的"与"导出来的"由构造对齐，不靠人记得两边同改。
-    /// 模式也走 `SubtitleMaskMode.from(...)` 同一个表达式（导出侧 `DubExportService` 用的是它），
-    /// 于是存量 `maskStyleRaw == "dim"` 的行这里会画压暗、与导出一致，哪怕卡片上的胶囊
-    /// 因为 `SubtitleTreatment` 只有三档而把它显示成「模糊虚化」。
-    ///
-    /// 只挂在 `thumbnailView` 上是有意的：播放中播的是活动画面，SwiftUI 取不到 `AVPlayerLayer`
-    /// 的帧，糊不了 ⇒ 播放态退回只有描边手柄。**静止态才有效果预览。**
+    /// 播放态由 `AVVideoComposition` + 自定义合成器负责（见 `SubtitleMaskPreviewComposition`）：
+    /// 视频帧由窗口服务器合成，SwiftUI 覆盖层取不到 `AVPlayerLayer` 的帧，所以这里只画静帧。
+    /// 两边读同一张语义表（`SubtitleMaskRenderSpec`）与同一个半径 helper（`scaledBlurRadius`）。
     @ViewBuilder private var maskTreatmentPreview: some View {
         let mode = SubtitleMaskMode.from(hasHardSubtitle: segment.hasHardSubtitle,
                                          maskStyleRaw: segment.maskStyleRaw)
@@ -1931,6 +1946,7 @@ struct SegmentInlinePlayer: View {
                     // ⚠️ 旧写法是「整块 9:16 画布糊完再裁」—— 代价 ∝ 画布面积，卡片一多滚动就掉帧；
                     // 现在代价 ∝ 带面积，且和导出一样只吃带内像素。
                     let r = mode.previewBlurRadius(displayWidth: geo.size.width,
+                                                   displayCropWidth: px.width,
                                                    displayCropHeight: px.height)
                     let bleed = r * 2
                     Image(nsImage: image)
@@ -2006,6 +2022,9 @@ struct SegmentInlinePlayer: View {
         let avPlayer = AVPlayer(playerItem: item)
         avPlayer.actionAtItemEnd = .pause   // 到结尾停住，不回到开头、不循环
         self.player = avPlayer
+        // 与静止预览同一表达式；比例按**意图**在起播前定，避免中途翻转。
+        let maskMode = currentMaskMode
+        maskCompositionActive = maskMode != .none
         mode = .playing
 
         // 方案预览：有选中变体音频时静音视频原声（含原人声），改放「克隆人声 + 分离BGM」
@@ -2056,9 +2075,14 @@ struct SegmentInlinePlayer: View {
             Task { @MainActor in freezeAtLastFrame(endTime: endTime) }
         }
 
-        avPlayer.play()
-        dubPlayer?.play()
-        bgmPlayer?.play()
+        if maskMode == .none {
+            avPlayer.play()
+            dubPlayer?.play()
+            bgmPlayer?.play()
+        } else {
+            beginMaskedPlayback(avPlayer: avPlayer, item: item, videoPath: videoPath,
+                                maskMode: maskMode, startCMTime: startCMTime)
+        }
 
         // 固定 300ms 揭盖：覆盖帧与首帧同画面，无需精确同步首帧事件。
         // 不持有 Task 句柄——停止路径统一以 coverFirstFrame 复位为准。
@@ -2066,6 +2090,116 @@ struct SegmentInlinePlayer: View {
             try? await Task.sleep(for: .milliseconds(300))
             coverFirstFrame = false
         }
+    }
+
+    // MARK: - 播放态遮挡（时间轴渲染）
+
+    /// 先建 composition 再起播；100ms 没建完就先播、建好再热挂。
+    /// 视频与 dub/BGM 必须一起起播 —— 分开起会让配音比画面早/晚。
+    private func beginMaskedPlayback(avPlayer: AVPlayer, item: AVPlayerItem,
+                                     videoPath: String, maskMode: SubtitleMaskMode,
+                                     startCMTime: CMTime) {
+        maskBuildTask?.cancel()
+        // 起任务前把 SwiftData 的读做完（主线程）；工厂内部的 track 加载在协作线程池。
+        let build = Task { @MainActor in
+            try await SubtitleMaskPreviewCompositionFactory.make(
+                videoURL: URL(fileURLWithPath: videoPath),
+                maskRect: segment.maskRect, mode: maskMode)
+        }
+        maskBuildTask = build
+        let timeout = Task {
+            try? await Task.sleep(for: .milliseconds(100))
+        }
+        maskPlaybackTask = Task { @MainActor in
+            let readyFirst = await withTaskGroup(of: Bool.self) { group in
+                group.addTask {
+                    _ = try? await build.value
+                    return true
+                }
+                group.addTask {
+                    _ = await timeout.value
+                    return false
+                }
+                let first = await group.next() ?? false
+                group.cancelAll()
+                return first
+            }
+            if readyFirst {
+                do {
+                    let built = try await build.value
+                    guard self.player === avPlayer, self.mode != .idle else { return }
+                    self.attach(built, item: item)
+                    self.startPlayers(avPlayer, at: startCMTime)
+                } catch {
+                    MixLog.error("[MaskPreview] 合成构建失败：\(error)")
+                    self.maskCompositionActive = false
+                    if self.currentMaskMode != .none {
+                        SubtitleMaskPreviewFailureNotice.showOnce()
+                    }
+                    self.startPlayers(avPlayer, at: startCMTime)
+                }
+            } else {
+                guard self.player === avPlayer, self.mode != .idle else { return }
+                self.startPlayers(avPlayer, at: startCMTime)
+                do {
+                    let built = try await build.value
+                    guard self.player === avPlayer, self.mode != .idle else { return }
+                    self.attach(built, item: item)
+                } catch {
+                    MixLog.error("[MaskPreview] 超时后合成构建失败：\(error)")
+                    if self.currentMaskMode != .none {
+                        SubtitleMaskPreviewFailureNotice.showOnce()
+                    }
+                }
+            }
+        }
+    }
+
+    /// 挂合成前按**当前**遮挡设置再校一次：构建期间用户可能切到「直接烧录」或拖了遮挡框。
+    /// 不校就会把构建时的旧遮挡挂上去，且 `refreshMaskPreviewIfPlaying` 此刻还没有盒子可更新。
+    private func attach(_ built: SubtitleMaskPreviewBuild, item: AVPlayerItem) {
+        let currentMode = currentMaskMode
+        guard currentMode != .none else {
+            item.videoComposition = nil
+            maskCompositionActive = false
+            return
+        }
+        if let currentPlan = SubtitleMaskPreviewPlan.make(sourceSize: built.source.orientedSize,
+                                                          maskRect: segment.maskRect,
+                                                          mode: currentMode) {
+            built.configBox.update(currentPlan)
+        }
+        item.videoComposition = built.videoComposition
+        maskConfigBox = built.configBox
+        maskSource = built.source
+        maskCompositionActive = true
+    }
+
+    private func startPlayers(_ avPlayer: AVPlayer, at startCMTime: CMTime) {
+        guard player === avPlayer, mode == .playing else { return }
+        avPlayer.seek(to: startCMTime, toleranceBefore: .zero, toleranceAfter: .zero)
+        avPlayer.play()
+        dubPlayer?.play()
+        bgmPlayer?.play()
+    }
+
+    /// 播放中改遮挡：松手写库后下一帧生效；模式切 `.none` 才移除 composition。
+    private func refreshMaskPreviewIfPlaying() {
+        guard mode == .playing || mode == .paused || mode == .frozen else { return }
+        let newMode = currentMaskMode
+        if newMode == .none {
+            player?.currentItem?.videoComposition = nil
+            maskConfigBox = nil
+            maskSource = nil
+            maskCompositionActive = false
+            return
+        }
+        guard let box = maskConfigBox, let source = maskSource,
+              let plan = SubtitleMaskPreviewPlan.make(sourceSize: source.orientedSize,
+                                                      maskRect: segment.maskRect,
+                                                      mode: newMode) else { return }
+        box.update(plan)
+        maskCompositionActive = true
     }
 
     /// 播放到分镜结尾：暂停并定格在分镜最后一帧（endTime 前半帧），不回缩略图。
@@ -2106,6 +2240,13 @@ struct SegmentInlinePlayer: View {
         dubPlayer = nil
         bgmPlayer?.stop()
         bgmPlayer = nil
+        maskBuildTask?.cancel()
+        maskBuildTask = nil
+        maskPlaybackTask?.cancel()
+        maskPlaybackTask = nil
+        maskConfigBox = nil
+        maskSource = nil
+        maskCompositionActive = false
         player?.pause()
         player = nil
         mode = .idle

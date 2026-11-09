@@ -35,6 +35,8 @@
 		298BBD992CDC3FCAC1BA28A6 /* ShotEditSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0B9979BFB126617C6473DCA2 /* ShotEditSheet.swift */; };
 		2E068775441C4A393BF919B4 /* SidebarView.swift in Sources */ = {isa = PBXBuildFile; fileRef = ABD8F9A9C0310942473E8DD5 /* SidebarView.swift */; };
 		2F2F29B4C38B4AE88BA13BB2 /* SubtitleMaskMode.swift in Sources */ = {isa = PBXBuildFile; fileRef = AC2BF0CF6ACC41738BAA8B7B /* SubtitleMaskMode.swift */; };
+		AF000000000000000000006A /* SubtitleMaskPreviewRenderer.swift in Sources */ = {isa = PBXBuildFile; fileRef = AC000000000000000000002A /* SubtitleMaskPreviewRenderer.swift */; };
+		AF0000000000000000000069 /* SubtitleMaskPreviewPlan.swift in Sources */ = {isa = PBXBuildFile; fileRef = AC0000000000000000000029 /* SubtitleMaskPreviewPlan.swift */; };
 		2FEDBBDB578EB68D030C3405 /* HTTPRequestParser.swift in Sources */ = {isa = PBXBuildFile; fileRef = 92A3DDBAE61B507DA5444812 /* HTTPRequestParser.swift */; };
 		311C1EA134CAAC716A27A254 /* InlineVideoPlayer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 90F2AE8BC32F1C8343785BBE /* InlineVideoPlayer.swift */; };
 		346BCE1788D6A61E346051F7 /* PhysicalShot.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9CF0353E8D72771B05CD795D /* PhysicalShot.swift */; };
@@ -234,6 +236,7 @@
 		AE0000000000000000000038 /* ClipIngestService.swift in Sources */ = {isa = PBXBuildFile; fileRef = AE0000000000000000000039 /* ClipIngestService.swift */; };
 		AE0000000000000000000036 /* MaterialFolderScanner.swift in Sources */ = {isa = PBXBuildFile; fileRef = AE0000000000000000000037 /* MaterialFolderScanner.swift */; };
 		B2C10E4D5A671829304B6002 /* PlaybackCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2C10E4D5A671829304B6001 /* PlaybackCoordinator.swift */; };
+		AF0000000000000000000057 /* SubtitleMaskPreviewComposition.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF0000000000000000000058 /* SubtitleMaskPreviewComposition.swift */; };
 		B6847040AD0E4C4E1CFC2D19 /* ConcurrencyPolicy.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5E38824D4DD571ED6A70E3AB /* ConcurrencyPolicy.swift */; };
 		AF000000000000000000002A /* LocalWhisperGate.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF000000000000000000002B /* LocalWhisperGate.swift */; };
 		AF0000000000000000000037 /* MaterialAvailabilityStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF0000000000000000000038 /* MaterialAvailabilityStore.swift */; };
@@ -463,6 +466,8 @@
 		ABD8F9A9C0310942473E8DD5 /* SidebarView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SidebarView.swift; sourceTree = "<group>"; };
 		AC0700000000000000000002 /* KnowledgeDocumentFilter.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = KnowledgeDocumentFilter.swift; path = Sources/MixCutCore/KnowledgeDocumentFilter.swift; sourceTree = "<group>"; };
 		AC2BF0CF6ACC41738BAA8B7B /* SubtitleMaskMode.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = SubtitleMaskMode.swift; path = Sources/MixCutCore/SubtitleMaskMode.swift; sourceTree = "<group>"; };
+		AC000000000000000000002A /* SubtitleMaskPreviewRenderer.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = SubtitleMaskPreviewRenderer.swift; path = Sources/MixCutCore/SubtitleMaskPreviewRenderer.swift; sourceTree = "<group>"; };
+		AC0000000000000000000029 /* SubtitleMaskPreviewPlan.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = SubtitleMaskPreviewPlan.swift; path = Sources/MixCutCore/SubtitleMaskPreviewPlan.swift; sourceTree = "<group>"; };
 		AC9AEA63EB3F5902A10DAADE /* CaptionLine.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = CaptionLine.swift; path = Sources/MixCutCore/CaptionLine.swift; sourceTree = "<group>"; };
 		AD0000000000000000000001 /* TextChunker.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = TextChunker.swift; path = Sources/MixCutCore/TextChunker.swift; sourceTree = "<group>"; };
 		AD0000000000000000000002 /* ChineseTextTokenizer.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = ChineseTextTokenizer.swift; path = Sources/MixCutCore/ChineseTextTokenizer.swift; sourceTree = "<group>"; };
@@ -553,6 +558,7 @@
 		B17DCEA9CA4E8813E235B351 /* SchemaGuard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SchemaGuard.swift; sourceTree = "<group>"; };
 		B1C2D3E4F5A60718293A4B5C /* ASRSettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ASRSettings.swift; sourceTree = "<group>"; };
 		B2C10E4D5A671829304B6001 /* PlaybackCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlaybackCoordinator.swift; sourceTree = "<group>"; };
+		AF0000000000000000000058 /* SubtitleMaskPreviewComposition.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SubtitleMaskPreviewComposition.swift; sourceTree = "<group>"; };
 		B37CFECCAC0B22A7103027BF /* video_segmentation_prompt.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = video_segmentation_prompt.md; sourceTree = "<group>"; };
 		B3A7F2E91C4D58A30E6F1D2B /* QwenTTSClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QwenTTSClient.swift; sourceTree = "<group>"; };
 		B4C895AC8C650A48ECA7B1F0 /* Segment.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Segment.swift; sourceTree = "<group>"; };
@@ -825,6 +831,8 @@
 				BB22CC33DD44EE55FF6600AB /* SubtitleMaskRect.swift */,
 				CC00DD11EE22FF3344AA55BC /* CharBudget.swift */,
 				AC2BF0CF6ACC41738BAA8B7B /* SubtitleMaskMode.swift */,
+				AC000000000000000000002A /* SubtitleMaskPreviewRenderer.swift */,
+				AC0000000000000000000029 /* SubtitleMaskPreviewPlan.swift */,
 				EE55FF6611AA22BB33CC44DE /* AlignmentPlan.swift */,
 				AB01C0A1E5E04B2A9C010001 /* CoalescingLoader.swift */,
 				AB01C0A1E5E04B2A9C010003 /* LibraryRowLayout.swift */,
@@ -1004,6 +1012,7 @@
 				C0030000000000000000AA3 /* Research */,
 				C0040000000000000000AA4 /* Script */,
 				B2C10E4D5A671829304B6001 /* PlaybackCoordinator.swift */,
+				AF0000000000000000000058 /* SubtitleMaskPreviewComposition.swift */,
 			);
 			path = Services;
 			sourceTree = "<group>";
@@ -1470,6 +1479,8 @@
 				BB22CC33DD44EE55FF6600AA /* SubtitleMaskRect.swift in Sources */,
 				CC00DD11EE22FF3344AA55BB /* CharBudget.swift in Sources */,
 				2F2F29B4C38B4AE88BA13BB2 /* SubtitleMaskMode.swift in Sources */,
+				AF000000000000000000006A /* SubtitleMaskPreviewRenderer.swift in Sources */,
+				AF0000000000000000000069 /* SubtitleMaskPreviewPlan.swift in Sources */,
 				EE55FF6611AA22BB33CC44DD /* AlignmentPlan.swift in Sources */,
 				AB01C0A1E5E04B2A9C010002 /* CoalescingLoader.swift in Sources */,
 				AB01C0A1E5E04B2A9C010004 /* LibraryRowLayout.swift in Sources */,
@@ -1499,6 +1510,7 @@
 				F0A1B2C3D4E5F60718293C02 /* SegmentSelectionState.swift in Sources */,
 				F0A1B2C3D4E5F60718293D02 /* InspectorPresentationGating.swift in Sources */,
 				B2C10E4D5A671829304B6002 /* PlaybackCoordinator.swift in Sources */,
+				AF0000000000000000000057 /* SubtitleMaskPreviewComposition.swift in Sources */,
 				5C37778E86144BA7923334E9 /* VariantSelector.swift in Sources */,
 				51A558C4CA964DE784D34934 /* CaptionRenderer.swift in Sources */,
 				ACD67964B8E64312BDA84302 /* CaptionLayout.swift in Sources */,

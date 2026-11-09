@@ -441,15 +441,23 @@ struct DerivedMetricBasisTests {
         #expect(nominal > 0, "blur 档标称半径必须为正，否则这条测试什么都没测")
 
         // 基准 == 显示宽 ⇒ 不缩放（cropHeight 取到不会被 1/4 钳位的大小，专门测缩放这一半）
-        #expect(mode.previewBlurRadius(displayWidth: 1080, displayCropHeight: 800, canonicalWidth: 1080)
+        #expect(mode.previewBlurRadius(displayWidth: 1080, displayCropWidth: 1080,
+                                       displayCropHeight: 800, canonicalWidth: 1080)
                 == nominal)
         // 显示宽是基准的 2/3 ⇒ 半径也应是 2/3
-        let at720 = mode.previewBlurRadius(displayWidth: 720, displayCropHeight: 800, canonicalWidth: 1080)
+        let at720 = mode.previewBlurRadius(displayWidth: 720, displayCropWidth: 720,
+                                           displayCropHeight: 800, canonicalWidth: 1080)
         #expect(abs(at720 - nominal * 720 / 1080) < 0.001,
                 "720 宽上的半径应为 \(nominal * 720 / 1080)，实得 \(at720)")
         // 短边 1/4 的钳位必须仍然生效 —— 缩放算出来了也不能越过 ffmpeg 的硬限
-        let clamped = mode.previewBlurRadius(displayWidth: 1080, displayCropHeight: 40, canonicalWidth: 1080)
+        let clamped = mode.previewBlurRadius(displayWidth: 1080, displayCropWidth: 1080,
+                                             displayCropHeight: 40, canonicalWidth: 1080)
         #expect(clamped == 10, "裁面短边 40 ⇒ 半径上限 10，实得 \(clamped)")
+        // 钳位看的是**裁面宽**，不是画布宽：窄带 60 宽时上限 15，与导出
+        // `clampedRadius(cropWidth: 60, cropHeight: 400) == 15` 同一个数
+        let narrow = mode.previewBlurRadius(displayWidth: 1080, displayCropWidth: 60,
+                                            displayCropHeight: 800, canonicalWidth: 1080)
+        #expect(narrow == 15, "窄裁面 60 ⇒ 半径上限 15，实得 \(narrow)")
     }
 
     /// 本条不是"验证它不变"，而是**把量到的不不变性登记下来**，防止哪天有人以为换个基准是安全的。
