@@ -248,37 +248,28 @@ AI 提示词模板存放在 `MixCut/Resources/Prompts/`，通过 `PromptLoader` 
 - **不要自动提交 git 和发布版本**：修改代码后只做编译+重启+打包 DMG，不要执行 `git add/commit/push` 和 `gh release`。必须等用户验证没问题后，用户明确要求才能提交和发版。
 - **不要自作主张 `git tag` 或 `gh release create`**：版本号和发布时机由用户决定。
 
-### 分发方式（v0.7.1 起，现行）：DMG 走百度网盘，release 只放下载页链接
+### 分发方式（2026-11-10 起，现行）：DMG 直传 GitHub Release Assets
 
-DMG 内置 Whisper 大模型约 **1.6GB**，挂 GitHub Release 附件传得慢，所以不放附件（见下方链路：正文只指向下载页）。
-现行分发链路是 **固定下载页 + versions.json + 用户提供的网盘分享链接**：
+安装包直接作为 Release 附件分发，**不依赖任何外部下载页、网盘或自建服务器**。
 
-- **下载页**：http://47.119.175.47/mixcut/ （nginx `location ^~ /mixcut/` → `/www/wwwroot/dlpage/`）
-- **版本库**：`/www/wwwroot/dlpage/versions.json`，结构 `{"mac":[{version,date,size,url},…], "win":[…]}`，
-  每平台一个数组、**最新在最前**；主按钮取 `[0]`，弹窗列出全部历史版本（老链接一律保留）。
-- **发新版 = 往对应数组最前面 prepend 一条**，改完即时生效。
+> 历史说明：v0.7.1–v0.12.2 期间曾记有一套「固定下载页 + versions.json + 百度网盘」的链路，
+> 那个下载页地址并非本项目资产（是他人服务器），已于 2026-11-10 连同 `versions.json`、
+> 服务器 `CN_SSH_*` 凭据说明一并删除。别再把它写回来。
 
-**⚠️ 各自的职责边界（务必分清，我曾搞错）**：
-
-| 谁 | 做什么 |
-|---|---|
-| 我（Claude） | 只负责：bump 版本 → 打带版本号的 DMG → 提交/推送/打 tag → 发 GitHub release（**正文指向下载页，不传附件**） |
-| 用户 | 把桌面上的 DMG 传到**百度网盘**，把分享链接（含提取码）发给我 |
-| 我（拿到链接后） | 把链接 prepend 进服务器的 `versions.json` |
-
-> **绝对不要自作主张把 DMG 上传到服务器 `/dl/`**。那是早期方案的遗留兜底路径，现行流程里包由用户放网盘。
+- **硬上限**：GitHub Release 单个附件 **2 GiB**。当前包体 1.2GB，余量充足。
+  若将来重新逼近 2GiB，**先压包**（例如换更小的模型档位），不要拆包分卷 ——
+  拆出来的碎片同事不会用，而且每次发版都要手工重做。
+- **正文「下载」段直接指向本页 Assets**，不写任何外部下载页链接。
 
 **发版标准动作全序列**：
 1. bump 版本号（VERSION + pbxproj 两处 MARKETING_VERSION）→ clean Release universal 构建 → 打 `SunCut-v<版本>.dmg`
 2. 四项强制校验：主程序 `lipo -archs` == `x86_64 arm64`、5 个内置二进制均双架构、DMG 内 `CFBundleShortVersionString` == 目标版本、DMG 内含 `Licenses/`
-3. `git commit` → `git tag vX.Y.Z` → `git push origin main` → `git push origin vX.Y.Z`
-4. `gh release create vX.Y.Z --title … --notes-file …`（**不传 DMG**，正文「下载」段指向下载页）
-5. **等用户给百度网盘链接** → 更新服务器 `versions.json`
+3. `git commit` → `git tag -a vX.Y.Z` → `git push origin main` → `git push origin vX.Y.Z`
+4. `gh release create vX.Y.Z --title … --notes-file …`
+5. `gh release upload vX.Y.Z ~/Desktop/SunCut-vX.Y.Z.dmg`
 
-**凭据**：服务器 `CN_SSH_*` 在项目根 `.env`（gitignored，绝不提交/外传）。
-服务器登录用**密码**不是 key，且密码含特殊字符：
-- 绝不能 `source .env`（`#` 会截断密码）；要 `grep -E '^CN_SSH_PASSWORD=' .env | sed -E 's/^CN_SSH_PASSWORD=//; s/^"(.*)"$/\1/'`
-- ssh/scp 必须带 `-o PreferredAuthentications=password -o PubkeyAuthentication=no` + `sshpass`
+> **推送前必先 `git fetch`**：本仓有网页端直接改 README 的习惯，发版期间 main 可能前进。
+> 若 tag 已推送而 main 被拒，走 rebase + `git tag -f` 重指 + `git push --force` 更新 tag。
 
 （改已发版本的正文用 `gh release edit vX.Y.Z --notes-file`，不需要 release id。）
 
