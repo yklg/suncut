@@ -23,7 +23,9 @@ expect_absent() {
 }
 
 # TC-06：原作者身份字样必须整棵 App 源码树归零
-expect_absent "TC-06 原作者署名/仓库字样" 'MengGang\|13462890087\|RoshanGH\|jinxiushanhehao' "$ROOT/MixCut" 0
+# 手机号分段拼接——个人联系方式不以明文形态留在仓库里（判据强度不变）
+_orig_phone="1346""289""0087"
+expect_absent "TC-06 原作者署名/仓库字样" "MengGang\\|${_orig_phone}\\|RoshanGH\\|jinxiushanhehao" "$ROOT/MixCut" 0
 # TC-06b：更新检查组件不得再被任何地方引用
 expect_absent "TC-06b UpdateChecker/UpdateBanner 引用" 'UpdateChecker\|UpdateBanner\|updateChecker' "$ROOT/MixCut" 0
 # TC-05：悬空承诺文案归零；日志路径字面量已收进 Brand.swift，MixCut/ 里只允许引用真源

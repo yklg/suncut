@@ -42,7 +42,7 @@ v1 原写「删文件后重跑 `python3 generate_xcodeproj.py` 生成 pbxproj，
 |---|---|---|
 | `MixCut/App/ContentView.swift` | `:42` `@State updateChecker`、`:53-54` 注释 + `UpdateBanner(viewModel:)`、`:86` `updateChecker.checkSilently()` | `:120` 收尾注释 `// close VStack (UpdateBanner + HStack)` → `// close VStack` |
 | `MixCut/Views/Sidebar/SidebarView.swift` | `:16-18` 三个微信 `@State`、`:20-21` 注释 + `weChatID`、`:83-117` 侧边栏微信区块、`:337-363` `weChatCard`、`:365-372` `copyWeChatID()` | **保留** `:81` 的 `Divider()`（分隔导航区与底部「设置」）；删 `weChatCard` 时锚点不能吞掉后面的 `private var newProjectButton` 声明头 |
-| `MixCut/Views/Settings/SettingsView.swift` | `:466-478` 三个 `LabeledContent`（`MengGang` / `13462890087` / `RoshanGH/mixed_cut`） | 删后 `Section("关于")` 仍剩使用引导 + 键盘快捷键，结构完整 |
+| `MixCut/Views/Settings/SettingsView.swift` | `:466-478` 三个 `LabeledContent`（原作者姓名 / 手机号 / GitHub 账号） | 删后 `Section("关于")` 仍剩使用引导 + 键盘快捷键，结构完整 |
 
 ### 2.2 【P0-A】错误文案的悬空指引处置（v2 漏掉，评审新增）
 
@@ -145,7 +145,8 @@ v2 写"我不跑"是把系统性缺陷降格成个人纪律 —— 而仓库里�
 
 **残留清除**
 - 起 App：窗口顶部**无**紫蓝渐变横幅；侧边栏「设置」上方**无**「微信」行；设置页「关于」只剩使用引导 + 键盘快捷键
-- `grep -rn "MengGang\|13462890087\|RoshanGH\|jinxiushanhehao" MixCut/` = **0 命中**（整棵 App 源码树，不止三个文件）
+- 对四个上游标识（姓名 / 手机号 / GitHub 账号 / Gitee 账号）做 grep = **0 命中**（整棵 App 源码树，不止三个文件）
+  〔2026-11-10 更正：具体判据值不再以明文写在本文件里，见 `scripts/test_project_guards.sh` 的 TC-06〕
 - 启动期抓网络：对 `api.github.com` / `gitee.com` 的请求消失
 
 **工程契约**
@@ -238,7 +239,7 @@ v2 写"我不跑"是把系统性缺陷降格成个人纪律 —— 而仓库里�
 | TC-03 | 脚本 | 生成器守卫必须拒绝运行 | IN-01/CT-01 | `python3 generate_xcodeproj.py`（在含 `Sources/MixCutCore` 的本仓库根） | 退出码 **非 0**，stderr 含"手工维护/MixCutCore"原因与正确做法；**若静默成功即判红**（证明 P0-B 没落地） | **P0** |
 | TC-04 | 单元 | 日志路径降级等价类 | CFG-01 | `cachesDir` 正常 / 为 `nil` 两类入参 | 正常→`Caches/com.mixcut.app/logs/mixcut.log`；`nil`→`temporaryDirectory` 分支且目录被创建 | P1（**需 §8.5 下沉才成立**） |
 | TC-05 | 脚本 | 三条文案的路径来自真源 | CT-01 | `grep "导出诊断日志"` 必须 0 命中；`grep "com.mixcut.app/logs"` 在 `MixCut/` 只剩 1 处真源；`grep "MixLog\.logFileURL"` = **3**（每条用户文案各引用一次） | 命中数不符即红 | P1 |
-| TC-06 | 脚本 | 原作者身份字符串归零 | INV-01 | `grep -rn "MengGang\|13462890087\|RoshanGH\|jinxiushanhehao" MixCut/` | 必须 0 命中（整棵 App 源码树，不止 §2.1 那三个文件） | **P0** |
+| TC-06 | 脚本 | 原作者身份字符串归零 | INV-01 | 对四个标识（姓名 / 手机号 / GitHub / Gitee）grep `MixCut/` | 必须 0 命中（整棵 App 源码树，不止 §2.1 那三个文件） | **P0** |
 | TC-07 | 脚本 | 守卫无旁路开关 | IN-04 | `python3 generate_xcodeproj.py --force` 等常见绕过参数 | 仍然非 0 退出（证明不是"看参数的软提醒"） | P1 |
 | TC-08 | E2E | 真实失败时读到新文案且路径可打开 | OBS-01 | 断网触发一次 AI 分析失败 → 读 toast → 用该路径确认文件存在 | 人工判据，**须走用户入口**（不许直接调 service 预置状态） | P1 |
 
