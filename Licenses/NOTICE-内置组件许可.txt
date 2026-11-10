@@ -81,16 +81,20 @@ GPL-3 全文见同目录 GPL-3.0.txt。
   ⚠️ 同上，本轮**未逐字核验**；demucs.cpp 依赖的 Meta demucs 权重与模型授权见第 5 项。
 
 
-4. 语音模型 ggml-large-v3.bin
+4. 语音模型 ggml-large-v3-q5_0.bin
 -------------------------------------------------
 文件与体积（字节）：
-  ggml-large-v3.bin  3,095,033,483
+  ggml-large-v3-q5_0.bin  1,081,140,203
+档位说明：OpenAI Whisper large-v3 权重的 **5-bit（q5_0）量化版**，由 whisper.cpp 官方发布。
+  2026-11-10 起随包内置；此前内置的是 f16 的 ggml-large-v3.bin（3,095,033,483 字节），
+  换档原因是前者使包体超过 GitHub Release 单附件 2GiB 上限、安装包无法进 Assets。
+  量化不改权重来源与计算图，只是把参数位宽从 16 位压到 5 位。
 上游下载地址（本仓构建脚本实际使用的地址）：
-  https://hf-mirror.com/ggerganov/whisper.cpp/resolve/main/ggml-large-v3.bin
-  备用：https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3.bin
-对应模型权重原始来源：OpenAI Whisper large-v3。
+  https://hf-mirror.com/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-q5_0.bin
+  备用：https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-q5_0.bin
+对应模型权重原始来源：OpenAI Whisper large-v3（经 whisper.cpp 官方 q5_0 量化）。
 授权：以上游 HuggingFace 仓库页面与 OpenAI 官方发布的模型授权页为准。
-  ⚠️ 本轮**未核验**该权重文件的再分发条款；它占了这份包体积的绝大部分，
+  ⚠️ 本轮**未核验**该权重文件的再分发条款；它仍占这份包体积的绝大部分（约四分之三），
      对外公开发布前这一项必须先确认。
 
 

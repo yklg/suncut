@@ -54,10 +54,13 @@ for pat in 'FileManager' 'import SwiftData' 'Process()' 'KeychainHelper'; do
 done
 
 # G3 三条裁定项不许被静默改动（档位、默认偏好、根顺序）
-if grep -q 'engineTier: String = "large-v3"' "$CORE/ASRPolicy.swift" 2>/dev/null; then
-  pass "G3a 恒用档位仍是 large-v3"
+# 2026-11-10：档位由 "large-v3" 改为 "large-v3-q5_0"，是用户拍板的**量化换档**
+# （权重仍是 large-v3，只为把包体压到 GitHub 单附件 2GiB 以下），不是静默降档。
+# 判据仍然只认这一个值 —— 要再动它，照样得回计划对齐 + 改这里。
+if grep -q 'engineTier: String = "large-v3-q5_0"' "$CORE/ASRPolicy.swift" 2>/dev/null; then
+  pass "G3a 恒用档位仍是 large-v3 家族（当前 large-v3-q5_0 量化档）"
 else
-  fail "G3a ASRPolicy.engineTier 不再是 \"large-v3\"（档位是用户裁定项，改动要回计划对齐）"
+  fail "G3a ASRPolicy.engineTier 不再是 \"large-v3-q5_0\"（档位是用户裁定项，改动要回计划对齐）"
 fi
 if grep -q 'defaultPreference: ASRPreference = .local' "$CORE/ASRPolicy.swift" 2>/dev/null; then
   pass "G3b 默认偏好仍是强制本地"
@@ -158,10 +161,10 @@ if [[ -n "$policy_file" && "$policy_file" == "$script_file" ]]; then
 else
   fail "G17 打包链与运行期分家：脚本装的是 '${script_file:-取不到}'，ASRPolicy 裁定的是 '${policy_file:-取不到}'"
 fi
-# 精确体积闸门也要跟档位表同源（表里 large-v3 = 3,095,033,483）
+# 精确体积闸门也要跟档位表同源（2026-11-10 起表里内置档是 large-v3-q5_0 = 1,081,140,203）
 wmin=$(grep -o '^WMIN=[0-9]*' "$ROOT/scripts/build_universal_binaries.sh" 2>/dev/null | cut -d= -f2)
-if [[ -n "$wmin" && "$wmin" -le 3095033483 && "$wmin" -gt 2900000000 ]]; then
-  pass "G17b 打包体积闸门 $wmin 落在 large-v3 真实字节数量级内"
+if [[ -n "$wmin" && "$wmin" -le 1081140203 && "$wmin" -gt 1000000000 ]]; then
+  pass "G17b 打包体积闸门 $wmin 落在 large-v3-q5_0 真实字节数量级内"
 else
   fail "G17b 打包体积闸门异常（${wmin}）：太低会把半截文件当成功，太高会把正常文件判成要重下"
 fi

@@ -109,20 +109,24 @@ if [ ! -f "$MODEL" ]; then
     || curl -sL "https://huggingface.co/datasets/Retrobear/demucs.cpp/resolve/main/ggml-model-htdemucs-4s-f16.bin" -o "$MODEL"
 fi
 
-# Whisper ASR 模型（架构无关，~2.9GB）：内置进包，App 完全自包含、无需运行时下载。
+# Whisper ASR 模型（架构无关，~1.08GB）：内置进包，App 完全自包含、无需运行时下载。
 # 缺失或体积不足（下了半个）则从国内镜像重新下载。国内镜像优先，超时/失败切原站。
 #
 # ⚠️ 真源是 `Sources/MixCutCore/ASRPolicy.swift` 的 `engineTier`/`engineFileName`
 #    与 `Sources/MixCutCore/WhisperModelCatalog.swift` 的档位表（精确字节数在那张表里）。
 #    这里改档位必须同时改那两个宿主，否则打包版与本机版跑的不是同一颗模型（红线 R7）。
 #    一致性由 `scripts/check_asr_guards.sh` 的 G17 判据钉住，改动会被守卫拦下。
-WMODEL="$DEST/ggml-large-v3.bin"
-WMIN=3000000000
+#
+# 2026-11-10：f16 `large-v3`（3,095,033,483B）换成 5-bit 量化的 `large-v3-q5_0`
+# （1,081,140,203B）。定性是**量化**不是降档 —— 权重仍是 large-v3，只为把包体压到
+# GitHub Release 单附件 2GiB 上限以下。WMIN 按原严格度（96.9%）折算。
+WMODEL="$DEST/ggml-large-v3-q5_0.bin"
+WMIN=1048000000
 WSIZE=$([ -f "$WMODEL" ] && stat -f%z "$WMODEL" 2>/dev/null || echo 0)
 if [ "$WSIZE" -lt "$WMIN" ]; then
-  echo "==> 下载 Whisper 模型 ggml-large-v3 (~2.9GB)"
-  curl -fL --retry 3 --retry-delay 2 "https://hf-mirror.com/ggerganov/whisper.cpp/resolve/main/ggml-large-v3.bin" -o "$WMODEL" \
-    || curl -fL --retry 3 --retry-delay 2 "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3.bin" -o "$WMODEL"
+  echo "==> 下载 Whisper 模型 ggml-large-v3-q5_0 (~1.08GB)"
+  curl -fL --retry 3 --retry-delay 2 "https://hf-mirror.com/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-q5_0.bin" -o "$WMODEL" \
+    || curl -fL --retry 3 --retry-delay 2 "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-q5_0.bin" -o "$WMODEL"
 fi
 
 echo "✅ 完成。全部为静态自包含 universal（含内置 Whisper/demucs 模型），无需 dylib、无需运行时下载。"

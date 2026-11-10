@@ -53,7 +53,7 @@ EOF
   cat >> "$dirty/Sources/MixCutCore/TextProvenance.swift" <<'EOF'
 let probeG2 = FileManager.default.temporaryDirectory
 EOF
-  sed -i '' 's/engineTier: String = "large-v3"/engineTier: String = "base"/' \
+  sed -i '' 's/engineTier: String = "large-v3-q5_0"/engineTier: String = "base"/' \
     "$dirty/Sources/MixCutCore/ASRPolicy.swift"
   sed -i '' 's/defaultPreference: ASRPreference = .local/defaultPreference: ASRPreference = .auto/' \
     "$dirty/Sources/MixCutCore/ASRPolicy.swift"
@@ -102,8 +102,8 @@ func probeG16(_ r: SegmentTranscriber.Result) { if r.outcome == .replaced { prin
 EOF
   sed -i '' 's/func transcribeAudioFile(path:/func transcribeAudioFileRenamed(path:/' "$dirty/MixCut/Services/ASR/ASRService.swift"
   # --- 2d：能力面与打包链 ---
-  sed -i '' 's|WMODEL="\$DEST/ggml-large-v3.bin"|WMODEL="$DEST/ggml-base.bin"|' "$dirty/scripts/build_universal_binaries.sh"
-  sed -i '' 's/^WMIN=3000000000/WMIN=1600000000/' "$dirty/scripts/build_universal_binaries.sh"
+  sed -i '' 's|WMODEL="\$DEST/ggml-large-v3-q5_0.bin"|WMODEL="$DEST/ggml-base.bin"|' "$dirty/scripts/build_universal_binaries.sh"
+  sed -i '' 's/^WMIN=1048000000/WMIN=1600000000/' "$dirty/scripts/build_universal_binaries.sh"
   cat >> "$dirty/MixCut/Services/MCP/MCPSegmentToolHandlers.swift" <<'EOF'
 let probeG18 = KeychainHelper.getAPIKey(for: .qwen)
 EOF

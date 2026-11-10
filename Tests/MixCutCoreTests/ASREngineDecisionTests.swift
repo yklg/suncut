@@ -152,7 +152,9 @@ struct ASREngineDecisionTests {
                                                      hasCloudKey: false, local: readyLocal)
             #expect(asNil == asDefault, "\(purpose)：nil 与默认偏好结论不同，等于多出一处隐含默认值")
         }
-        #expect(ASRPolicy.engineTier == "large-v3", "恒用档位这条裁定被改动：\(ASRPolicy.engineTier)")
+        // 2026-11-10：档位改为 large-v3-q5_0（用户拍板的量化换档，权重仍是 large-v3）。
+        // 这条断言的作用不变 —— 它钉的是"恒用单档、不许暗降级"。
+        #expect(ASRPolicy.engineTier == "large-v3-q5_0", "恒用档位这条裁定被改动：\(ASRPolicy.engineTier)")
     }
 
     // MARK: TC-77 缺凭据不许静默改路线
