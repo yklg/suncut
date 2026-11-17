@@ -105,6 +105,10 @@ struct ContentView: View {
     @State private var selectedNavItem: NavigationItem? = .overview
 
     @AppStorage("hasCompletedOnboarding") private var hasCompletedOnboarding = false
+    /// 模型单步"稍后"标记：一旦 true 永久不再自动弹（计划 §6，入口转入侧栏/设置页）。
+    @AppStorage(Brand.dismissedModelStepKey) private var dismissedModelStep = false
+    /// 模型状态唯一宿主；老用户升级后无模型时据此决定是否弹模型单步引导。
+    @State private var modelInstaller = WhisperModelInstaller.shared
     @State private var sidebarVisible = true
     @State private var showShortcuts = false
 
@@ -216,14 +220,32 @@ struct ContentView: View {
         }
         .frame(minWidth: 900, minHeight: 600)
         .sheet(isPresented: Binding(
-            get: { !hasCompletedOnboarding },
+            get: { showsOnboarding },
             set: { newValue in
-                if !newValue { hasCompletedOnboarding = true }
+                if !newValue { dismissOnboarding() }
             }
         )) {
-            OnboardingView {
-                hasCompletedOnboarding = true
+            OnboardingView(modelOnlyMode: hasCompletedOnboarding) {
+                dismissOnboarding()
             }
+        }
+        .onAppear { modelInstaller.refresh() }
+    }
+
+    /// 是否弹引导：新用户走完整 6 步；老用户（已完成引导）在引擎档需下载且没点过"稍后"时，
+    /// 只弹模型单步。dismissedModelStep 一旦 true 永久不再自动弹（设计，不是 bug）。
+    private var showsOnboarding: Bool {
+        if !hasCompletedOnboarding { return true }
+        // 老用户：等首次扫描完成再决定，避免"模型已就绪却因初始空报告闪一下下载页"
+        return modelInstaller.hasScanned && modelInstaller.needsDownload && !dismissedModelStep
+    }
+
+    /// 关闭引导：完整引导置 hasCompletedOnboarding；模型单步置 dismissedModelStep。
+    private func dismissOnboarding() {
+        if !hasCompletedOnboarding {
+            hasCompletedOnboarding = true
+        } else {
+            dismissedModelStep = true
         }
     }
 

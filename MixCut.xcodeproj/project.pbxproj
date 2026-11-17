@@ -247,6 +247,7 @@
 		BF61B1F09D7771C6EF580BA9 /* FlowLayout.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5D595E4E7B57C7DF05BBB26E /* FlowLayout.swift */; };
 		C10C9C5291842D9A3C95095B /* SchemaGuard.swift in Sources */ = {isa = PBXBuildFile; fileRef = B17DCEA9CA4E8813E235B351 /* SchemaGuard.swift */; };
 		C1633D8EFDD046447BBE6803 /* ASRService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 259B534F647959929858EEAE /* ASRService.swift */; };
+		AF000000000000000000006B /* WhisperModelInstaller.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF000000000000000000006C /* WhisperModelInstaller.swift */; };
 		C1B88F29FF9DEC12AE35307E /* Video.swift in Sources */ = {isa = PBXBuildFile; fileRef = DCC2B67D64CE6EB9CF9C1E6E /* Video.swift */; };
 		C1D2E3F4A5B60718293A4B5C /* FrameTime.swift in Sources */ = {isa = PBXBuildFile; fileRef = D2E3F4A5B6C70819203A4B5D /* FrameTime.swift */; };
 		C2D3E4F5A6B1C718293A4B5D /* ASRSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1C2D3E4F5A60718293A4B5C /* ASRSettings.swift */; };
@@ -348,6 +349,7 @@
 		1CC212CC8B46714F25F63E1D /* Project.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Project.swift; sourceTree = "<group>"; };
 		20E690500D19E15B4DD3CF7A /* CaptionTimingEditorSheet.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = CaptionTimingEditorSheet.swift; sourceTree = "<group>"; };
 		259B534F647959929858EEAE /* ASRService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ASRService.swift; sourceTree = "<group>"; };
+		AF000000000000000000006C /* WhisperModelInstaller.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WhisperModelInstaller.swift; sourceTree = "<group>"; };
 		2C8F61D4A95B3E70C82D4F16 /* ProjectDataReadiness.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = ProjectDataReadiness.swift; path = Sources/MixCutCore/ProjectDataReadiness.swift; sourceTree = "<group>"; };
 		2DEF5175904C2A272B9CDE44 /* SentenceTimingAligner.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = SentenceTimingAligner.swift; path = Sources/MixCutCore/SentenceTimingAligner.swift; sourceTree = "<group>"; };
 		2DF8DE894214A5E2C1B54FE0 /* TTSClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TTSClient.swift; sourceTree = "<group>"; };
@@ -988,6 +990,7 @@
 			isa = PBXGroup;
 			children = (
 				259B534F647959929858EEAE /* ASRService.swift */,
+				AF000000000000000000006C /* WhisperModelInstaller.swift */,
 				9035446AE8044D9B846BA19A /* QwenASRClient.swift */,
 				A1B2C3D4E5F60718293A0003 /* SegmentTranscriber.swift */,
 				B1C2D3E4F5A60718293A4B5C /* ASRSettings.swift */,
@@ -1393,6 +1396,7 @@
 				A1B2C3D4E5F60718293A0004 /* SegmentTranscriber.swift in Sources */,
 				C2D3E4F5A6B1C718293A4B5D /* ASRSettings.swift in Sources */,
 				C1633D8EFDD046447BBE6803 /* ASRService.swift in Sources */,
+				AF000000000000000000006B /* WhisperModelInstaller.swift in Sources */,
 				B1DFB11FBFFAEC5B94951276 /* BoundaryOptimizerService.swift in Sources */,
 				AE1D0C0F1234567890ABCDE1 /* SegmentCommitter.swift in Sources */,
 				AE0000000000000000000038 /* ClipIngestService.swift in Sources */,

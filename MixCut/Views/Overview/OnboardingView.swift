@@ -6,7 +6,18 @@ struct OnboardingView: View {
     let onComplete: () -> Void
 
     @State private var step: Int = 0
-    private let totalSteps = 5
+    /// 6 步：欢迎 → 模型下载 → API Key → 导入 → 生成 → Agent（模型页为首次启动下载入口）。
+    private let totalSteps = 6
+    /// 模型状态读 installer 唯一宿主；"稍后"由 ContentView 的 dismissedModelStep 管。
+    @State private var modelInstaller = WhisperModelInstaller.shared
+    @AppStorage(Brand.dismissedModelStepKey) private var dismissedModelStep = false
+    /// 本页是否从"老用户单步弹窗"进来（只看模型一步，跳过其余）。
+    let modelOnlyMode: Bool
+
+    init(modelOnlyMode: Bool = false, onComplete: @escaping () -> Void) {
+        self.modelOnlyMode = modelOnlyMode
+        self.onComplete = onComplete
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -31,13 +42,19 @@ struct OnboardingView: View {
 
     @ViewBuilder
     private var content: some View {
-        switch step {
-        case 0: welcomePage
-        case 1: apiKeyPage
-        case 2: importPage
-        case 3: generatePage
-        case 4: agentPage
-        default: EmptyView()
+        if modelOnlyMode {
+            // 老用户单步：只显示模型下载页，其余步骤不出现
+            modelPage
+        } else {
+            switch step {
+            case 0: welcomePage
+            case 1: modelPage
+            case 2: apiKeyPage
+            case 3: importPage
+            case 4: generatePage
+            case 5: agentPage
+            default: EmptyView()
+            }
         }
     }
 
@@ -66,6 +83,81 @@ struct OnboardingView: View {
             .background(.quaternary.opacity(DesignTokens.Palette.Alpha.subtle * 2))
             .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
         }
+    }
+
+    /// 模型下载页（首启引导第 2 步 / 老用户单步）。四态 UI 全读 installer 唯一宿主。
+    private var modelPage: some View {
+        VStack(spacing: 18) {
+            Image(systemName: "waveform.and.magnifyingglass")
+                .font(.system(size: 50))
+                .foregroundStyle(.blue)
+
+            VStack(spacing: 6) {
+                Text("第 2 步 · 下载语音识别模型")
+                    .font(.system(size: 22, weight: .bold))
+                Text("首次使用需下载约 1 GB 的本地识别模型，之后离线可用、台词不上传云端")
+                    .font(DesignTokens.Typography.label)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+            }
+
+            VStack(alignment: .leading, spacing: DesignTokens.Spacing.normal) {
+                switch modelInstaller.phase {
+                case .downloading, .verifying:
+                    VStack(spacing: 10) {
+                        if let p = modelInstaller.progress, p.totalBytes > 0 {
+                            ProgressView(value: p.fraction).controlSize(.small)
+                            HStack {
+                                Text(String(format: "%.1f%%", p.fraction * 100))
+                                    .font(.system(size: 12, weight: .semibold, design: .monospaced))
+                                Text("\(ByteCountFormatter.string(fromByteCount: p.receivedBytes, countStyle: .binary)) / \(ByteCountFormatter.string(fromByteCount: p.totalBytes, countStyle: .binary))")
+                                    .font(DesignTokens.Typography.microRegular)
+                                    .foregroundStyle(.secondary)
+                            }
+                        } else {
+                            ProgressView().controlSize(.small)
+                            Text("连接国内镜像…").font(DesignTokens.Typography.caption).foregroundStyle(.secondary)
+                        }
+                        Button("取消") { modelInstaller.cancel() }.controlSize(.small)
+                    }
+                default:
+                    if modelInstaller.needsDownload {
+                        OnboardingBullet(icon: "arrow.down.circle", color: .blue,
+                                         text: "国内镜像下载，支持断点续传")
+                        OnboardingBullet(icon: "checkmark.shield", color: .green,
+                                         text: "下载后自动校验体积与内容完整性")
+                        OnboardingBullet(icon: "hand.raised", color: .orange,
+                                         text: "可稍后在「设置 → 通用」里下载")
+                        Button {
+                            modelInstaller.start()
+                        } label: {
+                            Label("开始下载 \(ASRPolicy.engineTier)", systemImage: "arrow.down.circle.fill")
+                                .font(DesignTokens.Typography.labelStrong)
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .controlSize(.regular)
+                        if case .failed(let error) = modelInstaller.phase {
+                            Text(error)
+                                .font(DesignTokens.Typography.microRegular)
+                                .foregroundStyle(.red)
+                                .lineLimit(3)
+                        }
+                    } else {
+                        HStack(spacing: DesignTokens.Spacing.tight) {
+                            Image(systemName: "checkmark.circle.fill")
+                                .foregroundStyle(.green)
+                            Text("语音模型已就绪，可以开始使用了")
+                                .font(DesignTokens.Typography.body)
+                        }
+                    }
+                }
+            }
+            .padding(18)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(.quaternary.opacity(DesignTokens.Palette.Alpha.subtle * 2))
+            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        }
+        .onAppear { modelInstaller.refresh() }
     }
 
     private var apiKeyPage: some View {
@@ -132,7 +224,7 @@ struct OnboardingView: View {
             .background(.quaternary.opacity(DesignTokens.Palette.Alpha.subtle * 2))
             .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
 
-            Text("💡 语音识别模型已内置，装完即用、无需联网下载")
+            Text("💡 语音识别模型在第一步已下载到本地，识别全程离线、台词不上传")
                 .font(DesignTokens.Typography.caption)
                 .foregroundStyle(.tertiary)
         }
@@ -208,6 +300,7 @@ struct OnboardingView: View {
     private var footer: some View {
         HStack {
             Button("跳过") {
+                if modelOnlyMode { dismissedModelStep = true }
                 onComplete()
             }
             .buttonStyle(.plain)
@@ -216,27 +309,39 @@ struct OnboardingView: View {
 
             Spacer()
 
-            HStack(spacing: 6) {
-                ForEach(0..<totalSteps, id: \.self) { idx in
-                    Circle()
-                        .fill(idx == step ? Color.accentColor : Color.secondary.opacity(0.25))
-                        .frame(width: 7, height: 7)
-                        .animation(DesignTokens.Motion.transition, value: step)
+            if !modelOnlyMode {
+                HStack(spacing: 6) {
+                    ForEach(0..<totalSteps, id: \.self) { idx in
+                        Circle()
+                            .fill(idx == step ? Color.accentColor : Color.secondary.opacity(0.25))
+                            .frame(width: 7, height: 7)
+                            .animation(DesignTokens.Motion.transition, value: step)
+                    }
                 }
             }
 
             Spacer()
 
             HStack(spacing: DesignTokens.Spacing.compact) {
-                if step > 0 {
+                if !modelOnlyMode && step > 0 {
                     Button("上一步") {
                         withAnimation(DesignTokens.Motion.transition) { step -= 1 }
                     }
                     .controlSize(.regular)
                 }
 
-                if step < totalSteps - 1 {
-                    Button("下一步") {
+                if modelOnlyMode {
+                    // 老用户单步：点"完成"即标记稍后（永久不再自动弹，入口转入侧栏/设置页）
+                    Button("完成") {
+                        dismissedModelStep = true
+                        onComplete()
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.regular)
+                    .keyboardShortcut(.defaultAction)
+                } else if step < totalSteps - 1 {
+                    // 模型步骤的"下一步"允许跳过（稍后可在设置页下载）
+                    Button(step == 1 ? "下一步（可稍后下载）" : "下一步") {
                         withAnimation(DesignTokens.Motion.transition) { step += 1 }
                     }
                     .buttonStyle(.borderedProminent)

@@ -22,8 +22,10 @@ APP_FILES=(Services/ASR/ASRService.swift Services/ASR/ASRSettings.swift Services
            # 步骤①"干净树必须全绿"这条自证根本没机会看到那个文件。补进来之后，判据的文件清单与真树
            # 差多少，步骤① 就会红多少，手抄子集这件事本身变成会红的事。
            Services/TTS/VocalSeparationService.swift
+           Services/ASR/WhisperModelInstaller.swift
            App/DebugSelfTest.swift ViewModels/ImportViewModel.swift
            Views/Settings/SettingsView.swift Views/Sidebar/SidebarView.swift
+           Views/Overview/OnboardingView.swift
            Models/Segment.swift Models/SegmentDub.swift Models/Video.swift
            Services/MCP/MCPSegmentToolHandlers.swift Services/MCP/MCPToolHandlers.swift
            Views/SegmentLibrary/SegmentVariantInspector.swift)
@@ -102,8 +104,20 @@ func probeG16(_ r: SegmentTranscriber.Result) { if r.outcome == .replaced { prin
 EOF
   sed -i '' 's/func transcribeAudioFile(path:/func transcribeAudioFileRenamed(path:/' "$dirty/MixCut/Services/ASR/ASRService.swift"
   # --- 2d：能力面与打包链 ---
-  sed -i '' 's|WMODEL="\$DEST/ggml-large-v3-q5_0.bin"|WMODEL="$DEST/ggml-base.bin"|' "$dirty/scripts/build_universal_binaries.sh"
-  sed -i '' 's/^WMIN=1048000000/WMIN=1600000000/' "$dirty/scripts/build_universal_binaries.sh"
+  # G17b：把引擎档精确字节抹成 nil ⇒ 档位三件套不再同源（缺 expectedBytes）
+  sed -i '' 's/expectedBytes: 1_081_140_203,/expectedBytes: nil,/' \
+    "$dirty/Sources/MixCutCore/WhisperModelCatalog.swift"
+  # G17c：注入一个境外源 downloadURLs 代码行 ⇒ url_lines != mirror_hits
+  cat >> "$dirty/Sources/MixCutCore/WhisperModelCatalog.swift" <<'EOF'
+// probe G17c
+let probeG17c = WhisperTier(name: "probe", fileName: "ggml-probe.bin", expectedBytes: 1,
+                            downloadURLs: ["https://huggingface.co/ggerganov/whisper.cpp/resolve/main/probe.bin"])
+EOF
+  # G17d：抹掉能力面的 engine_state 字段
+  sed -i '' 's/model\["engine_state"\]/model["engine_stateRenamed"]/' \
+    "$dirty/MixCut/Services/MCP/MCPToolHandlers.swift"
+  # G7a：旧注入点在 SidebarView（下载调用点白名单已改为 installer，Sidebar 处新增仍应红）
+
   cat >> "$dirty/MixCut/Services/MCP/MCPSegmentToolHandlers.swift" <<'EOF'
 let probeG18 = KeychainHelper.getAPIKey(for: .qwen)
 EOF

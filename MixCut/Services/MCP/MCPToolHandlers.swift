@@ -95,6 +95,19 @@ final class MCPToolHandlers {
 
     // MARK: - 语音识别能力面（只读）
 
+    /// 引擎态转可读字符串（唯一映射点，与设置页文案各管各的显示层）。
+    private static func engineStateText(_ state: EngineModelState?) -> Any {
+        guard let state else { return NSNull() }
+        switch state {
+        case .missing: return "missing"
+        case .truncated(let expected, let actual):
+            return "truncated(expected: \(expected), actual: \(actual))"
+        case .badHeader: return "bad_header"
+        case .readyUnverified: return "ready_unverified"
+        case .ready: return "ready"
+        }
+    }
+
     /// `get_asr_status`：报现状与"这次会走哪条"。
     ///
     /// **同源是这一面的全部意义**（红线 R3）：每个字段都取自 `ASRPolicy` / `WhisperModelCatalog` /
@@ -103,7 +116,8 @@ final class MCPToolHandlers {
     ///
     /// 安全线：云端凭据**只回布尔**。不回 Key、不回长度、不回前缀、不回尾字符（计划 §6 SEC-01）。
     private func getASRStatus() throws -> Outcome {
-        let report = ASRService.modelReport()
+        // 带引擎档参数 ⇒ report.engineState 有值，能力面与设置页/引导页同源（R3）
+        let report = ASRService.modelReport(engine: ASRService.engineTier)
         let storedPreference = ASRSettings.storedPreference
         let hasCloudKey = ASRSettings.hasCloudKey
         let local = LocalASRState(usable: report.usable, tier: report.selectedTier)
@@ -163,6 +177,11 @@ final class MCPToolHandlers {
         } else {
             model["expected_bytes"] = NSNull()
         }
+        // 引擎档状态（R3 同源）：设置页/侧栏/引导页读 WhisperModelInstaller.report，
+        // 能力面读这里 —— 两处都派生自同一个 Core 的 ModelReport.engineState，不各判各的。
+        // 报字符串便于外部 Agent 读；nil（Core 未配引擎档）报 null。
+        model["engine_state"] = Self.engineStateText(report.engineState)
+        model["needs_download"] = report.engineState.map { $0 != .ready } ?? true
         model["layer_2_to_4_hints"] = report.issues.map(\.userText)
         model["detected_but_unused"] = report.detected.dropFirst()
             .map { WhisperModelCatalog.tier(ofFileName: $0.fileName) ?? $0.fileName }

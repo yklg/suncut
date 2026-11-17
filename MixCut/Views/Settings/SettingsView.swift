@@ -27,17 +27,18 @@ struct SettingsView: View {
     @State private var isQwenKeySaved = false
     /// 语音与画面卡的操作结果，只在本卡操作行内显示（与 apiKeyNotice 物理隔离）。
     @State private var qwenSaveNotice: (ok: Bool, message: String)?
-    @State private var isDownloadingModel = false
-    @State private var modelDownloadError: String?
-    @State private var downloadProgress: DownloadProgress?
-    @State private var downloadTask: Task<Void, Never>?
-    /// 模型探测结果（档位 / 来自哪个根 / 未使用的其他档 / L2~L4 提示）。界面只显示它，不在这里做判定。
-    @State private var modelReport = ModelReport(selected: nil, selectedTier: nil, usable: false, issues: [])
+    /// 模型状态的**唯一宿主**（档位 / 来自哪个根 / 引擎态 / 下载进度）。
+    /// 此前本页自持一份 `modelReport`，与 installer 会显示"档位 A + 状态 B"的错配（计划 v4 ⑨）。
+    @State private var modelInstaller = WhisperModelInstaller.shared
+    /// 模型探测结果：只读 installer 的唯一报告，本页不再 stat、不再自持缓存。
+    private var modelReport: ModelReport { modelInstaller.report }
     /// 只读布尔：Key 的任何片段都不进界面，读 Keychain 也放后台队列。
     @State private var hasCloudKey = false
     @AppStorage(ASRSettings.preferenceKey) private var asrPreferenceRaw = ""
 
     @AppStorage("hasCompletedOnboarding") private var hasCompletedOnboarding = false
+    /// 模型单步引导的"稍后"标记（计划 §6）：重置引导时一并清零，否则老用户永远看不到模型步骤。
+    @AppStorage(Brand.dismissedModelStepKey) private var dismissedModelStep = false
     @AppStorage(AgentGateway.enabledKey) private var agentEnabled = true
     @AppStorage(AgentGateway.portKey) private var agentPort = Int(AgentGateway.defaultPort)
     /// 导入「同时分析视频数」的手动上限；0 = 跟随硬件建议（见 ConcurrencyPolicy.analyzeOverrideKey）
@@ -143,15 +144,12 @@ struct SettingsView: View {
         Task { cloneKeyFingerprint = VoiceCloneViewModel.currentKeyFingerprint() }
     }
 
-    /// 模型探测放后台队列：stat + 读 4 字节文件头虽然便宜，也不该占设置页 opening 的主线程。
+    /// 模型探测交给 installer 的唯一 report（它自己放后台队列扫描）；这里只刷新 Key 布尔。
     private func refreshASRState() {
+        modelInstaller.refresh()
         Task.detached(priority: .utility) {
-            let report = ASRService.modelReport()
             let cloudKey = ASRSettings.hasCloudKey
-            await MainActor.run {
-                modelReport = report
-                hasCloudKey = cloudKey
-            }
+            await MainActor.run { hasCloudKey = cloudKey }
         }
     }
 
@@ -209,6 +207,23 @@ struct SettingsView: View {
         let size = WhisperModelCatalog.expectedBytes(forTier: ASRPolicy.engineTier)
             .map { " (~\(formatBytes($0)))" } ?? ""
         return "下载 \(ASRPolicy.engineTier)\(size)"
+    }
+
+    /// 引擎态的入口提示文案（只用于"需要下载/修复"时；措辞是本页显示层，不写进 Core）。
+    private func engineStateHint(_ state: EngineModelState?) -> String {
+        guard let state else { return "语音识别模型未就绪" }
+        switch state {
+        case .missing:
+            return "语音识别引擎模型未下载（首启或设置页下载）"
+        case .truncated(let expected, let actual):
+            return "模型体积异常（期望 \(formatBytes(expected))、实到 \(formatBytes(actual))），需重新下载"
+        case .badHeader:
+            return "模型文件已损坏，需重新下载"
+        case .readyUnverified:
+            return "模型未做精确校验，建议重新下载以确保完整"
+        case .ready:
+            return "语音模型已就绪"
+        }
     }
 
     // MARK: - API Key 设置
@@ -575,24 +590,12 @@ struct SettingsView: View {
                 }
 
                 LabeledContent("语音模型") {
-                    if modelReport.usable {
+                    // 口径：engineState == .ready 才算就绪（不是 usable —— 红线 R2 的死角）。
+                    // 全部状态读 installer 唯一宿主，phase/progress 也是它的，本页零缓存。
+                    switch modelInstaller.phase {
+                    case .downloading, .verifying:
                         VStack(alignment: .leading, spacing: DesignTokens.Spacing.tight) {
-                            HStack(spacing: DesignTokens.Spacing.tight) {
-                                Image(systemName: "checkmark.circle.fill")
-                                    .font(DesignTokens.Typography.label)
-                                    .foregroundStyle(.green)
-                                Text(modelDetailText)
-                                    .font(DesignTokens.Typography.label)
-                            }
-                            ForEach(modelHintLines, id: \.self) { hint in
-                                Text(hint)
-                                    .font(DesignTokens.Typography.microRegular)
-                                    .foregroundStyle(.secondary)
-                            }
-                        }
-                    } else if isDownloadingModel {
-                        VStack(alignment: .leading, spacing: DesignTokens.Spacing.tight) {
-                            if let p = downloadProgress, p.totalBytes > 0 {
+                            if let p = modelInstaller.progress, p.totalBytes > 0 {
                                 ProgressView(value: p.fraction)
                                     .controlSize(.small)
                                     .frame(width: 200)
@@ -611,29 +614,42 @@ struct SettingsView: View {
                             } else {
                                 HStack(spacing: DesignTokens.Spacing.tight) {
                                     ProgressView().controlSize(.small)
-                                    Text("连接中…").font(DesignTokens.Typography.label).foregroundStyle(.secondary)
+                                    Text(modelInstaller.phase == .verifying ? "校验文件…" : "连接中…")
+                                        .font(DesignTokens.Typography.label).foregroundStyle(.secondary)
                                 }
                             }
-                            Button("取消") {
-                                downloadTask?.cancel()
-                            }
-                            .controlSize(.small)
+                            Button("取消") { modelInstaller.cancel() }
+                                .controlSize(.small)
                         }
-                    } else {
+                    default:
                         VStack(alignment: .leading, spacing: DesignTokens.Spacing.tight) {
                             HStack(spacing: DesignTokens.Spacing.tight) {
-                                Image(systemName: "exclamationmark.triangle")
-                                    .font(DesignTokens.Typography.microRegular)
-                                    .foregroundStyle(.orange)
-                                Text("语音识别需要先下载模型")
-                                    .font(DesignTokens.Typography.caption)
-                                    .foregroundStyle(.secondary)
+                                if modelInstaller.needsDownload {
+                                    Image(systemName: "exclamationmark.triangle")
+                                        .font(DesignTokens.Typography.microRegular)
+                                        .foregroundStyle(.orange)
+                                    Text(engineStateHint(modelInstaller.engineState))
+                                        .font(DesignTokens.Typography.caption)
+                                        .foregroundStyle(.secondary)
+                                } else {
+                                    Image(systemName: "checkmark.circle.fill")
+                                        .font(DesignTokens.Typography.label)
+                                        .foregroundStyle(.green)
+                                    Text(modelDetailText)
+                                        .font(DesignTokens.Typography.label)
+                                }
                             }
-                            Button(downloadButtonTitle) {
-                                downloadWhisperModel()
+                            if modelInstaller.needsDownload {
+                                Button(downloadButtonTitle) { modelInstaller.start() }
+                                    .controlSize(.small)
+                            } else {
+                                ForEach(modelHintLines, id: \.self) { hint in
+                                    Text(hint)
+                                        .font(DesignTokens.Typography.microRegular)
+                                        .foregroundStyle(.secondary)
+                                }
                             }
-                            .controlSize(.small)
-                            if let error = modelDownloadError {
+                            if case .failed(let error) = modelInstaller.phase {
                                 Text(error)
                                     .font(DesignTokens.Typography.microRegular)
                                     .foregroundStyle(.red)
@@ -748,6 +764,7 @@ struct SettingsView: View {
                 LabeledContent("使用引导") {
                     Button {
                         hasCompletedOnboarding = false
+                        dismissedModelStep = false  // 一并复位模型单步，否则跳过模型引导
                         dismiss()
                     } label: {
                         HStack(spacing: DesignTokens.Spacing.tight) {
@@ -1082,33 +1099,6 @@ struct SettingsView: View {
         try? KeychainHelper.removeAPIKey(for: selectedProvider)
         isAPIKeySaved = false
         apiKey = ""
-    }
-
-    private func downloadWhisperModel() {
-        isDownloadingModel = true
-        modelDownloadError = nil
-        downloadProgress = nil
-        downloadTask = Task { @MainActor in
-            do {
-                let asr = ASRService()
-                // 不下传 modelName：档位由 ASRPolicy 定（红线 R3），界面这里不留第二个档位选择
-                _ = try await asr.downloadModelIfNeeded(
-                    onProgress: { progress in
-                        Task { @MainActor in
-                            downloadProgress = progress
-                        }
-                    }
-                )
-                refreshASRState()
-            } catch is CancellationError {
-                modelDownloadError = "已取消"
-            } catch {
-                modelDownloadError = error.localizedDescription
-            }
-            isDownloadingModel = false
-            downloadProgress = nil
-            downloadTask = nil
-        }
     }
 
     /// 把字节数格式化为 KB / MB / GB

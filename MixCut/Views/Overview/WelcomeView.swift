@@ -3,7 +3,8 @@ import SwiftUI
 struct WelcomeView: View {
     @Bindable var projectVM: ProjectViewModel
     @State private var hasAPIKey = true
-    @State private var hasWhisperModel = true
+    /// 模型状态读 installer 唯一宿主（不再自持 hasWhisperModel 缓存）。
+    @State private var modelInstaller = WhisperModelInstaller.shared
 
     var body: some View {
         VStack(spacing: 32) {
@@ -83,8 +84,8 @@ struct WelcomeView: View {
                 }
             }
 
-            // 依赖状态提示
-            if !hasAPIKey || !hasWhisperModel {
+            // 依赖状态提示（模型用 needsDownload = engineState != .ready）
+            if !hasAPIKey || modelInstaller.needsDownload {
                 VStack(alignment: .leading, spacing: 6) {
                     if !hasAPIKey {
                         HStack(spacing: 6) {
@@ -96,7 +97,7 @@ struct WelcomeView: View {
                                 .foregroundStyle(.secondary)
                         }
                     }
-                    if !hasWhisperModel {
+                    if modelInstaller.needsDownload {
                         HStack(spacing: 6) {
                             Image(systemName: "waveform")
                                 .font(DesignTokens.Typography.microRegular)
@@ -117,7 +118,7 @@ struct WelcomeView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .onAppear {
             hasAPIKey = KeychainHelper.hasAPIKey(for: KeychainHelper.activeProvider)
-            hasWhisperModel = ASRService().isModelAvailable()
+            modelInstaller.refresh()
         }
     }
 }

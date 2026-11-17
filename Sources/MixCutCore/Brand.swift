@@ -25,6 +25,9 @@ public enum Brand {
     public static var logDirectoryComponent: String { "\(bundleID)/logs" }
     public static var aiFailDirectoryComponent: String { "\(bundleID)/ai-fail" }
 
+    /// 模型单步引导的"稍后"标记 key（由 shortName 派生，不在视图里硬写身份字面量）。
+    public static var dismissedModelStepKey: String { "\(shortName).dismissedModelStep" }
+
     // MARK: - 显示身份（上屏给人看、或发给模型的措辞）
 
     /// 产品显示名：菜单栏、侧边栏、欢迎页、引导页、错误文案都读它。

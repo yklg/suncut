@@ -1,4 +1,5 @@
 import Foundation
+import CryptoKit
 
 /// Whisper 模型下载进度（真实字节数 + 速度）
 struct DownloadProgress: Sendable {
@@ -831,8 +832,43 @@ actor ASRService {
 
     /// 模型探测的唯一入口：扫全部根 → stat + 读文件头 → 交给档位目录挑。
     /// 只做 6×4 量级的文件属性读取与 4 字节读，不解析模型。
-    nonisolated static func modelReport() -> ModelReport {
-        WhisperModelCatalog.report(files: candidateModelFiles())
+    ///
+    /// `engine` 缺省传引擎档 ⇒ 报告带 `engineState`（下载/修复入口判据，红线 R2 不否决 usable）。
+    /// 无参调用等价于旧行为（engineState == nil）。
+    nonisolated static func modelReport(engine: WhisperTier? = nil) -> ModelReport {
+        WhisperModelCatalog.report(files: candidateModelFiles(), engine: engine)
+    }
+
+    /// 引擎档（`ASRPolicy.engineFileName`）的宿主查表 —— 供 installer / 完整性校验用。
+    nonisolated static var engineTier: WhisperTier? {
+        WhisperModelCatalog.tier(named: ASRPolicy.engineTier)
+    }
+
+    /// 表里的精确字节数（档位真源唯一）。无精确值时返回 nil（调用方据此跳过体积比较）。
+    nonisolated static func expectedBytes(forModelNamed fileName: String) -> Int64? {
+        guard let name = WhisperModelCatalog.tier(ofFileName: fileName),
+              let tier = WhisperModelCatalog.tier(named: name) else { return nil }
+        return tier.expectedBytes
+    }
+
+    /// 表里的官方 sha256（LFS oid）；取不到 oid 的档返回 nil（未覆盖，不编造）。
+    nonisolated static func expectedSHA256(forModelNamed fileName: String) -> String? {
+        guard let name = WhisperModelCatalog.tier(ofFileName: fileName),
+              let tier = WhisperModelCatalog.tier(named: name) else { return nil }
+        return tier.expectedSHA256
+    }
+
+    /// 流式 sha256：1.08GB 约 2–4 秒，调用方须放到 `Task.detached` 里跑，别占主线程。
+    nonisolated static func sha256(ofFileAt path: String) throws -> String {
+        let handle = try FileHandle(forReadingFrom: URL(fileURLWithPath: path))
+        defer { try? handle.close() }
+        var hasher = SHA256()
+        while true {
+            let data = try handle.read(upToCount: 1024 * 1024) ?? Data()
+            if data.isEmpty { break }
+            hasher.update(data: data)
+        }
+        return hasher.finalize().map { String(format: "%02x", $0) }.joined()
     }
 
     private nonisolated static func candidateModelFiles() -> [ModelFile] {
@@ -897,44 +933,105 @@ actor ASRService {
     }
 
     /// 下载 whisper 模型到用户模型目录（Application Support）
+    /// 下载 Whisper 模型到用户模型目录（Application Support）
     /// - 真实字节数进度（流式读，每 250ms 回调一次）
     /// - HTTP Range 断点续传（partial 文件保留，下次接着下）
-    /// - 每个镜像源重试 3 次（指数退避），失败再切下一个源
+    /// - 只走国内镜像 hf-mirror（档位表里已删境外源）
     /// - 可中断（响应 Task 取消）
+    /// - **运行期完整性校验**：体积 + sha256 双验，作废文件自愈重下（本轮核心）
     ///
-    /// 「已存在就早退」查的是**这颗档**在不在，不是"随便有没有一颗模型"。
-    /// 老实现查的是后者，于是本机只有 base 时点"下载"会直接返回 base 的路径、什么都不下，
-    /// 界面随即报"已就绪" —— 那就是记忆里那条"下载语音模型是假就绪"。
+    /// 注入点（GAP-1/GAP-2，均为可选默认、既有调用逐字不变）：
+    /// - `session`：传自定义 URLSession 即可在无网络下测下载链路；nil 时自建。
+    /// - `availableBytes`：传模拟可用空间即可测磁盘预检；nil 时读真实卷。
+    /// - `modelDirectory`：传临时目录即可隔离测试、不碰用户真实模型；nil 时用 Application Support。
+    ///
+    /// 预检三态（替代旧的"文件存在即早退"——那会让半截/损坏文件永久卡死）：
+    /// ① 不存在 → 下载；② 存在但体积不符 → 删掉重下；
+    /// ③ 存在且体积对 → 校验 sha256：不符删掉重下，符合（或表无 oid）早退。
     func downloadModelIfNeeded(
         modelName: String = ASRPolicy.engineFileName,
-        onProgress: (@Sendable (DownloadProgress) -> Void)? = nil
+        onProgress: (@Sendable (DownloadProgress) -> Void)? = nil,
+        session injectedSession: URLSession? = nil,
+        availableBytes injectedAvailable: Int64? = nil,
+        modelDirectory injectedDir: URL? = nil
     ) async throws -> String {
-        let modelDir = FileHelper.whisperModelsDirectory
+        let fm = FileManager.default
+        let modelDir = injectedDir ?? FileHelper.whisperModelsDirectory
+        try? fm.createDirectory(at: modelDir, withIntermediateDirectories: true)
         let destPath = modelDir.appendingPathComponent(modelName).path
-        if FileManager.default.fileExists(atPath: destPath) {
-            return destPath
+        let partialPath = destPath + ".partial"
+        let lockPath = destPath + ".lock"
+        let expectedBytes = Self.expectedBytes(forModelNamed: modelName)
+        let expectedSHA = Self.expectedSHA256(forModelNamed: modelName)
+
+        // ---- 预检三态 ----
+        if fm.fileExists(atPath: destPath) {
+            let actual = (try? fm.attributesOfItem(atPath: destPath))?[.size] as? NSNumber
+            let actualBytes = actual?.int64Value ?? 0
+            let sizeMatches = expectedBytes.map { actualBytes == $0 } ?? true
+            if sizeMatches {
+                // 体积对（或表无精确值）：再验 sha256 防同长度替换。校验放 detached，别卡 actor。
+                if let sha = expectedSHA {
+                    let actualSHA = try await Task.detached(priority: .utility) {
+                        try Self.sha256(ofFileAt: destPath)
+                    }.value
+                    if actualSHA.lowercased() == sha.lowercased() {
+                        return destPath  // ③ 体积+内容都对：真正可复用
+                    }
+                    MixLog.info("模型 sha256 不符（期望 \(sha)，实到 \(actualSHA)），删除重下")
+                } else {
+                    return destPath  // 表无 oid：只能信体积（未覆盖，计划已登记）
+                }
+            } else {
+                MixLog.info("模型体积不符（期望 \(expectedBytes.map(String.init) ?? "?")，实到 \(actualBytes)），删除重下")
+            }
+            // ② 体积不符或 sha 不符：可疑文件一律删除，不用 partial 复用（内容已不可信）
+            try? fm.removeItem(atPath: destPath)
+            try? fm.removeItem(atPath: partialPath)
         }
 
         let urls = Self.downloadURLs(forModelNamed: modelName)
-        guard !urls.isEmpty else {
-            throw ASRError.modelNotFound
+        guard !urls.isEmpty else { throw ASRError.modelNotFound }
+
+        // ---- 磁盘空间预检（下载 1.08GB 前先查，磁盘满时别白下）----
+        let required = expectedBytes ?? 1_081_140_203
+        let available = injectedAvailable ?? Self.volumeAvailableBytes(at: modelDir.path)
+        if let available, available < required {
+            throw ASRError.insufficientDiskSpace(required: required, available: available)
         }
 
-        let partialPath = destPath + ".partial"
+        // ---- 单飞锁：独立 .lock 文件（O_EXCL 语义），不碰 .partial（它要留给续传）----
+        // 用 POSIX open(O_CREAT|O_EXCL) 才真正原子：createFile 在"存在"时返回 false，
+        // 但两个实例同时调用仍可能都拿到 false 之后的竞态；O_EXCL 由内核保证只有一个成功。
+        let fd = open(lockPath, O_CREAT | O_EXCL | O_WRONLY, mode_t(0o644))
+        if fd < 0 {
+            // EEXIST = 另一实例持有锁；其余 errno 也按占用处理（保守，绝不并发写同一文件）
+            throw ASRError.downloadInProgressByAnotherInstance
+        }
+        close(fd)
+        defer { try? fm.removeItem(atPath: lockPath) }  // 释放锁；.partial 原样保留供续传
 
         // 单次请求 60s 超时（卡住的连接快速失败切重试）；整体允许 2 小时（够续传多次）
-        let config = URLSessionConfiguration.default
-        config.timeoutIntervalForRequest = 60
-        config.timeoutIntervalForResource = 7200
-        config.requestCachePolicy = .reloadIgnoringLocalCacheData
-        let session = URLSession(configuration: config)
-        defer { session.finishTasksAndInvalidate() }
+        let session: URLSession
+        let ownsSession: Bool
+        if let injectedSession {
+            session = injectedSession
+            ownsSession = false
+        } else {
+            let config = URLSessionConfiguration.default
+            config.timeoutIntervalForRequest = 60
+            config.timeoutIntervalForResource = 7200
+            config.requestCachePolicy = .reloadIgnoringLocalCacheData
+            session = URLSession(configuration: config)
+            ownsSession = true
+        }
+        defer { if ownsSession { session.finishTasksAndInvalidate() } }
 
         var lastError: Error?
 
         for urlString in urls {
             guard let url = URL(string: urlString) else { continue }
-            let source = urlString.contains("hf-mirror") ? "国内镜像" : "HuggingFace"
+            let source = urlString.contains("hf-mirror") ? "国内镜像" : "镜像源"
 
             for attempt in 0..<3 {
                 try Task.checkCancellation()
@@ -952,19 +1049,42 @@ actor ASRService {
                         url: url,
                         partialPath: partialPath,
                         session: session,
+                        expectedBytes: expectedBytes,
                         onProgress: onProgress
                     )
 
-                    // 成功：move partial → dest
-                    if FileManager.default.fileExists(atPath: destPath) {
-                        try FileManager.default.removeItem(atPath: destPath)
+                    // move 前再次精确比对（防服务器换文件）：短的不留、长的删
+                    let downloaded = (try? fm.attributesOfItem(atPath: partialPath))?[.size] as? NSNumber
+                    let actual = downloaded?.int64Value ?? 0
+                    if let expected = expectedBytes, actual != expected {
+                        try? fm.removeItem(atPath: partialPath)
+                        throw ASRError.modelIntegrityMismatch(
+                            reason: "体积期望 \(expected)、实到 \(actual)")
                     }
-                    try FileManager.default.moveItem(atPath: partialPath, toPath: destPath)
-                    MixLog.info("Whisper 模型下载完成: \(modelName)")
+                    // sha256 内容校验（有 oid 才验）
+                    if let sha = expectedSHA {
+                        let actualSHA = try await Task.detached(priority: .utility) {
+                            try Self.sha256(ofFileAt: partialPath)
+                        }.value
+                        if actualSHA.lowercased() != sha.lowercased() {
+                            try? fm.removeItem(atPath: partialPath)
+                            throw ASRError.modelIntegrityMismatch(
+                                reason: "sha256 期望 \(sha)、实到 \(actualSHA)")
+                        }
+                    }
+
+                    if fm.fileExists(atPath: destPath) {
+                        try fm.removeItem(atPath: destPath)
+                    }
+                    try fm.moveItem(atPath: partialPath, toPath: destPath)
+                    MixLog.info("Whisper 模型下载完成并校验通过: \(modelName)")
                     return destPath
                 } catch is CancellationError {
                     MixLog.info("Whisper 模型下载被用户取消")
                     throw CancellationError()
+                } catch let e as ASRError {
+                    // 完整性/空间类错误：不重试（重试也还是错），直接上抛
+                    throw e
                 } catch {
                     lastError = error
                     MixLog.error("[\(source) attempt \(attempt + 1)] 下载失败: \(error.localizedDescription)")
@@ -976,14 +1096,22 @@ actor ASRService {
         throw lastError ?? ASRError.modelNotFound
     }
 
+    /// 卷可用空间（供下载前预检）。抽成独立函数便于 GAP-2 注入替换。
+    nonisolated static func volumeAvailableBytes(at path: String) -> Int64? {
+        let attrs = try? FileManager.default.attributesOfFileSystem(forPath: path)
+        return (attrs?[.systemFreeSize] as? NSNumber)?.int64Value
+    }
+
     /// 单次下载尝试（支持 Range 续传，流式写入 partial 文件，250ms 回调一次进度）
     private func downloadOneAttempt(
         url: URL,
         partialPath: String,
         session: URLSession,
+        expectedBytes: Int64?,
         onProgress: (@Sendable (DownloadProgress) -> Void)?
     ) async throws {
         let fm = FileManager.default
+        // 续传起点 = partial 现有字节数（单飞锁在 .lock 上，partial 只存数据，语义干净）
         let existingSize: Int64 = ((try? fm.attributesOfItem(atPath: partialPath))?[.size] as? NSNumber)?.int64Value ?? 0
 
         var req = URLRequest(url: url)
@@ -998,10 +1126,16 @@ actor ASRService {
             throw URLError(.badServerResponse)
         }
 
-        // 416 Range Not Satisfiable：通常意味着 partial 已经下完了
+        // 416 Range Not Satisfiable：只有当 partial 字节数**已等于表值**才算续传完成；
+        // 否则是"服务器的文件比我们短"或"partial 损坏"，删掉 partial 从头重来。
         if http.statusCode == 416, existingSize > 0 {
-            MixLog.info("服务器返回 416，假定 partial 文件已完整")
-            return
+            if let expected = expectedBytes, expected > 0, existingSize == expected {
+                MixLog.info("服务器返回 416 且 partial(\(existingSize)) == 表值，续传已完成")
+                return
+            }
+            MixLog.info("服务器返回 416 但 partial(\(existingSize)) != 表值(\(expectedBytes.map(String.init) ?? "?"))，删 partial 重下")
+            try? fm.removeItem(atPath: partialPath)
+            throw ASRError.modelIntegrityMismatch(reason: "续传字节数与服务器不符")
         }
         guard (200...299).contains(http.statusCode) else {
             throw URLError(URLError.Code(rawValue: http.statusCode))
@@ -1026,6 +1160,13 @@ actor ASRService {
             if remaining > 0 { return (appendMode ? existingSize : 0) + remaining }
             return 0
         }()
+
+        // 服务器声明的总长与表值不符 ⇒ 服务器换了文件（或我们表错了），立刻失败，
+        // 不白下 1GB 再在末尾 sha256 才发现。total==0 表示头里没有可信长度，不在此判。
+        if let expected = expectedBytes, expected > 0, total > 0, total != expected {
+            MixLog.error("模型总长不符：头声明 \(total)、表值 \(expected)，放弃下载（服务器可能换了文件）")
+            throw ASRError.modelIntegrityMismatch(reason: "服务器文件总长 \(total) != 表值 \(expected)")
+        }
 
         if !fm.fileExists(atPath: partialPath) {
             fm.createFile(atPath: partialPath, contents: nil)
@@ -1083,6 +1224,12 @@ actor ASRService {
         case modelNotFound
         case whisperNotFound
         case transcriptionFailed
+        /// 下载完成后内容校验不过（体积或 sha256 与表值不符）—— 绝不留下可疑文件
+        case modelIntegrityMismatch(reason: String)
+        /// 目标卷可用空间不足，无法容纳完整模型（下载前预检，不留半截）
+        case insufficientDiskSpace(required: Int64, available: Int64)
+        /// .partial 已被另一个 App 实例占用（O_EXCL 抢锁失败）
+        case downloadInProgressByAnotherInstance
 
         var errorDescription: String? {
             switch self {
@@ -1092,6 +1239,14 @@ actor ASRService {
                 return "语音识别组件未找到，请重新安装应用或安装 whisper-cpp (brew install whisper-cpp)"
             case .transcriptionFailed:
                 return "语音识别失败：GPU 与 CPU 两种引擎均未能产出结果（可查看日志 \(MixLog.logFileURL.path)），本视频暂无台词，可重试或更换视频"
+            case .modelIntegrityMismatch(let reason):
+                return "模型文件校验未通过（\(reason)），已删除并需要重新下载"
+            case .insufficientDiskSpace(let required, let available):
+                let need = ByteCountFormatter.string(fromByteCount: required, countStyle: .binary)
+                let have = ByteCountFormatter.string(fromByteCount: max(available, 0), countStyle: .binary)
+                return "磁盘可用空间不足：下载模型需要约 \(need)，当前仅剩 \(have)"
+            case .downloadInProgressByAnotherInstance:
+                return "另一个 \(Brand.displayName) 实例正在下载模型，请稍后再试"
             }
         }
     }

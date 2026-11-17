@@ -10,11 +10,14 @@ struct SidebarView: View {
     @State private var hoveredNavItem: NavigationItem?
     @State private var isSettingsHovered = false
     @State private var hasAPIKey: Bool = true
-    @State private var hasWhisperModel: Bool = true
+    /// 模型状态读 installer 唯一宿主（不再自持 hasWhisperModel 缓存，刷新时机统一）。
+    @State private var modelInstaller = WhisperModelInstaller.shared
     @State private var renamingProjectID: UUID?
     @State private var renameText: String = ""
 
-    private var hasMissingDependency: Bool { !hasAPIKey || !hasWhisperModel }
+    /// 缺依赖 = 缺 Key 或引擎档需下载。用 needsDownload（engineState != .ready），
+    /// 不用旧 isModelAvailable —— 后者只看 usable，坏引擎档会漏报（红线 R2 死角）。
+    private var hasMissingDependency: Bool { !hasAPIKey || modelInstaller.needsDownload }
 
     private var activeProjects: [Project] {
         projectVM.projects.filter { $0.status != .archived }
@@ -336,7 +339,7 @@ struct SidebarView: View {
 
     private func refreshDependencyStatus() {
         hasAPIKey = KeychainHelper.hasAPIKey(for: KeychainHelper.activeProvider)
-        hasWhisperModel = ASRService().isModelAvailable()
+        modelInstaller.refresh()
     }
 
     private func shortcutHint(for item: NavigationItem) -> String {

@@ -104,8 +104,10 @@ done
 for must in "$CORE/ASRPolicy.swift" "$CORE/WhisperModelCatalog.swift" "$CORE/ASREngineDecision.swift" \
             "$CORE/TextProvenance.swift" "$CORE/DubStaleness.swift" "$CORE/AgentToolCatalog.swift" \
             "$ASR_DIR/ASRSettings.swift" "$ASR_DIR/ASRService.swift" "$ASR_DIR/SegmentTranscriber.swift" \
+            "$ASR_DIR/WhisperModelInstaller.swift" \
             "$APP/Models/Segment.swift" "$APP/Models/SegmentDub.swift" "$APP/Models/Video.swift" \
             "$APP/Services/MCP/MCPToolHandlers.swift" "$APP/Views/Settings/SettingsView.swift" \
+            "$APP/Views/Overview/OnboardingView.swift" \
             "$ROOT/scripts/build_universal_binaries.sh"; do
   if [[ ! -f "$must" ]]; then
     echo "FAIL 守卫要读的文件不存在：$must"
@@ -153,20 +155,48 @@ fi
 
 # ---------- 2d：能力面与打包链 ----------
 
-# G17 红线 R7：打包脚本内置的模型必须与运行期裁定同一档（否则发布版与本机版跑的不是同一颗）
-policy_file=$(grep -o 'engineFileName: String = "[^"]*"' "$CORE/ASRPolicy.swift" 2>/dev/null | sed 's/.*= "//; s/"$//')
-script_file=$(grep -o 'WMODEL="\$DEST/[^"]*"' "$ROOT/scripts/build_universal_binaries.sh" 2>/dev/null | sed 's|.*DEST/||; s/"$//')
-if [[ -n "$policy_file" && "$policy_file" == "$script_file" ]]; then
-  pass "G17 打包内置模型 == ASRPolicy.engineFileName（${policy_file}）"
+# 旧 G17（打包内置模型 == ASRPolicy）已删除：2026-11-16 起 Whisper 模型不再内置，
+# 打包脚本里没有 WMODEL/WMIN 了，这条判据会永远红（拿不到 script_file）。
+# 替代为下面 G17b（档位三件套同源）/ G17c（单一国内源）/ G17d（能力面 engine_state 同源）。
+
+# G17b 档位三件套同源：engineTier 在档位表可查、其 fileName == ASRPolicy.engineFileName、
+# expectedBytes 非 nil（引擎档必须能判截断）。三处分家会让下载/校验/界面各说各话。
+engine_tier=$(grep -o 'engineTier: String = "[^"]*"' "$CORE/ASRPolicy.swift" 2>/dev/null | sed 's/.*= "//; s/"$//')
+engine_file=$(grep -o 'engineFileName: String = "[^"]*"' "$CORE/ASRPolicy.swift" 2>/dev/null | sed 's/.*= "//; s/"$//')
+if [[ -n "$engine_tier" && -n "$engine_file" ]] \
+   && grep -q "name: \"$engine_tier\", fileName: \"$engine_file\"" "$CORE/WhisperModelCatalog.swift" 2>/dev/null; then
+  tier_line=$(grep "name: \"$engine_tier\", fileName: \"$engine_file\"" "$CORE/WhisperModelCatalog.swift")
+  if printf '%s' "$tier_line" | grep -q 'expectedBytes: [0-9_]'; then
+    pass "G17b 档位三件套同源：engineTier/fileName/expectedBytes 在 catalog 对齐（${engine_tier}）"
+  else
+    fail "G17b 引擎档缺精确字节（expectedBytes）：运行期无法判截断"
+  fi
 else
-  fail "G17 打包链与运行期分家：脚本装的是 '${script_file:-取不到}'，ASRPolicy 裁定的是 '${policy_file:-取不到}'"
+  fail "G17b 档位三件套分家：ASRPolicy 的 ${engine_tier}/${engine_file} 在 catalog 里对不上"
 fi
-# 精确体积闸门也要跟档位表同源（2026-11-10 起表里内置档是 large-v3-q5_0 = 1,081,140,203）
-wmin=$(grep -o '^WMIN=[0-9]*' "$ROOT/scripts/build_universal_binaries.sh" 2>/dev/null | cut -d= -f2)
-if [[ -n "$wmin" && "$wmin" -le 1081140203 && "$wmin" -gt 1000000000 ]]; then
-  pass "G17b 打包体积闸门 $wmin 落在 large-v3-q5_0 真实字节数量级内"
+
+# G17c 单一国内源：catalog 代码行 huggingface.co 命中数=0；hf-mirror.com 命中数 == 档位条目数。
+# 每档恰好一个 hf-mirror URL（境外源已删），多一个/少一个都说明有人改动了下载源。
+# 直接数 `downloadURLs: ["https://...` 这种**代码行**，天然排除文档注释里的 URL 提及，
+# 不依赖 grep -v 的 BRE 交替语法（BSD grep 与 GNU grep 对 \| 的行为不一致，踩过坑）。
+url_lines=$(grep -c 'downloadURLs: \["http' "$CORE/WhisperModelCatalog.swift" 2>/dev/null \
+            | tr -d ' ')
+mirror_hits=$(grep -c 'downloadURLs: \["https://hf-mirror\.com' "$CORE/WhisperModelCatalog.swift" 2>/dev/null \
+              | tr -d ' ')
+tier_count=$(grep -c 'WhisperTier(name:' "$CORE/WhisperModelCatalog.swift" 2>/dev/null | tr -d ' ')
+# 全部 downloadURLs 行都必须是 hf-mirror，且数量 == 档位数（每档恰好一个源）
+if [[ "$url_lines" == "$mirror_hits" && "$mirror_hits" == "$tier_count" && "$tier_count" -gt 0 ]]; then
+  pass "G17c 单一国内源：downloadURLs $url_lines 行全为 hf-mirror，== 档位数 $tier_count"
 else
-  fail "G17b 打包体积闸门异常（${wmin}）：太低会把半截文件当成功，太高会把正常文件判成要重下"
+  fail "G17c 下载源异常：URL 代码行 ${url_lines}、hf-mirror ${mirror_hits}、档位数 ${tier_count}（三者须相等）"
+fi
+
+# G17d R3 同源机器判据：能力面（get_asr_status）必须暴露 engine_state，
+# 否则设置页有引擎态、Agent 问出来却没有 —— 同一事实两个面不一致。
+if grep -q '"engine_state"' "$APP/Services/MCP/MCPToolHandlers.swift" 2>/dev/null; then
+  pass "G17d 能力面 get_asr_status 暴露 engine_state（R3 同源）"
+else
+  fail "G17d 能力面缺 engine_state：设置页有的字段 Agent 问不到（R3 同源破口）"
 fi
 
 # G18 能力面只许问 `ASRSettings.hasCloudKey`（布尔），不许在 MCP 目录里直接读 Keychain
@@ -213,13 +243,15 @@ else
   fail "G6b ASR 服务里硬编码了下载 URL（$hits 处）：换镜像/换档位会只改一处，正是本轮要消灭的形状"
 fi
 
-# G7 红线 R1：识别路径里不许有下载。downloadModelIfNeeded 只允许「1 处定义 + 设置页 1 处调用」
+# G7 红线 R1：识别路径里不许有下载。downloadModelIfNeeded 只允许「1 处定义 + installer 1 处调用」。
+# 2026-11-16 改动：下载触发从设置页迁到 WhisperModelInstaller（首启引导页/设置页/侧栏统一经它），
+# 这是 R1 关于「UI 在哪触发」的例外 —— 调用点是 UI 状态宿主，不是识别路径。
 callers=$(code_files 'downloadModelIfNeeded' "$APP" | sed "s|$APP/||" | sort | tr '\n' ' ')
-expected="Services/ASR/ASRService.swift Views/Settings/SettingsView.swift "
+expected="Services/ASR/ASRService.swift Services/ASR/WhisperModelInstaller.swift "
 if [[ "$callers" == "$expected" ]]; then
-  pass "G7a downloadModelIfNeeded 只有定义 + 设置页一个调用点"
+  pass "G7a downloadModelIfNeeded 只有定义 + installer 一个调用点"
 else
-  fail "G7a 下载调用点变了（实际：${callers}）：期望仅 设置页 触发，识别路径必须直接失败"
+  fail "G7a 下载调用点变了（实际：${callers}）：期望仅 installer 触发，识别路径必须直接失败"
 fi
 hits=$(grep -c 'downloadModelIfNeeded' "$ASR_DIR/ASRService.swift" 2>/dev/null || true)
 if [[ "$hits" == "1" ]]; then
